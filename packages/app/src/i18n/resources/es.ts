@@ -201,6 +201,10 @@ export const es: TranslationResources = {
       implement: "Implementar",
       question: "¿Cómo le gustaría proceder?",
       proposedPlan: "Plan propuesto",
+      approved: "Aprobado",
+      rejected: "Rechazado",
+      planDisabledAfterMessages:
+        "Este plan ya no se puede aprobar porque la conversación continuó después.",
     },
   },
   agentPanel: {

@@ -201,6 +201,10 @@ export const ar: TranslationResources = {
       implement: "ينفذ",
       question: "كيف تريد المتابعة؟",
       proposedPlan: "الخطة المقترحة",
+      approved: "موافقة",
+      rejected: "مرفوض",
+      planDisabledAfterMessages:
+        "لم يعد من الممكن الموافقة على هذه الخطة لأن المحادثة استمرت بعدها.",
     },
   },
   agentPanel: {

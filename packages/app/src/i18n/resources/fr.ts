@@ -203,6 +203,10 @@ export const fr: TranslationResources = {
       implement: "Mettre en œuvre",
       question: "Comment souhaitez-vous procéder?",
       proposedPlan: "Plan proposé",
+      approved: "Approuvé",
+      rejected: "Rejeté",
+      planDisabledAfterMessages:
+        "Ce plan ne peut plus être approuvé, car la conversation a continué après lui.",
     },
   },
   agentPanel: {

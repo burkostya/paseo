@@ -201,6 +201,10 @@ export const ru: TranslationResources = {
       implement: "Осуществлять",
       question: "Как бы вы хотели продолжить?",
       proposedPlan: "Предлагаемый план",
+      approved: "Одобрено",
+      rejected: "Отклонено",
+      planDisabledAfterMessages:
+        "Этот план больше нельзя принять, потому что после него диалог продолжился.",
     },
   },
   agentPanel: {

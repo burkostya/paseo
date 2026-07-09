@@ -201,6 +201,9 @@ export const ja: TranslationResources = {
       implement: "実装",
       question: "どのように続けますか？",
       proposedPlan: "提案されたプラン",
+      approved: "承認済み",
+      rejected: "拒否済み",
+      planDisabledAfterMessages: "このプランの後に会話が続いたため、このプランは承認できません。",
     },
   },
   agentPanel: {

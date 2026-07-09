@@ -201,6 +201,10 @@ export const ptBR: TranslationResources = {
       implement: "Implementar",
       question: "Como você quer prosseguir?",
       proposedPlan: "Plano proposto",
+      approved: "Aprovado",
+      rejected: "Rejeitado",
+      planDisabledAfterMessages:
+        "Este plano não pode mais ser aprovado porque a conversa continuou depois dele.",
     },
   },
   agentPanel: {

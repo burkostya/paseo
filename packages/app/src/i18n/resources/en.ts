@@ -199,6 +199,10 @@ export const en = {
       implement: "Implement",
       question: "How would you like to proceed?",
       proposedPlan: "Proposed plan",
+      approved: "Approved",
+      rejected: "Rejected",
+      planDisabledAfterMessages:
+        "This plan can no longer be approved because the conversation continued after it.",
     },
   },
   agentPanel: {
