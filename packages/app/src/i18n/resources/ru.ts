@@ -95,6 +95,10 @@ export const ru: TranslationResources = {
       queue: "Очередь",
       send: "Отправлять",
     },
+    history: {
+      title: "История запросов",
+      open: "Открыть историю запросов",
+    },
     cancel: {
       cancelingAgent: "Отменяющий агент",
       stopAgent: "Остановить агент",

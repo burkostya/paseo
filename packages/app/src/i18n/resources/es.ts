@@ -95,6 +95,10 @@ export const es: TranslationResources = {
       queue: "Cola",
       send: "Enviar",
     },
+    history: {
+      title: "Historial de prompts",
+      open: "Abrir historial de prompts",
+    },
     cancel: {
       cancelingAgent: "Agente de cancelación",
       stopAgent: "detener agente",

@@ -95,6 +95,10 @@ export const ja: TranslationResources = {
       queue: "キュー",
       send: "送信",
     },
+    history: {
+      title: "プロンプト履歴",
+      open: "プロンプト履歴を開く",
+    },
     cancel: {
       cancelingAgent: "エージェントをキャンセル中",
       stopAgent: "エージェントを停止",

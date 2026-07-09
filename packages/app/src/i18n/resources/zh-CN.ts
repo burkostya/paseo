@@ -95,6 +95,10 @@ export const zhCN: TranslationResources = {
       queue: "排队",
       send: "发送",
     },
+    history: {
+      title: "提示历史",
+      open: "打开提示历史",
+    },
     cancel: {
       cancelingAgent: "正在取消 Agent",
       stopAgent: "停止 Agent",

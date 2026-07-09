@@ -97,6 +97,10 @@ export const fr: TranslationResources = {
       queue: "File d'attente",
       send: "Envoyer",
     },
+    history: {
+      title: "Historique des prompts",
+      open: "Ouvrir l'historique des prompts",
+    },
     cancel: {
       cancelingAgent: "Agent d'annulation",
       stopAgent: "Agent d'arrêt",

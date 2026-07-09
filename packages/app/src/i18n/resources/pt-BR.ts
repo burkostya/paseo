@@ -95,6 +95,10 @@ export const ptBR: TranslationResources = {
       queue: "Fila",
       send: "Enviar",
     },
+    history: {
+      title: "Histórico de prompts",
+      open: "Abrir histórico de prompts",
+    },
     cancel: {
       cancelingAgent: "Cancelando agente",
       stopAgent: "Parar agente",

@@ -95,6 +95,10 @@ export const ar: TranslationResources = {
       queue: "طابور",
       send: "يرسل",
     },
+    history: {
+      title: "سجل المطالبات",
+      open: "فتح سجل المطالبات",
+    },
     cancel: {
       cancelingAgent: "وكيل الإلغاء",
       stopAgent: "توقف الوكيل",

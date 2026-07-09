@@ -93,6 +93,10 @@ export const en = {
       queue: "Queue",
       send: "Send",
     },
+    history: {
+      title: "Prompt history",
+      open: "Open prompt history",
+    },
     cancel: {
       cancelingAgent: "Canceling agent",
       stopAgent: "Stop agent",
