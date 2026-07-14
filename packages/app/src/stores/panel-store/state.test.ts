@@ -5,9 +5,11 @@ import {
   type ExplorerTab,
 } from "@/stores/explorer-tab-memory";
 import {
+  buildDiffBaseSelectionKey,
   buildOpenFileExplorerPatch,
   buildToggleFileExplorerPatch,
   migratePanelState,
+  setDiffBaseRefInState,
   selectIsAgentListOpen,
   selectIsFileExplorerOpen,
   setMobilePanelTarget,
@@ -128,6 +130,38 @@ describe("panel-store migration", () => {
 
     expect(state.mobileView).toBeUndefined();
     expect(state.mobilePanel).toBeUndefined();
+  });
+
+  it("initializes persisted diff base selections for older state", () => {
+    const state = migratePanelState({}, 12, { isWeb: false });
+
+    expect(state.diffBaseRefByWorkspace).toEqual({});
+  });
+});
+
+describe("panel-store diff base selection", () => {
+  it("scopes selections by host and workspace with cwd fallback", () => {
+    expect(
+      buildDiffBaseSelectionKey({
+        serverId: " host-a ",
+        workspaceId: " workspace-1 ",
+        cwd: "/repo/a",
+      }),
+    ).toBe("diff-base:server=host-a:workspace=workspace-1");
+    expect(
+      buildDiffBaseSelectionKey({
+        serverId: "host-b",
+        workspaceId: null,
+        cwd: "/repo/a/",
+      }),
+    ).toBe("diff-base:server=host-b:cwd=%2Frepo%2Fa");
+  });
+
+  it("stores a trimmed ref and removes it when Default is selected", () => {
+    const selected = setDiffBaseRefInState({}, "diff-base:key", " release/next ");
+    expect(selected).toEqual({ "diff-base:key": "release/next" });
+
+    expect(setDiffBaseRefInState(selected, "diff-base:key", null)).toEqual({});
   });
 });
 

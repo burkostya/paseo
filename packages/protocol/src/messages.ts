@@ -3052,6 +3052,8 @@ export const ServerInfoStatusPayloadSchema = z
         providerUsageWarnings: z.boolean().optional(),
         // COMPAT(issueLinks): added in the v0.1.109 fork, remove after 2027-01-16.
         issueLinks: z.boolean().optional(),
+        // COMPAT(checkoutDiffBaseSelection): added in the v0.1.109 fork, remove after 2027-01-16.
+        checkoutDiffBaseSelection: z.boolean().optional(),
       })
       .optional(),
   })

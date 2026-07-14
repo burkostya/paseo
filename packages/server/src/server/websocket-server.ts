@@ -1692,6 +1692,8 @@ export class VoiceAssistantWebSocketServer {
         providerUsageWarnings: true,
         // COMPAT(issueLinks): added in the v0.1.109 fork, remove after 2027-01-16.
         issueLinks: true,
+        // COMPAT(checkoutDiffBaseSelection): added in the v0.1.109 fork, remove after 2027-01-16.
+        checkoutDiffBaseSelection: true,
       },
     };
   }

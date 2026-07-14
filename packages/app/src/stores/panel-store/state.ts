@@ -54,6 +54,53 @@ export interface PanelCoreState {
   explorerTabByCheckout: Record<string, ExplorerTab>;
 }
 
+export interface DiffBaseSelectionScope {
+  serverId: string;
+  workspaceId?: string | null;
+  cwd: string;
+}
+
+function normalizeDiffBaseKeyPart(value: string | null | undefined): string | null {
+  const trimmed = value?.trim() ?? "";
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeDiffBaseCwd(cwd: string): string {
+  const trimmed = cwd.trim();
+  return trimmed === "/" ? trimmed : trimmed.replace(/\/+$/, "");
+}
+
+export function buildDiffBaseSelectionKey(scope: DiffBaseSelectionScope): string | null {
+  const serverId = normalizeDiffBaseKeyPart(scope.serverId);
+  if (!serverId) {
+    return null;
+  }
+  const serverPart = `server=${encodeURIComponent(serverId)}`;
+  const workspaceId = normalizeDiffBaseKeyPart(scope.workspaceId);
+  if (workspaceId) {
+    return `diff-base:${serverPart}:workspace=${encodeURIComponent(workspaceId)}`;
+  }
+  const cwd = normalizeDiffBaseKeyPart(normalizeDiffBaseCwd(scope.cwd));
+  return cwd ? `diff-base:${serverPart}:cwd=${encodeURIComponent(cwd)}` : null;
+}
+
+export function setDiffBaseRefInState(
+  selections: Record<string, string>,
+  key: string,
+  baseRef: string | null,
+): Record<string, string> {
+  const normalizedBaseRef = normalizeDiffBaseKeyPart(baseRef);
+  if (normalizedBaseRef) {
+    return { ...selections, [key]: normalizedBaseRef };
+  }
+  if (!(key in selections)) {
+    return selections;
+  }
+  const next = { ...selections };
+  delete next[key];
+  return next;
+}
+
 function clampNumber(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) {
     return min;
@@ -222,6 +269,29 @@ function migratePanelDesktopFocusMode(state: MigratablePanelState): void {
   }
 }
 
+function migratePanelDiffBaseSelections(state: MigratablePanelState, version: number): void {
+  if (
+    version < 13 ||
+    typeof state.diffBaseRefByWorkspace !== "object" ||
+    !state.diffBaseRefByWorkspace ||
+    Array.isArray(state.diffBaseRefByWorkspace)
+  ) {
+    state.diffBaseRefByWorkspace = {};
+    return;
+  }
+  const next: Record<string, string> = {};
+  for (const [key, value] of Object.entries(state.diffBaseRefByWorkspace)) {
+    if (typeof value !== "string") {
+      continue;
+    }
+    const normalized = normalizeDiffBaseKeyPart(value);
+    if (normalized) {
+      next[key] = normalized;
+    }
+  }
+  state.diffBaseRefByWorkspace = next;
+}
+
 export function migratePanelState(
   persistedState: unknown,
   version: number,
@@ -276,6 +346,7 @@ export function migratePanelState(
     delete state.mobileView;
     delete state.mobilePanel;
   }
+  migratePanelDiffBaseSelections(state, version);
 
   return state;
 }

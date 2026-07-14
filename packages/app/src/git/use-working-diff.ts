@@ -13,6 +13,8 @@ import {
 } from "@/review";
 import { useCheckoutDiffQuery } from "@/git/use-diff-query";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
+import { useHostFeature } from "@/runtime/host-features";
+import { buildDiffBaseSelectionKey, usePanelStore } from "@/stores/panel-store";
 
 interface UseWorkingDiffOptions {
   serverId: string;
@@ -47,6 +49,29 @@ export function useWorkingDiff({
   const hasUncommittedChanges = Boolean(gitStatus?.isDirty);
   const currentBranchName =
     gitStatus?.currentBranch && gitStatus.currentBranch !== "HEAD" ? gitStatus.currentBranch : null;
+  const supportsBaseSelection = useHostFeature(serverId, "checkoutDiffBaseSelection");
+  const baseSelectionKey = useMemo(
+    () => buildDiffBaseSelectionKey({ serverId, workspaceId, cwd }),
+    [cwd, serverId, workspaceId],
+  );
+  const persistedBaseRef = usePanelStore((state) => {
+    if (!baseSelectionKey) {
+      return undefined;
+    }
+    return state.diffBaseRefByWorkspace[baseSelectionKey];
+  });
+  const setDiffBaseRefForWorkspace = usePanelStore((state) => state.setDiffBaseRefForWorkspace);
+  const selectedBaseRef = supportsBaseSelection ? (persistedBaseRef ?? null) : null;
+  const effectiveBaseRef = selectedBaseRef ?? baseRef;
+  const selectBaseRef = useCallback(
+    (nextBaseRef: string | null) => {
+      if (!baseSelectionKey) {
+        return;
+      }
+      setDiffBaseRefForWorkspace(baseSelectionKey, nextBaseRef);
+    },
+    [baseSelectionKey, setDiffBaseRefForWorkspace],
+  );
 
   const reviewDraftScopeKey = useMemo(
     () =>
@@ -75,6 +100,7 @@ export function useWorkingDiff({
   );
   const selectUncommitted = useCallback(() => selectDiffMode("uncommitted"), [selectDiffMode]);
   const selectBase = useCallback(() => selectDiffMode("base"), [selectDiffMode]);
+  const reviewBaseRef = diffMode === "base" ? effectiveBaseRef : baseRef;
 
   const {
     files,
@@ -85,7 +111,7 @@ export function useWorkingDiff({
     serverId,
     cwd,
     mode: diffMode,
-    baseRef,
+    baseRef: reviewBaseRef,
     ignoreWhitespace,
     enabled: enabled && isGit,
     queryScope,
@@ -97,10 +123,10 @@ export function useWorkingDiff({
         workspaceId,
         cwd,
         mode: diffMode,
-        baseRef,
+        baseRef: reviewBaseRef,
         ignoreWhitespace,
       }),
-    [baseRef, cwd, diffMode, ignoreWhitespace, serverId, workspaceId],
+    [cwd, diffMode, ignoreWhitespace, reviewBaseRef, serverId, workspaceId],
   );
   const reviewActions = useInlineReviewController({ reviewDraftKey });
   const reviewAttachment = useReviewAttachmentSnapshot({
@@ -108,7 +134,7 @@ export function useWorkingDiff({
     diffFiles: files,
     cwd,
     mode: diffMode,
-    baseRef,
+    baseRef: reviewBaseRef,
   });
 
   return {
@@ -118,6 +144,10 @@ export function useWorkingDiff({
     notGit,
     statusErrorMessage,
     baseRef,
+    effectiveBaseRef,
+    canSelectBase: supportsBaseSelection && baseSelectionKey !== null,
+    selectedBaseRef,
+    selectBaseRef,
     currentBranchName,
     diffMode,
     selectUncommitted,

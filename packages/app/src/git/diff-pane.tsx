@@ -86,6 +86,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip
 import { lineNumberGutterWidth } from "@/components/code-insets";
 import { GitActionsSplitButton } from "@/git/actions-split-button";
 import { BranchSwitcher } from "@/components/branch-switcher";
+import { DiffBasePicker } from "@/git/diff-base-picker";
 import { useGitActions } from "@/git/use-actions";
 import { GIT_ACTION_ICONS } from "@/git/action-icons";
 import { buildForgeSignInCommand, getForgePresentation, type Forge } from "@/git/forge";
@@ -2689,6 +2690,10 @@ export function GitDiffPane({
     notGit,
     statusErrorMessage,
     baseRef,
+    effectiveBaseRef,
+    canSelectBase,
+    selectedBaseRef,
+    selectBaseRef,
     currentBranchName,
     diffMode,
     selectUncommitted: handleSelectUncommitted,
@@ -2819,19 +2824,23 @@ export function GitDiffPane({
     () => computeBaseRefLabel(baseRef, t("workspace.git.diff.base")),
     [baseRef, t],
   );
+  const effectiveBaseRefLabel = useMemo(
+    () => computeBaseRefLabel(effectiveBaseRef, t("workspace.git.diff.base")),
+    [effectiveBaseRef, t],
+  );
   const { gitActions, branchLabel } = useGitActions({
     serverId,
     cwd,
     icons: GIT_ACTION_ICONS,
   });
   const committedDiffDescription = useMemo(
-    () => computeCommittedDiffDescription(branchLabel, baseRefLabel),
-    [baseRefLabel, branchLabel],
+    () => computeCommittedDiffDescription(branchLabel, effectiveBaseRefLabel),
+    [branchLabel, effectiveBaseRefLabel],
   );
   const emptyMessage = computeEmptyMessage(
     changesPreferences.hideWhitespace,
     diffMode,
-    baseRefLabel,
+    effectiveBaseRefLabel,
     {
       hiddenWhitespace: t("workspace.git.diff.emptyHiddenWhitespace"),
       uncommitted: t("workspace.git.diff.emptyUncommitted"),
@@ -2879,12 +2888,25 @@ export function GitDiffPane({
       {isGit ? (
         <View style={styles.diffStatusContainer}>
           <View style={styles.diffStatusInner}>
-            <DiffModeMenu
-              diffMode={diffMode}
-              committedDescription={committedDiffDescription}
-              onSelectUncommitted={handleSelectUncommitted}
-              onSelectBase={handleSelectBase}
-            />
+            <View style={styles.diffScopeControls}>
+              <DiffModeMenu
+                diffMode={diffMode}
+                committedDescription={committedDiffDescription}
+                onSelectUncommitted={handleSelectUncommitted}
+                onSelectBase={handleSelectBase}
+              />
+              {canSelectBase && diffMode === "base" ? (
+                <DiffBasePicker
+                  serverId={serverId}
+                  workspaceId={workspaceId}
+                  cwd={cwd}
+                  selectedBaseRef={selectedBaseRef}
+                  defaultBaseRefLabel={baseRefLabel}
+                  effectiveBaseRefLabel={effectiveBaseRefLabel}
+                  onSelect={selectBaseRef}
+                />
+              ) : null}
+            </View>
             <View style={styles.diffStatusButtons}>
               <ChangesTabToggle
                 isMobile={isMobile}
@@ -2973,6 +2995,12 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "space-between",
     paddingRight: theme.spacing[3],
+  },
+  diffScopeControls: {
+    flexDirection: "row",
+    alignItems: "center",
+    minWidth: 0,
+    flexShrink: 1,
   },
   diffModeTrigger: {
     flexDirection: "row",

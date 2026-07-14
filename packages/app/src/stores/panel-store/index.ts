@@ -9,6 +9,7 @@ import {
 } from "../explorer-tab-memory";
 import { type ExplorerCheckoutContext } from "../explorer-checkout-context";
 import {
+  buildDiffBaseSelectionKey,
   buildOpenFileExplorerPatch,
   buildToggleFileExplorerPatch,
   clampExplorerFilesSplitRatio,
@@ -24,6 +25,7 @@ import {
   MIN_EXPLORER_SIDEBAR_WIDTH,
   MIN_SIDEBAR_WIDTH,
   migratePanelState,
+  setDiffBaseRefInState,
   selectIsAgentListOpen,
   selectIsFileExplorerOpen,
   setMobilePanelTarget,
@@ -41,6 +43,7 @@ export type { ExplorerTab } from "../explorer-tab-memory";
 export type { ExplorerCheckoutContext } from "../explorer-checkout-context";
 export type {
   DesktopSidebarState,
+  DiffBaseSelectionScope,
   ExplorerPanelIntent,
   MobilePanelView,
   MobilePanelSelection,
@@ -49,6 +52,7 @@ export type {
   SortOption,
 } from "./state";
 export {
+  buildDiffBaseSelectionKey,
   DEFAULT_EXPLORER_FILES_SPLIT_RATIO,
   DEFAULT_EXPLORER_SIDEBAR_WIDTH,
   DEFAULT_SIDEBAR_WIDTH,
@@ -82,6 +86,7 @@ export interface PanelState {
   // by full uncompressed dir path, so folders default to expanded and new
   // folders stay expanded as the diff changes.
   diffCollapsedFoldersByWorkspace: Record<string, string[]>;
+  diffBaseRefByWorkspace: Record<string, string>;
   sidebarWidth: number;
   explorerWidth: number;
   explorerSortOption: SortOption;
@@ -110,6 +115,7 @@ export interface PanelState {
   setExpandedPathsForWorkspace: (workspaceKey: string, paths: ExpandedPathsUpdate) => void;
   setDiffExpandedPathsForWorkspace: (workspaceKey: string, paths: string[]) => void;
   setDiffCollapsedFoldersForWorkspace: (workspaceKey: string, dirPaths: string[]) => void;
+  setDiffBaseRefForWorkspace: (workspaceKey: string, baseRef: string | null) => void;
   activateExplorerTabForCheckout: (checkout: ExplorerCheckoutContext) => void;
   setSidebarWidth: (width: number) => void;
   setExplorerWidth: (width: number) => void;
@@ -147,6 +153,7 @@ export const usePanelStore = create<PanelState>()(
       expandedPathsByWorkspace: {},
       diffExpandedPathsByWorkspace: {},
       diffCollapsedFoldersByWorkspace: {},
+      diffBaseRefByWorkspace: {},
       sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
       explorerWidth: DEFAULT_EXPLORER_SIDEBAR_WIDTH,
       explorerSortOption: "name",
@@ -287,6 +294,14 @@ export const usePanelStore = create<PanelState>()(
             [workspaceKey]: dirPaths,
           },
         })),
+      setDiffBaseRefForWorkspace: (workspaceKey, baseRef) =>
+        set((state) => ({
+          diffBaseRefByWorkspace: setDiffBaseRefInState(
+            state.diffBaseRefByWorkspace,
+            workspaceKey,
+            baseRef,
+          ),
+        })),
       activateExplorerTabForCheckout: (checkout) =>
         set((state) => ({
           explorerTab: resolveExplorerTabForCheckout({
@@ -310,7 +325,7 @@ export const usePanelStore = create<PanelState>()(
     }),
     {
       name: "panel-state",
-      version: 12,
+      version: 13,
       storage: createJSONStorage(() => AsyncStorage),
       migrate: (persistedState, version) =>
         migratePanelState(persistedState, version, { isWeb }) as unknown as PanelState,
@@ -321,6 +336,7 @@ export const usePanelStore = create<PanelState>()(
         expandedPathsByWorkspace: state.expandedPathsByWorkspace,
         diffExpandedPathsByWorkspace: state.diffExpandedPathsByWorkspace,
         diffCollapsedFoldersByWorkspace: state.diffCollapsedFoldersByWorkspace,
+        diffBaseRefByWorkspace: state.diffBaseRefByWorkspace,
         sidebarWidth: state.sidebarWidth,
         explorerWidth: state.explorerWidth,
         explorerSortOption: state.explorerSortOption,
