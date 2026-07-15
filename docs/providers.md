@@ -117,7 +117,9 @@ Boundary tests should assert observable behavior: cold reads may call provider a
 
 ## Provider Usage Fetchers
 
-Provider plan usage is fetch-on-demand, not a daemon push subscription. The app calls `provider.usage.list.request` through React Query when the usage tooltip or Host Usage settings screen is shown, and the daemon returns the normalized `ProviderUsage` list directly.
+Provider plan usage is normalized and cached per provider. The app calls `provider.usage.list.request` through React Query when the usage tooltip or Host Usage settings screen is shown. The daemon also refreshes usage every 15 minutes and shortly after a provider turn ends so 5-hour and weekly limit warnings work without an open client. Provider-specific refreshes must not fan out to every fetcher.
+
+`ProviderUsageWindow.windowMinutes` identifies windows whose duration is known from the provider response or a provider-defined API field. The alert monitor considers only 300-minute and 10,080-minute windows, persists threshold delivery in `$PASEO_HOME/provider-usage-alerts.json`, and broadcasts an authoritative `provider.usage.alerts.changed` snapshot. Errors and unavailable provider responses retain the last known alert state rather than manufacturing a reset.
 
 To add plan usage for a provider, add `packages/server/src/services/quota-fetcher/providers/<provider>.ts` and register it in `packages/server/src/services/quota-fetcher/manifest.ts`. The provider file exports only its fetcher class; provider auth, endpoint constants, API schemas, and normalization helpers stay private in that file. A fetcher owns provider auth/API parsing and returns the generic shape:
 

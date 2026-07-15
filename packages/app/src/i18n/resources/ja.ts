@@ -1667,6 +1667,11 @@ export const ja: TranslationResources = {
     sessionCost: "セッションコスト: {{cost}}",
     accessibility: "コンテキストウィンドウ{{percentage}}%使用",
   },
+  providerUsageAlerts: {
+    hostSummary: "{{provider}} · {{window}}: {{percentage}}% 使用済み",
+    additional: "他 +{{count}} 件",
+    openUsage: "{{host}} の使用量制限を開く",
+  },
   review: {
     comment: {
       add: "レビューコメントを追加",

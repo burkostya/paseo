@@ -7,6 +7,7 @@ import { daemonConfigQueryKey } from "@/data/daemon-config";
 import { daemonPairingOfferQueryKey } from "@/data/daemon-pairing";
 import { favoriteModelsQueryKey } from "@/data/favorite-models";
 import { providersSnapshotQueryKey } from "@/data/providers-snapshot";
+import { providerUsageAlertsQueryKey } from "@/provider-usage/alerts";
 import {
   checkoutDiffPushRoute,
   invalidateServerDataQueriesAfterReconnect,
@@ -164,6 +165,24 @@ describe("server data push router", () => {
         favoriteModels: [{ provider: "codex", modelId: "gpt-5" }],
       },
     });
+    fake.emit({
+      type: "status",
+      payload: {
+        status: "provider.usage.alerts.changed",
+        alerts: [
+          {
+            providerId: "codex",
+            displayName: "Codex",
+            windowId: "weekly",
+            windowLabel: "Weekly",
+            windowMinutes: 10_080,
+            usedPct: 91,
+            thresholdPct: 90,
+            observedAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      },
+    });
 
     expect(queryClient.getQueryData(providersSnapshotQueryKey(serverId))).toEqual({
       entries: [{ provider: "codex", status: "ready", enabled: true, models: [] }],
@@ -176,6 +195,9 @@ describe("server data push router", () => {
       favoriteModels: [{ provider: "codex", modelId: "gpt-5" }],
       initialized: true,
     });
+    expect(queryClient.getQueryData(providerUsageAlertsQueryKey(serverId))).toEqual([
+      expect.objectContaining({ providerId: "codex", windowId: "weekly", thresholdPct: 90 }),
+    ]);
 
     unmount();
     fake.emit(providerUpdate("2026-01-01T00:00:01.000Z"));

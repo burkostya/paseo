@@ -1685,6 +1685,11 @@ export const ru: TranslationResources = {
     sessionCost: "Стоимость сеанса{{cost}}",
     accessibility: "Контекстное окно{{percentage}}% использовано",
   },
+  providerUsageAlerts: {
+    hostSummary: "{{provider}} · {{window}}: использовано {{percentage}}%",
+    additional: "ещё +{{count}}",
+    openUsage: "Открыть лимиты использования для {{host}}",
+  },
   review: {
     comment: {
       add: "Добавить комментарий к обзору",

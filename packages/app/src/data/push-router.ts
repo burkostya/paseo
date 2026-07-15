@@ -3,6 +3,7 @@ import type {
   ListTerminalsResponse,
   FavoriteModelPreference,
   MutableDaemonConfig,
+  ProviderUsageAlert,
   SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
 import { agentCommandsQueryRoot } from "@/hooks/agent-commands-query";
@@ -16,6 +17,7 @@ import {
   providersSnapshotQueryRoot,
 } from "@/data/providers-snapshot";
 import { favoriteModelsQueryKey, type FavoriteModelsCache } from "@/data/favorite-models";
+import { providerUsageAlertsQueryKey } from "@/provider-usage/alerts";
 
 type ProvidersSnapshotUpdateMessage = Extract<
   SessionOutboundMessage,
@@ -304,6 +306,11 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
       serverId: input.serverId,
       message,
     });
+    applyProviderUsageAlertsStatus({
+      queryClient: input.queryClient,
+      serverId: input.serverId,
+      message,
+    });
   });
   const unsubscribeCheckoutDiffUpdate = input.client.on("checkout_diff_update", (message) => {
     applyCheckoutDiffUpdate({
@@ -457,6 +464,19 @@ function applyFavoriteModelsStatus(input: {
     favoriteModels: payload.favoriteModels,
     initialized: true,
   });
+}
+
+export function applyProviderUsageAlertsStatus(input: {
+  queryClient: QueryClient;
+  serverId: string;
+  message: StatusMessage;
+}): void {
+  const payload = input.message.payload;
+  if (!isProviderUsageAlertsChangedPayload(payload)) return;
+  input.queryClient.setQueryData<ProviderUsageAlert[]>(
+    providerUsageAlertsQueryKey(input.serverId),
+    payload.alerts.map((alert) => Object.assign({}, alert)),
+  );
 }
 
 function applyCheckoutDiffUpdate(input: {
@@ -828,4 +848,11 @@ function isFavoriteModelsChangedPayload(payload: StatusMessage["payload"]): payl
         typeof favorite.modelId === "string",
     )
   );
+}
+
+function isProviderUsageAlertsChangedPayload(payload: StatusMessage["payload"]): payload is {
+  status: "provider.usage.alerts.changed";
+  alerts: ProviderUsageAlert[];
+} {
+  return payload.status === "provider.usage.alerts.changed" && Array.isArray(payload.alerts);
 }

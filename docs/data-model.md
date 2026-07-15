@@ -46,6 +46,7 @@ Store APIs own persistence atomicity and should not make services coordinate raw
 $PASEO_HOME/
 ├── config.json                          # Daemon configuration
 ├── app-preferences.json                # Host-scoped preferences shared by connected clients
+├── provider-usage-alerts.json           # Active quota alerts and delivered-threshold cursors
 ├── server-id                            # Stable daemon identifier (plain text, "srv_<base64url>")
 ├── daemon-keypair.json                  # E2EE keypair for relay (mode 0600)
 ├── paseo.pid                            # Daemon PID lock file
@@ -78,6 +79,12 @@ The `agents/{sanitized-cwd}/` directory name is derived from the agent's `cwd` b
 The daemon owns preferences that must stay consistent across clients connected to the same host. `favoriteModels` stores `{ provider, modelId }` identities and is updated through serialized, idempotent operations before the daemon broadcasts the new snapshot. File absence means the host has not been initialized yet; an existing file with an empty array is authoritative and must not be repopulated from a client's legacy local preferences. Different daemon homes remain independent.
 
 Last-used composer selections such as provider, model, mode, thinking level, features, and isolation remain client-local and are not stored here.
+
+### Provider usage alerts
+
+**Path:** `$PASEO_HOME/provider-usage-alerts.json`
+
+The daemon persists active 5-hour/weekly quota alerts together with the highest 75/90/95 threshold already notified for each provider window. This prevents duplicate notifications across daemon restarts. State is written atomically; provider fetch errors retain the last authoritative state, while a reset or a successful reading below 75% re-arms the window.
 
 ---
 

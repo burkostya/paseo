@@ -1680,6 +1680,11 @@ export const ptBR: TranslationResources = {
     sessionCost: "Custo da sessão {{cost}}",
     accessibility: "Janela de contexto {{percentage}}% usada",
   },
+  providerUsageAlerts: {
+    hostSummary: "{{provider}} · {{window}}: {{percentage}}% usado",
+    additional: "+{{count}} a mais",
+    openUsage: "Abrir limites de uso de {{host}}",
+  },
   review: {
     comment: {
       add: "Adicionar comentário de revisão",

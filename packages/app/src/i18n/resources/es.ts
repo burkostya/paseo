@@ -1694,6 +1694,11 @@ export const es: TranslationResources = {
     sessionCost: "Costo de la sesión{{cost}}",
     accessibility: "Ventana de contexto{{percentage}}% utilizada",
   },
+  providerUsageAlerts: {
+    hostSummary: "{{provider}} · {{window}}: {{percentage}}% usado",
+    additional: "+{{count}} más",
+    openUsage: "Abrir límites de uso de {{host}}",
+  },
   review: {
     comment: {
       add: "Agregar comentario de revisión",

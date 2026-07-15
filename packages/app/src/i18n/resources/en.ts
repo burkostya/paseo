@@ -1662,6 +1662,11 @@ export const en = {
     sessionCost: "Session cost {{cost}}",
     accessibility: "Context window {{percentage}}% used",
   },
+  providerUsageAlerts: {
+    hostSummary: "{{provider}} {{window}} {{percentage}}% used",
+    additional: "+{{count}} more",
+    openUsage: "Open usage limits for {{host}}",
+  },
   review: {
     comment: {
       add: "Add review comment",

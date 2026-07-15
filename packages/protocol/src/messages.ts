@@ -3044,6 +3044,8 @@ export const ServerInfoStatusPayloadSchema = z
         projectCustomIcon: z.boolean().optional(),
         // COMPAT(favoriteModelsSync): added in the v0.1.109 fork, remove after 2027-01-16.
         favoriteModelsSync: z.boolean().optional(),
+        // COMPAT(providerUsageWarnings): added in the v0.1.109 fork, remove after 2027-01-16.
+        providerUsageWarnings: z.boolean().optional(),
       })
       .optional(),
   })
@@ -3146,6 +3148,33 @@ export const FavoriteModelsChangedStatusPayloadSchema = z
   })
   .passthrough();
 
+export const ProviderUsageAlertSchema = z.object({
+  providerId: z.string(),
+  displayName: z.string(),
+  windowId: z.string(),
+  windowLabel: z.string(),
+  windowMinutes: z.number(),
+  usedPct: z.number(),
+  thresholdPct: z.number(),
+  resetsAt: z.string().nullable().optional(),
+  observedAt: z.string(),
+});
+
+export const ProviderUsageAlertsChangedStatusPayloadSchema = z
+  .object({
+    status: z.literal("provider.usage.alerts.changed"),
+    alerts: z.array(ProviderUsageAlertSchema),
+    shouldNotify: z.boolean().optional(),
+    notification: z
+      .object({
+        title: z.string(),
+        body: z.string().optional(),
+        data: z.record(z.string(), z.unknown()).optional(),
+      })
+      .optional(),
+  })
+  .passthrough();
+
 export const KnownStatusPayloadSchema = z.discriminatedUnion("status", [
   AgentCreatedStatusPayloadSchema,
   AgentCreateFailedStatusPayloadSchema,
@@ -3155,6 +3184,7 @@ export const KnownStatusPayloadSchema = z.discriminatedUnion("status", [
   RestartRequestedStatusPayloadSchema,
   DaemonConfigChangedStatusPayloadSchema,
   FavoriteModelsChangedStatusPayloadSchema,
+  ProviderUsageAlertsChangedStatusPayloadSchema,
 ]);
 
 export type KnownStatusPayload = z.infer<typeof KnownStatusPayloadSchema>;
@@ -5165,6 +5195,7 @@ export const ProviderUsageWindowSchema = z.object({
   resetsAt: z.string().nullable().optional(),
   runsOutAt: z.string().nullable().optional(),
   shortfallPct: z.number().nullable().optional(),
+  windowMinutes: z.number().nullable().optional(),
   tone: ProviderUsageToneSchema.optional(),
 });
 
@@ -5792,6 +5823,7 @@ export type ProviderUsageTone = z.infer<typeof ProviderUsageToneSchema>;
 export type ProviderUsageStatus = z.infer<typeof ProviderUsageStatusSchema>;
 export type ProviderUsage = z.infer<typeof ProviderUsageSchema>;
 export type ProviderUsageWindow = z.infer<typeof ProviderUsageWindowSchema>;
+export type ProviderUsageAlert = z.infer<typeof ProviderUsageAlertSchema>;
 export type ProviderUsageBalance = z.infer<typeof ProviderUsageBalanceSchema>;
 export type ProviderUsageDetail = z.infer<typeof ProviderUsageDetailSchema>;
 export type ProviderUsageListResponseMessage = z.infer<

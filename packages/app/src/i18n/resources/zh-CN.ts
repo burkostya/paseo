@@ -1631,6 +1631,11 @@ export const zhCN: TranslationResources = {
     sessionCost: "会话费用 {{cost}}",
     accessibility: "上下文窗口已使用 {{percentage}}%",
   },
+  providerUsageAlerts: {
+    hostSummary: "{{provider}} · {{window}}：已使用 {{percentage}}%",
+    additional: "另有 +{{count}} 项",
+    openUsage: "打开 {{host}} 的用量限制",
+  },
   review: {
     comment: {
       add: "添加 review 评论",

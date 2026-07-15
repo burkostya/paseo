@@ -1698,6 +1698,11 @@ export const fr: TranslationResources = {
     sessionCost: "Coût de la séance{{cost}}",
     accessibility: "Fenêtre contextuelle{{percentage}}% utilisé",
   },
+  providerUsageAlerts: {
+    hostSummary: "{{provider}} · {{window}} : {{percentage}} % utilisés",
+    additional: "+{{count}} autres",
+    openUsage: "Ouvrir les limites d’utilisation de {{host}}",
+  },
   review: {
     comment: {
       add: "Ajouter un commentaire",

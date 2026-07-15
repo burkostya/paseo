@@ -1651,6 +1651,11 @@ export const ar: TranslationResources = {
     sessionCost: "تكلفة الجلسة{{cost}}",
     accessibility: "تم استخدام نافذة السياق{{percentage}}%",
   },
+  providerUsageAlerts: {
+    hostSummary: "{{provider}} · {{window}}: تم استخدام {{percentage}}٪",
+    additional: "+{{count}} إضافية",
+    openUsage: "فتح حدود الاستخدام لـ {{host}}",
+  },
   review: {
     comment: {
       add: "إضافة تعليق المراجعة",
