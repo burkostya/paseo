@@ -10,7 +10,7 @@ export type AgentUnarchiveController = Pick<AgentManager, "notifyAgentState" | "
 
 export type AgentRunController = Pick<
   AgentManager,
-  "getAgent" | "tryRunOutOfBand" | "hasInFlightRun" | "replaceAgentRun" | "streamAgent"
+  "getAgent" | "resolveCommand" | "hasInFlightRun" | "replaceAgentRun" | "streamAgent"
 >;
 
 export interface StartAgentRunOptions {
@@ -41,14 +41,16 @@ export async function startAgentRun(
   // Out-of-band commands (e.g. /goal pause) must run WITHOUT canceling an
   // in-flight turn — replaceAgentRun would interrupt the running turn. The
   // intercept lives at this layer so it covers every prompt entrypoint.
-  if (agentManager.tryRunOutOfBand(agentId, prompt, options?.runOptions)) {
+  const command = await agentManager.resolveCommand(agentId, prompt, options?.runOptions);
+  if (command.handled) {
     return { outOfBand: true };
   }
+  const effectivePrompt = command.prompt;
   const shouldReplace = Boolean(options?.replaceRunning && agentManager.hasInFlightRun(agentId));
   const runOptions = options?.runOptions;
   const iterator = shouldReplace
-    ? await agentManager.replaceAgentRun(agentId, prompt, runOptions)
-    : agentManager.streamAgent(agentId, prompt, runOptions);
+    ? await agentManager.replaceAgentRun(agentId, effectivePrompt, runOptions)
+    : agentManager.streamAgent(agentId, effectivePrompt, runOptions);
   logger.trace(
     {
       agentId,

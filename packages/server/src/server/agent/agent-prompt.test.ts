@@ -87,7 +87,10 @@ function createFinishNotificationScenario(
   Reflect.set(agentManager, "getLastAssistantMessage", async () => {
     return options?.childLastAssistantMessage ?? null;
   });
-  Reflect.set(agentManager, "tryRunOutOfBand", () => false);
+  Reflect.set(agentManager, "resolveCommand", async (_agentId: string, prompt: string) => ({
+    handled: false,
+    prompt,
+  }));
   Reflect.set(agentManager, "hasInFlightRun", () => Boolean(options?.parentPromptError));
   Reflect.set(agentManager, "streamAgent", (_agentId: string, prompt: string) => {
     parentPrompted = true;
@@ -167,7 +170,11 @@ test("sendPromptToAgent forwards the client message id as run options", async ()
     "getAgent",
     vi.fn(() => agent),
   );
-  Reflect.set(agentManager, "tryRunOutOfBand", vi.fn().mockReturnValue(false));
+  Reflect.set(
+    agentManager,
+    "resolveCommand",
+    vi.fn(async (_agentId: string, prompt: string) => ({ handled: false, prompt })),
+  );
   Reflect.set(agentManager, "hasInFlightRun", vi.fn().mockReturnValue(false));
   Reflect.set(agentManager, "streamAgent", streamAgentSpy);
 
@@ -192,6 +199,66 @@ test("sendPromptToAgent forwards the client message id as run options", async ()
     outputSchema: { type: "object" },
     clientMessageId: "msg-client-1",
   });
+});
+
+test("resolves a foreground command before replacing the active run", async () => {
+  const calls: string[] = [];
+  const replacementSpy = vi.fn(() => (async function* noop() {})());
+  const streamSpy = vi.fn(() => (async function* noop() {})());
+  const agentManager: AgentManager = Object.create(AgentManager.prototype);
+  Reflect.set(agentManager, "getAgent", () => ({ id: "agent-1", provider: "codex" }));
+  Reflect.set(agentManager, "resolveCommand", async () => {
+    calls.push("resolve");
+    return { handled: false, prompt: "rewritten prompt" };
+  });
+  Reflect.set(agentManager, "hasInFlightRun", () => {
+    calls.push("check-running");
+    return true;
+  });
+  Reflect.set(agentManager, "replaceAgentRun", replacementSpy);
+  Reflect.set(agentManager, "streamAgent", streamSpy);
+
+  const agentStorage: AgentStorage = Object.create(AgentStorage.prototype);
+  Reflect.set(agentStorage, "get", async () => null);
+
+  await sendPromptToAgent({
+    agentManager,
+    agentStorage,
+    agentId: "agent-1",
+    prompt: "/plan improve tests",
+    logger: createTestLogger(),
+  });
+
+  expect(calls).toEqual(["resolve", "check-running"]);
+  expect(replacementSpy).toHaveBeenCalledWith("agent-1", "rewritten prompt", undefined);
+  expect(streamSpy).not.toHaveBeenCalled();
+});
+
+test("does not allocate a provider turn for a handled command", async () => {
+  const streamSpy = vi.fn(() => (async function* noop() {})());
+  const replacementSpy = vi.fn(() => (async function* noop() {})());
+  const agentManager: AgentManager = Object.create(AgentManager.prototype);
+  Reflect.set(agentManager, "getAgent", () => ({ id: "agent-1", provider: "codex" }));
+  Reflect.set(agentManager, "resolveCommand", async () => ({ handled: true }));
+  Reflect.set(agentManager, "hasInFlightRun", () => true);
+  Reflect.set(agentManager, "replaceAgentRun", replacementSpy);
+  Reflect.set(agentManager, "streamAgent", streamSpy);
+
+  const agentStorage: AgentStorage = Object.create(AgentStorage.prototype);
+  Reflect.set(agentStorage, "get", async () => null);
+
+  await expect(
+    sendPromptToAgent({
+      agentManager,
+      agentStorage,
+      agentId: "agent-1",
+      prompt: "/status",
+      logger: createTestLogger(),
+    }),
+  ).resolves.toEqual({ outOfBand: true });
+
+  expect(streamSpy).not.toHaveBeenCalled();
+  expect(replacementSpy).not.toHaveBeenCalled();
 });
 
 test("finish notifications tell the parent the child's last assistant message", async () => {
