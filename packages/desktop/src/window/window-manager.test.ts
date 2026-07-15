@@ -9,6 +9,7 @@ import {
   getMainWindowChromeOptions,
   getTitleBarOverlayOptions,
   readBadgeCount,
+  readWindowAttentionRequested,
   readWindowControlsOverlayUpdate,
   readWindowTheme,
   resolveRuntimeTitleBarOverlayOptions,
@@ -31,6 +32,17 @@ describe("window-manager", () => {
       expect(readBadgeCount(1.5)).toBe(0);
       expect(readBadgeCount("2")).toBe(0);
       expect(readBadgeCount({ count: 2 })).toBe(0);
+    });
+  });
+
+  describe("readWindowAttentionRequested", () => {
+    it("accepts booleans and rejects other IPC payloads", () => {
+      expect(readWindowAttentionRequested(true)).toBe(true);
+      expect(readWindowAttentionRequested(false)).toBe(false);
+      expect(readWindowAttentionRequested(undefined)).toBeNull();
+      expect(readWindowAttentionRequested(1)).toBeNull();
+      expect(readWindowAttentionRequested("true")).toBeNull();
+      expect(readWindowAttentionRequested({ active: true })).toBeNull();
     });
   });
 
