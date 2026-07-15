@@ -1,7 +1,7 @@
 import equal from "fast-deep-equal";
 import { v4 as uuidv4 } from "uuid";
 import { lstat, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
-import { basename, resolve, sep } from "path";
+import { basename, join, resolve, sep } from "path";
 import { homedir } from "node:os";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import {
@@ -62,6 +62,7 @@ import {
 import type { DaemonConfigStore } from "./daemon-config-store.js";
 import { loadPersistedConfig } from "./persisted-config.js";
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
+import { APP_PREFERENCES_FILE_NAME, AppPreferencesStore } from "./app-preferences-store.js";
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
 import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
@@ -462,6 +463,7 @@ export interface SessionOptions {
   workspaceGitService: WorkspaceGitService;
   workspaceAutoName: WorkspaceAutoName;
   daemonConfigStore: DaemonConfigStore;
+  appPreferencesStore?: AppPreferencesStore;
   mcpBaseUrl?: string | null;
   stt: Resolvable<SpeechToTextProvider | null>;
   sttLanguage?: string;
@@ -632,6 +634,7 @@ export class Session {
   private readonly workspaceProvisioning: WorkspaceProvisioningService;
   private readonly workspaceRecovery: WorkspaceRecoveryService;
   private readonly daemonConfigStore: DaemonConfigStore;
+  private readonly appPreferencesStore: AppPreferencesStore;
   private readonly pushTokenStore: PushTokenStore;
   private unsubscribeAgentEvents: (() => void) | null = null;
   private unsubscribeProjectMutations: (() => void) | null = null;
@@ -713,6 +716,7 @@ export class Session {
       workspaceGitService,
       workspaceAutoName,
       daemonConfigStore,
+      appPreferencesStore,
       stt,
       sttLanguage,
       tts,
@@ -779,6 +783,8 @@ export class Session {
       logger: this.sessionLogger,
     });
     this.workspaceAutoName = workspaceAutoName;
+    this.appPreferencesStore =
+      appPreferencesStore ?? new AppPreferencesStore(join(paseoHome, APP_PREFERENCES_FILE_NAME));
     this.workspaceProvisioning = createWorkspaceProvisioningService({
       serverId,
       workspaceRegistry: this.workspaceRegistry,
@@ -2056,6 +2062,12 @@ export class Session {
           },
         });
         return undefined;
+      case "preferences.favorite_models.get.request":
+        return this.handleFavoriteModelsGetRequest(msg.requestId);
+      case "preferences.favorite_models.initialize.request":
+        return this.handleFavoriteModelsInitializeRequest(msg.requestId, msg.favoriteModels);
+      case "preferences.favorite_models.set.request":
+        return this.handleFavoriteModelSetRequest(msg);
       case "read_project_config_request":
         return this.projectConfigSession.handleReadProjectConfigRequest(msg);
       case "write_project_config_request":
@@ -2063,6 +2075,42 @@ export class Session {
       default:
         return undefined;
     }
+  }
+
+  private async handleFavoriteModelsGetRequest(requestId: string): Promise<void> {
+    const snapshot = await this.appPreferencesStore.getFavoriteModels();
+    this.emit({
+      type: "preferences.favorite_models.get.response",
+      payload: { requestId, ...snapshot },
+    });
+  }
+
+  private async handleFavoriteModelsInitializeRequest(
+    requestId: string,
+    favoriteModels: Extract<
+      SessionInboundMessage,
+      { type: "preferences.favorite_models.initialize.request" }
+    >["favoriteModels"],
+  ): Promise<void> {
+    const snapshot = await this.appPreferencesStore.initializeFavoriteModels(favoriteModels);
+    this.emit({
+      type: "preferences.favorite_models.initialize.response",
+      payload: { requestId, ...snapshot },
+    });
+  }
+
+  private async handleFavoriteModelSetRequest(
+    msg: Extract<SessionInboundMessage, { type: "preferences.favorite_models.set.request" }>,
+  ): Promise<void> {
+    const snapshot = await this.appPreferencesStore.setFavoriteModel({
+      provider: msg.provider,
+      modelId: msg.modelId,
+      favorite: msg.favorite,
+    });
+    this.emit({
+      type: "preferences.favorite_models.set.response",
+      payload: { requestId: msg.requestId, ...snapshot },
+    });
   }
 
   // eslint-disable-next-line complexity

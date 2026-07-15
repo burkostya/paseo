@@ -45,6 +45,7 @@ Store APIs own persistence atomicity and should not make services coordinate raw
 ```
 $PASEO_HOME/
 ├── config.json                          # Daemon configuration
+├── app-preferences.json                # Host-scoped preferences shared by connected clients
 ├── server-id                            # Stable daemon identifier (plain text, "srv_<base64url>")
 ├── daemon-keypair.json                  # E2EE keypair for relay (mode 0600)
 ├── paseo.pid                            # Daemon PID lock file
@@ -69,6 +70,14 @@ $PASEO_HOME/
 ```
 
 The `agents/{sanitized-cwd}/` directory name is derived from the agent's `cwd` by stripping the filesystem root and replacing path separators with `-` (Windows drive letters become a `C-` style prefix). Persistent server stores write atomically by writing a temp file in the target directory and then renaming it into place.
+
+### Shared app preferences
+
+**Path:** `$PASEO_HOME/app-preferences.json`
+
+The daemon owns preferences that must stay consistent across clients connected to the same host. `favoriteModels` stores `{ provider, modelId }` identities and is updated through serialized, idempotent operations before the daemon broadcasts the new snapshot. File absence means the host has not been initialized yet; an existing file with an empty array is authoritative and must not be repopulated from a client's legacy local preferences. Different daemon homes remain independent.
+
+Last-used composer selections such as provider, model, mode, thinking level, features, and isolation remain client-local and are not stored here.
 
 ---
 

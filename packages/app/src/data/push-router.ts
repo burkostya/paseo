@@ -1,6 +1,7 @@
 import type { Query, QueryCacheNotifyEvent, QueryClient, QueryKey } from "@tanstack/react-query";
 import type {
   ListTerminalsResponse,
+  FavoriteModelPreference,
   MutableDaemonConfig,
   SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
@@ -14,6 +15,7 @@ import {
   providersSnapshotQueryKey,
   providersSnapshotQueryRoot,
 } from "@/data/providers-snapshot";
+import { favoriteModelsQueryKey, type FavoriteModelsCache } from "@/data/favorite-models";
 
 type ProvidersSnapshotUpdateMessage = Extract<
   SessionOutboundMessage,
@@ -115,6 +117,12 @@ const RECONNECT_REPAIR_POLICIES: ReconnectRepairPolicy[] = [
     domain: "daemonPairingOffer",
     invalidate: ({ queryClient, serverId }) => {
       void queryClient.invalidateQueries({ queryKey: daemonPairingOfferQueryKey(serverId) });
+    },
+  },
+  {
+    domain: "favoriteModels",
+    invalidate: ({ queryClient, serverId }) => {
+      void queryClient.invalidateQueries({ queryKey: favoriteModelsQueryKey(serverId) });
     },
   },
   {
@@ -291,6 +299,11 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
   });
   const unsubscribeDaemonConfig = input.client.on("status", (message) => {
     applyDaemonConfigStatus({ queryClient: input.queryClient, serverId: input.serverId, message });
+    applyFavoriteModelsStatus({
+      queryClient: input.queryClient,
+      serverId: input.serverId,
+      message,
+    });
   });
   const unsubscribeCheckoutDiffUpdate = input.client.on("checkout_diff_update", (message) => {
     applyCheckoutDiffUpdate({
@@ -428,6 +441,21 @@ function applyDaemonConfigStatus(input: {
   );
   void input.queryClient.invalidateQueries({
     queryKey: daemonPairingOfferQueryKey(input.serverId),
+  });
+}
+
+function applyFavoriteModelsStatus(input: {
+  queryClient: QueryClient;
+  serverId: string;
+  message: StatusMessage;
+}): void {
+  const payload = input.message.payload;
+  if (!isFavoriteModelsChangedPayload(payload)) {
+    return;
+  }
+  input.queryClient.setQueryData<FavoriteModelsCache>(favoriteModelsQueryKey(input.serverId), {
+    favoriteModels: payload.favoriteModels,
+    initialized: true,
   });
 }
 
@@ -783,4 +811,21 @@ function isDaemonConfigChangedPayload(
   payload: StatusMessage["payload"],
 ): payload is { status: "daemon_config_changed"; config: MutableDaemonConfig } {
   return payload.status === "daemon_config_changed" && isRecord(payload.config);
+}
+
+function isFavoriteModelsChangedPayload(payload: StatusMessage["payload"]): payload is {
+  status: "preferences.favorite_models.changed";
+  favoriteModels: FavoriteModelPreference[];
+} {
+  return (
+    payload.status === "preferences.favorite_models.changed" &&
+    Array.isArray(payload.favoriteModels) &&
+    payload.favoriteModels.every(
+      (favorite) =>
+        isRecord(favorite) &&
+        typeof favorite.provider === "string" &&
+        favorite.provider.length > 0 &&
+        typeof favorite.modelId === "string",
+    )
+  );
 }

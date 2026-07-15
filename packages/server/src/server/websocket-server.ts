@@ -19,6 +19,7 @@ import type { DaemonConfigStore, MutableDaemonConfig } from "./daemon-config-sto
 import {
   type ServerInfoStatusPayload,
   type SessionOutboundMessage,
+  type FavoriteModelsSnapshot,
   type WorkspaceSetupSnapshot,
   type WSHelloMessage,
   type WSInboundMessage,
@@ -28,6 +29,7 @@ import {
   type WSOutboundMessage,
   wrapSessionMessage,
 } from "./messages.js";
+import { APP_PREFERENCES_FILE_NAME, AppPreferencesStore } from "./app-preferences-store.js";
 import { asUint8Array, decodeBinaryFrame } from "@getpaseo/protocol/binary-frames/index";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import type { HostnamesConfig } from "./hostnames.js";
@@ -526,6 +528,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly paseoHome: string;
   private readonly worktreesRoot: string | undefined;
   private readonly daemonConfigStore: DaemonConfigStore;
+  private readonly appPreferencesStore: AppPreferencesStore;
   private readonly pushTokenStore: PushTokenStore;
   private readonly pushNotificationSender: PushNotificationSender;
   private readonly mcpBaseUrl: string | null;
@@ -558,6 +561,7 @@ export class VoiceAssistantWebSocketServer {
   private eventLoopDelayMonitor: ReturnType<typeof monitorEventLoopDelay> | null = null;
   private unsubscribeSpeechReadiness: (() => void) | null = null;
   private unsubscribeDaemonConfigChange: (() => void) | null = null;
+  private unsubscribeAppPreferencesChange: (() => void) | null = null;
   private readonly providerUsageService: ProviderUsageService;
   private unsubscribeTerminalActivity: (() => void) | null = null;
   private readonly browserToolsBroker: BrowserToolsBroker | null;
@@ -646,6 +650,7 @@ export class VoiceAssistantWebSocketServer {
     this.paseoHome = paseoHome;
     this.worktreesRoot = daemonRuntimeConfig?.worktreesRoot;
     this.daemonConfigStore = daemonConfigStore;
+    this.appPreferencesStore = new AppPreferencesStore(join(paseoHome, APP_PREFERENCES_FILE_NAME));
     this.mcpBaseUrl = mcpBaseUrl;
     this.assignOptionalServices({
       speech,
@@ -678,6 +683,9 @@ export class VoiceAssistantWebSocketServer {
       );
       this.agentManager.updateProviderRegistry(nextAgentManagerState);
       this.broadcastDaemonConfigChanged(config);
+    });
+    this.unsubscribeAppPreferencesChange = this.appPreferencesStore.onChange((snapshot) => {
+      this.broadcastFavoriteModelsChanged(snapshot);
     });
 
     const pushLogger = this.logger.child({ module: "push" });
@@ -967,6 +975,8 @@ export class VoiceAssistantWebSocketServer {
     this.unsubscribeSpeechReadiness = null;
     this.unsubscribeDaemonConfigChange?.();
     this.unsubscribeDaemonConfigChange = null;
+    this.unsubscribeAppPreferencesChange?.();
+    this.unsubscribeAppPreferencesChange = null;
     this.unsubscribeTerminalActivity?.();
     this.unsubscribeTerminalActivity = null;
     if (this.runtimeMetricsInterval) {
@@ -1345,6 +1355,7 @@ export class VoiceAssistantWebSocketServer {
       workspaceGitService: this.workspaceGitService,
       workspaceAutoName: this.workspaceAutoName,
       daemonConfigStore: this.daemonConfigStore,
+      appPreferencesStore: this.appPreferencesStore,
       mcpBaseUrl: this.mcpBaseUrl,
       stt: () => this.speech?.resolveStt() ?? null,
       sttLanguage: this.speech?.resolveSttLanguage() ?? "en",
@@ -1614,6 +1625,8 @@ export class VoiceAssistantWebSocketServer {
         workspaceScriptManagement: true,
         // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
         projectCustomIcon: true,
+        // COMPAT(favoriteModelsSync): added in the v0.1.109 fork, remove after 2027-01-16.
+        favoriteModelsSync: true,
       },
     };
   }
@@ -1644,6 +1657,18 @@ export class VoiceAssistantWebSocketServer {
 
   private broadcastDaemonConfigChanged(config: MutableDaemonConfig): void {
     this.broadcast(this.createDaemonConfigChangedMessage(config));
+  }
+
+  private broadcastFavoriteModelsChanged(snapshot: FavoriteModelsSnapshot): void {
+    this.broadcast(
+      wrapSessionMessage({
+        type: "status",
+        payload: {
+          status: "preferences.favorite_models.changed",
+          favoriteModels: snapshot.favoriteModels,
+        },
+      }),
+    );
   }
 
   private bindSocketHandlers(ws: WebSocketLike): void {

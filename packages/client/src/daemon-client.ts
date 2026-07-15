@@ -101,6 +101,8 @@ import type {
   PaseoConfigRevision,
   WorkspaceCreateRequest,
   WorkspaceRecoveryState,
+  FavoriteModelPreference,
+  FavoriteModelsSnapshot,
 } from "@getpaseo/protocol/messages";
 import type {
   AgentPermissionRequest,
@@ -642,6 +644,11 @@ export interface DaemonStatusOptions {
 export interface DaemonPairingOfferOptions {
   requestId?: string;
   timeout?: number;
+}
+export type FavoriteModelsResult = FavoriteModelsSnapshot & { requestId: string };
+export interface SetFavoriteModelOptions extends FavoriteModelPreference {
+  favorite: boolean;
+  requestId?: string;
 }
 type DaemonUpdateResponse = z.infer<typeof DaemonUpdateResponseSchema>;
 type FetchAgentsPayload = Extract<
@@ -4590,6 +4597,40 @@ export class DaemonClient {
         config,
       },
       responseType: "set_daemon_config_response",
+    });
+  }
+
+  async getFavoriteModels(requestId?: string): Promise<FavoriteModelsResult> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "preferences.favorite_models.get.request",
+      },
+    });
+  }
+
+  async initializeFavoriteModels(
+    favoriteModels: FavoriteModelPreference[],
+    requestId?: string,
+  ): Promise<FavoriteModelsResult> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "preferences.favorite_models.initialize.request",
+        favoriteModels,
+      },
+    });
+  }
+
+  async setFavoriteModel(input: SetFavoriteModelOptions): Promise<FavoriteModelsResult> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: input.requestId,
+      message: {
+        type: "preferences.favorite_models.set.request",
+        provider: input.provider,
+        modelId: input.modelId,
+        favorite: input.favorite,
+      },
     });
   }
 

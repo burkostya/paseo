@@ -39,9 +39,9 @@ import { resolveProviderDefinition } from "@/utils/provider-definitions";
 import {
   buildFavoriteModelKey,
   mergeProviderPreferences,
-  toggleFavoriteModel,
   useFormPreferences,
 } from "@/hooks/use-form-preferences";
+import { useFavoriteModels } from "@/hooks/use-favorite-models";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import {
   AgentModeControl,
@@ -1428,7 +1428,9 @@ export const AgentControls = memo(function AgentControls({
   onDropdownClose,
   isCompactLayout,
 }: AgentControlsProps) {
-  const { preferences, updatePreferences } = useFormPreferences();
+  const { updatePreferences } = useFormPreferences();
+  const { favoriteKeys, toggleFavoriteModel: handleToggleFavoriteModel } =
+    useFavoriteModels(serverId);
   const agent = useSessionStore(
     useShallow((state) => selectAgentControlsSlice(state, serverId, agentId)),
   );
@@ -1483,14 +1485,6 @@ export const AgentControls = memo(function AgentControls({
   const modelOptions = useMemo<AgentControlOption[]>(() => {
     return (models ?? []).map((model) => ({ id: model.id, label: model.label }));
   }, [models]);
-  const favoriteKeys = useMemo(
-    () =>
-      new Set(
-        (preferences.favoriteModels ?? []).map((favorite) => buildFavoriteModelKey(favorite)),
-      ),
-    [preferences.favoriteModels],
-  );
-
   const thinkingOptions = useMemo<AgentControlOption[]>(() => {
     return (modelSelection.thinkingOptions ?? []).map((option) => ({
       id: option.id,
@@ -1526,18 +1520,6 @@ export const AgentControls = memo(function AgentControls({
     (_provider: AgentProvider, modelId: string) => handleSelectModel(modelId),
     [handleSelectModel],
   );
-
-  const handleToggleFavoriteModel = useCallback(
-    (provider: string, modelId: string) => {
-      void updatePreferences((current) =>
-        toggleFavoriteModel({ preferences: current, provider, modelId }),
-      ).catch((error) => {
-        console.warn("[AgentControls] toggle favorite model failed", error);
-      });
-    },
-    [updatePreferences],
-  );
-
   const handleSelectThinkingOption = useCallback(
     (thinkingOptionId: string) => {
       if (!client || !agentProvider) {
@@ -1692,18 +1674,11 @@ export function DraftAgentControls({
   modelSelectorServerId = null,
   isCompactLayout,
 }: DraftAgentControlsProps) {
-  const { preferences, updatePreferences } = useFormPreferences();
+  const { favoriteKeys, toggleFavoriteModel: handleToggleFavorite } =
+    useFavoriteModels(modelSelectorServerId);
   const mappedThinkingOptions = useMemo<AgentControlOption[]>(() => {
     return toThinkingControlOptions(thinkingOptions);
   }, [thinkingOptions]);
-  const favoriteKeys = useMemo(
-    () =>
-      new Set(
-        (preferences.favoriteModels ?? []).map((favorite) => buildFavoriteModelKey(favorite)),
-      ),
-    [preferences.favoriteModels],
-  );
-
   const effectiveSelectedThinkingOption =
     selectedThinkingOptionId || mappedThinkingOptions[0]?.id || undefined;
 
@@ -1714,17 +1689,6 @@ export function DraftAgentControls({
         label: model.label,
       })),
     [models],
-  );
-
-  const handleToggleFavorite = useCallback(
-    (provider: string, modelId: string) => {
-      void updatePreferences((current) =>
-        toggleFavoriteModel({ preferences: current, provider, modelId }),
-      ).catch((error) => {
-        console.warn("[DraftAgentControls] toggle favorite model failed", error);
-      });
-    },
-    [updatePreferences],
   );
 
   const modeControl = useMemo<AgentModeControlValue | null>(

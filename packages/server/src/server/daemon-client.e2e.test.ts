@@ -112,6 +112,86 @@ test("DaemonClient surfaces password auth failures from WebSocket close reasons"
   }
 });
 
+test("syncs favorite models between clients of one daemon and isolates another daemon", async () => {
+  const daemon = await createTestPaseoDaemon();
+  const isolatedDaemon = await createTestPaseoDaemon();
+  const clientA = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.1.105",
+  });
+  const clientB = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.1.105",
+  });
+  const isolatedClient = new DaemonClient({
+    url: `ws://127.0.0.1:${isolatedDaemon.port}/ws`,
+    appVersion: "0.1.105",
+  });
+
+  function nextFavoriteModelsUpdate(client: DaemonClient): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        unsubscribe();
+        reject(new Error("Timed out waiting for favorite model update"));
+      }, 5000);
+      const unsubscribe = client.on("status", (message) => {
+        if (message.payload.status !== "preferences.favorite_models.changed") {
+          return;
+        }
+        clearTimeout(timeout);
+        unsubscribe();
+        resolve(message.payload.favoriteModels);
+      });
+    });
+  }
+
+  try {
+    await Promise.all([clientA.connect(), clientB.connect(), isolatedClient.connect()]);
+    expect(clientA.getLastServerInfoMessage()?.features?.favoriteModelsSync).toBe(true);
+    await expect(clientA.getFavoriteModels()).resolves.toMatchObject({
+      favoriteModels: [],
+      initialized: false,
+    });
+
+    const initializedOnB = nextFavoriteModelsUpdate(clientB);
+    await expect(
+      clientA.initializeFavoriteModels([{ provider: "codex", modelId: "gpt-5" }]),
+    ).resolves.toMatchObject({
+      favoriteModels: [{ provider: "codex", modelId: "gpt-5" }],
+      initialized: true,
+    });
+    await expect(initializedOnB).resolves.toEqual([{ provider: "codex", modelId: "gpt-5" }]);
+    await expect(
+      clientB.initializeFavoriteModels([{ provider: "pi", modelId: "other" }]),
+    ).resolves.toMatchObject({
+      favoriteModels: [{ provider: "codex", modelId: "gpt-5" }],
+      initialized: true,
+    });
+
+    const addedOnA = nextFavoriteModelsUpdate(clientA);
+    await clientB.setFavoriteModel({ provider: "claude", modelId: "", favorite: true });
+    await expect(addedOnA).resolves.toEqual([
+      { provider: "codex", modelId: "gpt-5" },
+      { provider: "claude", modelId: "" },
+    ]);
+
+    const removedOnB = nextFavoriteModelsUpdate(clientB);
+    await clientA.setFavoriteModel({ provider: "codex", modelId: "gpt-5", favorite: false });
+    await expect(removedOnB).resolves.toEqual([{ provider: "claude", modelId: "" }]);
+    await expect(clientB.getFavoriteModels()).resolves.toMatchObject({
+      favoriteModels: [{ provider: "claude", modelId: "" }],
+      initialized: true,
+    });
+    await expect(isolatedClient.getFavoriteModels()).resolves.toMatchObject({
+      favoriteModels: [],
+      initialized: false,
+    });
+  } finally {
+    await Promise.all([clientA.close(), clientB.close(), isolatedClient.close()]);
+    await Promise.all([daemon.close(), isolatedDaemon.close()]);
+  }
+}, 30000);
+
 test("createAgent without an initial prompt returns an idle snapshot", async () => {
   const daemon = await createTestPaseoDaemon();
   const client = new DaemonClient({

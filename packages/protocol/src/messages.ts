@@ -918,6 +918,39 @@ export const WorkspaceRecoveryRestoreRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const FavoriteModelPreferenceSchema = z.object({
+  provider: z.string().min(1),
+  // The synthetic provider default is a real favorite target and uses an empty model id.
+  modelId: z.string(),
+});
+
+export const FavoriteModelsSnapshotSchema = z.object({
+  favoriteModels: z.array(FavoriteModelPreferenceSchema),
+  initialized: z.boolean(),
+});
+
+export type FavoriteModelPreference = z.infer<typeof FavoriteModelPreferenceSchema>;
+export type FavoriteModelsSnapshot = z.infer<typeof FavoriteModelsSnapshotSchema>;
+
+export const FavoriteModelsGetRequestSchema = z.object({
+  type: z.literal("preferences.favorite_models.get.request"),
+  requestId: z.string(),
+});
+
+export const FavoriteModelsInitializeRequestSchema = z.object({
+  type: z.literal("preferences.favorite_models.initialize.request"),
+  favoriteModels: z.array(FavoriteModelPreferenceSchema),
+  requestId: z.string(),
+});
+
+export const FavoriteModelSetRequestSchema = z.object({
+  type: z.literal("preferences.favorite_models.set.request"),
+  provider: z.string().min(1),
+  modelId: z.string(),
+  favorite: z.boolean(),
+  requestId: z.string(),
+});
+
 export const SetVoiceModeMessageSchema = z.object({
   type: z.literal("set_voice_mode"),
   enabled: z.boolean(),
@@ -1674,6 +1707,25 @@ export const WorkspaceRecoveryRestoreResponseSchema = z.object({
     accepted: z.boolean(),
     error: z.string().nullable(),
   }),
+});
+
+export const FavoriteModelsResponsePayloadSchema = FavoriteModelsSnapshotSchema.extend({
+  requestId: z.string(),
+});
+
+export const FavoriteModelsGetResponseSchema = z.object({
+  type: z.literal("preferences.favorite_models.get.response"),
+  payload: FavoriteModelsResponsePayloadSchema,
+});
+
+export const FavoriteModelsInitializeResponseSchema = z.object({
+  type: z.literal("preferences.favorite_models.initialize.response"),
+  payload: FavoriteModelsResponsePayloadSchema,
+});
+
+export const FavoriteModelSetResponseSchema = z.object({
+  type: z.literal("preferences.favorite_models.set.response"),
+  payload: FavoriteModelsResponsePayloadSchema,
 });
 
 export const SetVoiceModeResponseMessageSchema = z.object({
@@ -2591,6 +2643,9 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspacePinSetRequestSchema,
   WorkspaceRecoveryInspectRequestSchema,
   WorkspaceRecoveryRestoreRequestSchema,
+  FavoriteModelsGetRequestSchema,
+  FavoriteModelsInitializeRequestSchema,
+  FavoriteModelSetRequestSchema,
   SetVoiceModeMessageSchema,
   SendAgentMessageRequestSchema,
   WaitForFinishRequestSchema,
@@ -2987,6 +3042,8 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceScriptManagement: z.boolean().optional(),
         // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
         projectCustomIcon: z.boolean().optional(),
+        // COMPAT(favoriteModelsSync): added in the v0.1.109 fork, remove after 2027-01-16.
+        favoriteModelsSync: z.boolean().optional(),
       })
       .optional(),
   })
@@ -3082,6 +3139,13 @@ export const DaemonConfigChangedStatusPayloadSchema = z
   })
   .passthrough();
 
+export const FavoriteModelsChangedStatusPayloadSchema = z
+  .object({
+    status: z.literal("preferences.favorite_models.changed"),
+    favoriteModels: z.array(FavoriteModelPreferenceSchema),
+  })
+  .passthrough();
+
 export const KnownStatusPayloadSchema = z.discriminatedUnion("status", [
   AgentCreatedStatusPayloadSchema,
   AgentCreateFailedStatusPayloadSchema,
@@ -3090,6 +3154,7 @@ export const KnownStatusPayloadSchema = z.discriminatedUnion("status", [
   ShutdownRequestedStatusPayloadSchema,
   RestartRequestedStatusPayloadSchema,
   DaemonConfigChangedStatusPayloadSchema,
+  FavoriteModelsChangedStatusPayloadSchema,
 ]);
 
 export type KnownStatusPayload = z.infer<typeof KnownStatusPayloadSchema>;
@@ -5491,6 +5556,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WorkspacePinSetResponseSchema,
   WorkspaceRecoveryInspectResponseSchema,
   WorkspaceRecoveryRestoreResponseSchema,
+  FavoriteModelsGetResponseSchema,
+  FavoriteModelsInitializeResponseSchema,
+  FavoriteModelSetResponseSchema,
   WaitForFinishResponseMessageSchema,
   AgentPermissionRequestMessageSchema,
   AgentPermissionResolvedMessageSchema,

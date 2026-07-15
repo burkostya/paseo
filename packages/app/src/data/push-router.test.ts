@@ -5,6 +5,7 @@ import { checkoutDiffQueryKey } from "@/git/query-keys";
 import { buildTerminalsQueryKey } from "@/screens/workspace/terminals/state";
 import { daemonConfigQueryKey } from "@/data/daemon-config";
 import { daemonPairingOfferQueryKey } from "@/data/daemon-pairing";
+import { favoriteModelsQueryKey } from "@/data/favorite-models";
 import { providersSnapshotQueryKey } from "@/data/providers-snapshot";
 import {
   checkoutDiffPushRoute,
@@ -156,6 +157,13 @@ describe("server data push router", () => {
       type: "status",
       payload: { status: "daemon_config_changed", config: daemonConfig },
     });
+    fake.emit({
+      type: "status",
+      payload: {
+        status: "preferences.favorite_models.changed",
+        favoriteModels: [{ provider: "codex", modelId: "gpt-5" }],
+      },
+    });
 
     expect(queryClient.getQueryData(providersSnapshotQueryKey(serverId))).toEqual({
       entries: [{ provider: "codex", status: "ready", enabled: true, models: [] }],
@@ -164,6 +172,10 @@ describe("server data push router", () => {
     });
     expect(queryClient.getQueryData(daemonConfigQueryKey(serverId))).toEqual(daemonConfig);
     expect(queryClient.getQueryState(pairingOfferKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryData(favoriteModelsQueryKey(serverId))).toEqual({
+      favoriteModels: [{ provider: "codex", modelId: "gpt-5" }],
+      initialized: true,
+    });
 
     unmount();
     fake.emit(providerUpdate("2026-01-01T00:00:01.000Z"));
@@ -508,13 +520,16 @@ describe("server data push router", () => {
     const providerKey = providersSnapshotQueryKey(serverId);
     const daemonConfigKey = daemonConfigQueryKey(serverId);
     const pairingOfferKey = daemonPairingOfferQueryKey(serverId);
+    const favoriteModelsKey = favoriteModelsQueryKey(serverId);
     const diffKey = checkoutDiffQueryKey(serverId, "/repo", "uncommitted", undefined, false);
     const terminalKey = buildTerminalsQueryKey(serverId, "/repo", "workspace-a");
     const otherProviderKey = providersSnapshotQueryKey(otherServerId);
+    const otherFavoriteModelsKey = favoriteModelsQueryKey(otherServerId);
 
     queryClient.setQueryData(providerKey, { entries: [], generatedAt: "now", requestId: "p" });
     queryClient.setQueryData(daemonConfigKey, daemonConfig);
     queryClient.setQueryData(pairingOfferKey, { relayEnabled: false, url: "" });
+    queryClient.setQueryData(favoriteModelsKey, { favoriteModels: [], initialized: true });
     queryClient.setQueryData(diffKey, { cwd: "/repo", files: [], error: null, requestId: "d" });
     queryClient.setQueryData(terminalKey, { cwd: "/repo", terminals: [], requestId: "t" });
     queryClient.setQueryData(otherProviderKey, {
@@ -522,14 +537,20 @@ describe("server data push router", () => {
       generatedAt: "now",
       requestId: "other",
     });
+    queryClient.setQueryData(otherFavoriteModelsKey, {
+      favoriteModels: [],
+      initialized: true,
+    });
 
     invalidateServerDataQueriesAfterReconnect({ queryClient, serverId });
 
     expect(queryClient.getQueryState(providerKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(daemonConfigKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(pairingOfferKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(favoriteModelsKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(diffKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(terminalKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(otherProviderKey)?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(otherFavoriteModelsKey)?.isInvalidated).toBe(false);
   });
 });
