@@ -4,7 +4,6 @@ import { getIsElectronRuntime } from "@/constants/layout";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { setCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
 import { getResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
-import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
 import {
   type ChordState,
@@ -34,9 +33,19 @@ import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import {
   type ActiveWorkspaceSelection,
+  commitWorkspaceNavigationHistoryCycle,
   navigateToLastWorkspace,
+  navigateToWorkspace,
+  navigateWorkspaceHistory,
   useActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
+
+function getWorkspaceHistoryCycleReleaseKey(event: KeyboardShortcutInput): string {
+  if (event.ctrlKey) return "Control";
+  if (event.metaKey) return "Meta";
+  if (event.altKey) return "Alt";
+  return event.key;
+}
 
 export function useKeyboardShortcuts({
   enabled,
@@ -72,6 +81,7 @@ export function useKeyboardShortcuts({
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const keyboardWorkspaceSelectionRef = useRef<ActiveWorkspaceSelection | null>(null);
   const badgeModifierKeyRef = useRef<string | null | undefined>(undefined);
+  const workspaceHistoryCycleReleaseKeyRef = useRef<string | null>(null);
 
   const publishBrowserShortcutPolicy = useCallback(
     (chordState?: ChordState) => {
@@ -161,7 +171,8 @@ export function useKeyboardShortcuts({
 
     const performShortcutAction = (
       action: ShortcutAction,
-      event: KeyboardEvent | null,
+      shortcutInput: KeyboardShortcutInput,
+      domEvent: KeyboardEvent | null,
       browserFocusRestoreElement: HTMLElement | null = null,
     ): boolean => {
       switch (action.kind) {
@@ -176,6 +187,19 @@ export function useKeyboardShortcuts({
           };
           navigateToWorkspace({ serverId: action.serverId, workspaceId: action.workspaceId });
           return true;
+        case "navigate-workspace-history": {
+          const target = navigateWorkspaceHistory(
+            action.delta,
+            keyboardWorkspaceSelectionRef.current ?? activeWorkspaceSelection,
+          );
+          if (!target) {
+            return false;
+          }
+          keyboardWorkspaceSelectionRef.current = target;
+          workspaceHistoryCycleReleaseKeyRef.current =
+            getWorkspaceHistoryCycleReleaseKey(shortcutInput);
+          return true;
+        }
         case "navigate-last-workspace":
           return navigateToLastWorkspace();
         case "router-replace":
@@ -195,8 +219,8 @@ export function useKeyboardShortcuts({
           return true;
         case "command-center-toggle": {
           if (action.nextOpen) {
-            if (event) {
-              captureCommandCenterFocusRestore(event);
+            if (domEvent) {
+              captureCommandCenterFocusRestore(domEvent);
             } else {
               setCommandCenterFocusRestoreElement(browserFocusRestoreElement);
             }
@@ -213,6 +237,7 @@ export function useKeyboardShortcuts({
     const routeAndPerformShortcut = (input: {
       action: string;
       payload: KeyboardShortcutPayload;
+      shortcutInput: KeyboardShortcutInput;
       domEvent: KeyboardEvent | null;
       browserFocusRestoreElement?: HTMLElement | null;
     }): boolean => {
@@ -231,6 +256,7 @@ export function useKeyboardShortcuts({
       );
       const handled = performShortcutAction(
         shortcutAction,
+        input.shortcutInput,
         input.domEvent,
         input.browserFocusRestoreElement,
       );
@@ -291,6 +317,7 @@ export function useKeyboardShortcuts({
       const handled = routeAndPerformShortcut({
         action: result.match.action,
         payload: result.match.payload,
+        shortcutInput: input.event,
         domEvent: input.domEvent,
         browserFocusRestoreElement: input.browserFocusRestoreElement,
       });
@@ -346,12 +373,18 @@ export function useKeyboardShortcuts({
 
     const handleKeyUp = (event: KeyboardEvent) => {
       const key = event.key ?? "";
+      if (key === workspaceHistoryCycleReleaseKeyRef.current) {
+        commitWorkspaceNavigationHistoryCycle();
+        workspaceHistoryCycleReleaseKeyRef.current = null;
+      }
       if (key === badgeModifierKey) {
         setBadgeModifierDown(false);
       }
     };
 
     const handleBlurOrHide = () => {
+      commitWorkspaceNavigationHistoryCycle();
+      workspaceHistoryCycleReleaseKeyRef.current = null;
       resetModifiers();
     };
 
@@ -366,6 +399,13 @@ export function useKeyboardShortcuts({
           if (!input) {
             return;
           }
+          if (input.phase === "keyup") {
+            if (input.key === workspaceHistoryCycleReleaseKeyRef.current) {
+              commitWorkspaceNavigationHistoryCycle();
+              workspaceHistoryCycleReleaseKeyRef.current = null;
+            }
+            return;
+          }
           resolveAndPerformShortcut({
             event: input,
             focusScope: "browser",
@@ -375,6 +415,8 @@ export function useKeyboardShortcuts({
         })
       : null;
     return () => {
+      commitWorkspaceNavigationHistoryCycle();
+      workspaceHistoryCycleReleaseKeyRef.current = null;
       if (chordStateRef.current.timeoutId !== null) {
         clearTimeout(chordStateRef.current.timeoutId);
         chordStateRef.current = {

@@ -2000,6 +2000,8 @@ export const es: TranslationResources = {
         jumpToTab: "Saltar a la pestaña",
         previousWorkspace: "Espacio de trabajo anterior",
         nextWorkspace: "Siguiente espacio de trabajo",
+        previousRecentWorkspace: "Espacio de trabajo reciente anterior",
+        nextRecentWorkspace: "Siguiente espacio de trabajo reciente",
         previousTab: "Pestaña anterior",
         nextTab: "Pestaña siguiente",
         splitPaneRight: "Panel dividido a la derecha",
