@@ -265,6 +265,10 @@ function WorkspaceDeckEntry({
   recoveryAgentId: string | null;
   onUnmountInactive: (selection: ActiveWorkspaceSelection) => void;
 }) {
+  const issueServerDataSet = useMemo(
+    () => ({ issueServerId: selection.serverId }),
+    [selection.serverId],
+  );
   const hasHydratedWorkspaces = useHasHydratedWorkspaces(selection.serverId);
   const workspaceExists = useWorkspaceExists(selection.serverId, selection.workspaceId);
   const shouldKeepMounted = shouldKeepWorkspaceDeckEntryMounted({
@@ -287,6 +291,7 @@ function WorkspaceDeckEntry({
     <RetainedPanel
       active={active}
       testID={`workspace-deck-entry-${selection.serverId}:${selection.workspaceId}`}
+      dataSet={issueServerDataSet}
     >
       <WorkspaceScreen
         serverId={selection.serverId}

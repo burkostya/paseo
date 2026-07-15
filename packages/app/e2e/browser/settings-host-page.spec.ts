@@ -3,6 +3,7 @@ import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { getE2EDaemonPort } from "../support/helpers/daemon-port";
 import { TEST_HOST_LABEL } from "../support/helpers/daemon-registry";
 import { getServerId } from "../support/helpers/server-id";
+import { connectNewWorkspaceDaemonClient } from "../support/helpers/new-workspace";
 import {
   expectSettingsHeader,
   openSettingsHost,
@@ -54,6 +55,50 @@ test.describe("Settings host page", () => {
 
     await expectHostProvidersCard(page, serverId);
     await expectSettingsHeader(page, "Providers");
+  });
+
+  test("issues section adds, edits, and removes a host-owned tracker", async ({ page }) => {
+    const serverId = getServerId();
+    const client = await connectNewWorkspaceDaemonClient();
+    await client.connect();
+
+    try {
+      await client.patchDaemonConfig({ issueTrackers: [] });
+      await gotoAppShell(page);
+      await openSettings(page);
+      await openHostSection(page, serverId, "issues");
+      await expectSettingsHeader(page, "Issues");
+
+      await page.getByTestId("issue-tracker-add").click();
+      await page.getByTestId("issue-tracker-name-input").fill("Linear");
+      await page.getByTestId("issue-tracker-url-input").fill("https://linear.example/issue/{id}");
+      await page.getByTestId("issue-tracker-prefixes-input").fill("APP-\nPASEO-");
+      await expect(page.getByText("https://linear.example/issue/APP-123")).toBeVisible();
+      await page.getByTestId("issue-tracker-save").click();
+
+      await expect(page.getByText("Linear", { exact: true })).toBeVisible();
+      await expect
+        .poll(async () => (await client.getDaemonConfig()).config.issueTrackers)
+        .toMatchObject([
+          {
+            name: "Linear",
+            urlTemplate: "https://linear.example/issue/{id}",
+            prefixes: ["APP-", "PASEO-"],
+          },
+        ]);
+
+      await page.locator('[data-testid^="issue-tracker-edit-"]').click();
+      await page.getByTestId("issue-tracker-name-input").fill("Linear Cloud");
+      await page.getByTestId("issue-tracker-save").click();
+      await expect(page.getByText("Linear Cloud", { exact: true })).toBeVisible();
+
+      page.once("dialog", (dialog) => dialog.accept());
+      await page.locator('[data-testid^="issue-tracker-remove-"]').click();
+      await expect(page.getByText("No issue servers configured")).toBeVisible();
+    } finally {
+      await client.patchDaemonConfig({ issueTrackers: [] }).catch(() => undefined);
+      await client.close().catch(() => undefined);
+    }
   });
 
   test("host section shows the host label and restart/remove action cards", async ({ page }) => {

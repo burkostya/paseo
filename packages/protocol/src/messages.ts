@@ -58,6 +58,7 @@ import {
   BrowserAutomationExecuteResponseSchema,
 } from "./browser-automation/rpc-schemas.js";
 import { BrowserAutomationHostCapabilitySchema } from "./browser-automation/capabilities.js";
+import { IssueTrackerConfigSchema } from "./issue-trackers.js";
 import {
   PaseoConfigRawSchema,
   PaseoLifecycleCommandRawSchema,
@@ -88,6 +89,7 @@ export {
   type PaseoScriptEntryRaw,
   type ProjectConfigRpcError,
 };
+export { IssueTrackerConfigSchema, type IssueTrackerConfig } from "./issue-trackers.js";
 // ---------------------------------------------------------------------------
 // Mutable daemon config schemas (shared between server store and client)
 // ---------------------------------------------------------------------------
@@ -160,6 +162,7 @@ export const MutableDaemonConfigSchema = z
     enableTerminalAgentHooks: z.boolean().default(false),
     appendSystemPrompt: z.string().default(""),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
+    issueTrackers: z.array(IssueTrackerConfigSchema).optional(),
   })
   .passthrough();
 
@@ -177,6 +180,7 @@ export const MutableDaemonConfigPatchSchema = z
     enableTerminalAgentHooks: z.boolean().optional(),
     appendSystemPrompt: z.string().optional(),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
+    issueTrackers: z.array(IssueTrackerConfigSchema).optional(),
   })
   .partial()
   .passthrough();
@@ -3046,6 +3050,8 @@ export const ServerInfoStatusPayloadSchema = z
         favoriteModelsSync: z.boolean().optional(),
         // COMPAT(providerUsageWarnings): added in the v0.1.109 fork, remove after 2027-01-16.
         providerUsageWarnings: z.boolean().optional(),
+        // COMPAT(issueLinks): added in the v0.1.109 fork, remove after 2027-01-16.
+        issueLinks: z.boolean().optional(),
       })
       .optional(),
   })

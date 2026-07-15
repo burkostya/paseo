@@ -99,6 +99,7 @@ export function HostPickerOption({
     : undefined;
   const description = [connectionLabel, usageLabel].filter(Boolean).join(" · ") || undefined;
   const leadingSlot = useMemo(() => <HostStatusDotSlot serverId={serverId} />, [serverId]);
+  const issueServerDataSet = useMemo(() => ({ issueServerId: serverId }), [serverId]);
   const handleSettingsPress = useCallback(
     (event: GestureResponderEvent) => {
       event.stopPropagation();
@@ -174,6 +175,7 @@ export function HostPickerOption({
       active={active}
       onPress={onPress}
       testID={testID}
+      dataSet={issueServerDataSet}
     />
   );
 }

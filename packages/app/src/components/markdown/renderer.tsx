@@ -30,6 +30,8 @@ import { markdownNodeContainsType } from "@/utils/markdown-ast";
 import { createCompactMarkdownStyles, createMarkdownStyles } from "@/styles/markdown-styles";
 import type { Theme } from "@/styles/theme";
 import { openExternalUrl } from "@/utils/open-external-url";
+import { useIssueTrackers } from "@/issue-links/context";
+import { createIssueAwareMarkdownParser } from "@/issue-links/markdown";
 import {
   splitHtmlishMarkdown,
   type MarkdownDisplayPart,
@@ -61,7 +63,6 @@ function compactMarkdownStyleMapping(theme: Theme): Partial<MarkdownWithStableRe
   return { style: createCompactMarkdownStyles(theme) };
 }
 
-const defaultMarkdownParser = MarkdownIt({ typographer: true, linkify: true });
 const EMPTY_TEXT_STYLE: TextStyle = {};
 const MARKDOWN_LIST_ITEM_CONTENT_FLEX: ViewStyle = { flex: 1, flexShrink: 1, minWidth: 0 };
 export interface MarkdownRendererProps {
@@ -79,12 +80,22 @@ export function MarkdownRenderer({
   text,
   compact = false,
   rules,
-  markdownit = defaultMarkdownParser,
+  markdownit,
   onLinkPress,
   allowedImageHandlers,
   topLevelMaxExceededItem,
   enableHtmlish = true,
 }: MarkdownRendererProps) {
+  const issueTrackers = useIssueTrackers();
+  const resolvedMarkdownParser = useMemo(
+    () => markdownit ?? createIssueAwareMarkdownParser(issueTrackers),
+    [issueTrackers, markdownit],
+  );
+  const defaultLinkPress = useCallback((url: string) => {
+    void openExternalUrl(url);
+    return false;
+  }, []);
+  const resolvedLinkPress = onLinkPress ?? defaultLinkPress;
   const markdownRules = useMemo(() => rules ?? createSharedMarkdownRules(), [rules]);
   const parts = useMemo(
     () => (enableHtmlish ? splitHtmlishMarkdown(text) : [{ kind: "markdown" as const, text }]),
@@ -94,8 +105,8 @@ export function MarkdownRenderer({
     () => ({
       compact,
       rules: markdownRules,
-      markdownit,
-      onLinkPress,
+      markdownit: resolvedMarkdownParser,
+      onLinkPress: resolvedLinkPress,
       allowedImageHandlers,
       topLevelMaxExceededItem,
     }),
@@ -103,8 +114,8 @@ export function MarkdownRenderer({
       allowedImageHandlers,
       compact,
       markdownRules,
-      markdownit,
-      onLinkPress,
+      resolvedLinkPress,
+      resolvedMarkdownParser,
       topLevelMaxExceededItem,
     ],
   );

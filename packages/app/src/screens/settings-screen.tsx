@@ -36,6 +36,7 @@ import {
   SquareTerminal,
   Code2,
   Smartphone,
+  Ticket,
 } from "lucide-react-native";
 import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
@@ -127,6 +128,7 @@ import {
   navigateToLastWorkspace,
   useLastWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
+import { HostIssueTrackersPage } from "@/screens/settings/issue-trackers-page";
 
 // ---------------------------------------------------------------------------
 // View model
@@ -187,6 +189,7 @@ const HOST_SECTION_ITEMS: HostSectionItem[] = [
   { id: "workspaces", labelKey: "settings.hostSections.workspaces", icon: FolderGit2 },
   { id: "providers", labelKey: "settings.hostSections.providers", icon: Boxes },
   { id: "usage", labelKey: "settings.hostSections.usage", icon: Gauge },
+  { id: "issues", labelKey: "settings.hostSections.issues", icon: Ticket },
   { id: "terminals", labelKey: "settings.hostSections.terminals", icon: SquareTerminal },
 ];
 
@@ -209,6 +212,8 @@ function renderHostSettingsContent(
       return <HostProvidersPage serverId={view.serverId} />;
     case "usage":
       return <HostUsagePage serverId={view.serverId} />;
+    case "issues":
+      return <HostIssueTrackersPage serverId={view.serverId} />;
     case "terminals":
       return <HostTerminalsPage serverId={view.serverId} />;
     case "host":
@@ -921,6 +926,10 @@ function HostPicker({
   const triggerRef = useRef<View | null>(null);
   const activeHost =
     sortedHosts.find((host) => host.serverId === activeServerId) ?? sortedHosts[0] ?? null;
+  const issueServerDataSet = useMemo(
+    () => (activeHost ? { issueServerId: activeHost.serverId } : undefined),
+    [activeHost],
+  );
 
   const handleOpen = useCallback(() => setIsOpen(true), []);
   const hostOptionTestID = useCallback(
@@ -956,6 +965,7 @@ function HostPicker({
     >
       <ComboboxTrigger
         ref={triggerRef}
+        dataSet={issueServerDataSet}
         block
         style={triggerStyle}
         onPress={handleOpen}
@@ -1176,6 +1186,10 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
       orderedHosts: sortedHosts,
     });
   }, [view, selectedSettingsHostServerId, localServerId, hosts, sortedHosts]);
+  const issueServerDataSet = useMemo(
+    () => (activeHostServerId ? { issueServerId: activeHostServerId } : undefined),
+    [activeHostServerId],
+  );
 
   const handleSendBehaviorChange = useCallback(
     (behavior: SendBehavior) => {
@@ -1508,7 +1522,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
   // Mobile root: full-screen sidebar-as-list.
   if (isCompactLayout && view.kind === "root") {
     return (
-      <View style={styles.container}>
+      <View style={styles.container} dataSet={issueServerDataSet}>
         <BackHeader title={t("settings.title")} onBack={handleBackToWorkspace} />
         <ScrollView style={styles.scrollView} contentContainerStyle={insetBottomStyle}>
           <SettingsSidebar
@@ -1562,7 +1576,11 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
           />
         </WindowChromeRegion>
         <WindowChromeRegion corners="top-right">
-          <View style={desktopStyles.contentPane} testID="settings-detail-pane">
+          <View
+            style={desktopStyles.contentPane}
+            testID="settings-detail-pane"
+            dataSet={issueServerDataSet}
+          >
             <ScreenHeader
               borderless={!detailHeader}
               left={desktopDetailHeaderLeft}

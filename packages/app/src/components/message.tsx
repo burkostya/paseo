@@ -62,6 +62,8 @@ import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from "reac
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { MarkdownRenderer, type MarkdownStyles } from "@/components/markdown/renderer";
+import { useIssueTrackers } from "@/issue-links/context";
+import { addIssueLinksToMarkdown } from "@/issue-links/markdown";
 import type { TodoEntry, UserMessageImageAttachment } from "@/types/stream";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
@@ -1451,7 +1453,11 @@ export const AssistantMessage = memo(function AssistantMessage({
   client,
   spacing = "default",
 }: AssistantMessageProps) {
-  const markdownParser = useMemo(createAssistantMarkdownParser, []);
+  const issueTrackers = useIssueTrackers();
+  const markdownParser = useMemo(
+    () => addIssueLinksToMarkdown(createAssistantMarkdownParser(), issueTrackers),
+    [issueTrackers],
+  );
 
   const fileLinkActions = useAssistantFileLinkActions();
   const handleMarkdownLinkPress = useStableEvent((url: string) => {

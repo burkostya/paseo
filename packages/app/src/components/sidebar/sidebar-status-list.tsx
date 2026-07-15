@@ -696,6 +696,10 @@ function StatusWorkspaceRowInner({
   const accessibilityState = useMemo(() => ({ selected }), [selected]);
   const handlePressIn = useCallback(() => setIsPressed(true), []);
   const handlePressOut = useCallback(() => setIsPressed(false), []);
+  const issueServerDataSet = useMemo(
+    () => ({ issueServerId: workspace.serverId }),
+    [workspace.serverId],
+  );
 
   return (
     <SidebarWorkspaceRowFrame workspace={workspace}>
@@ -722,7 +726,11 @@ function StatusWorkspaceRowInner({
           inStatusGroup,
         });
         return (
-          <View style={styles.workspaceRowContainer} {...hoverHandlers}>
+          <View
+            style={styles.workspaceRowContainer}
+            dataSet={issueServerDataSet}
+            {...hoverHandlers}
+          >
             <SidebarWorkspaceContextMenu
               contextMenuOpen={contextMenuOpen}
               onContextMenuOpenChange={onContextMenuOpenChange}

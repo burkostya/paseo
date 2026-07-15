@@ -1690,6 +1690,8 @@ export class VoiceAssistantWebSocketServer {
         favoriteModelsSync: true,
         // COMPAT(providerUsageWarnings): added in the v0.1.109 fork, remove after 2027-01-16.
         providerUsageWarnings: true,
+        // COMPAT(issueLinks): added in the v0.1.109 fork, remove after 2027-01-16.
+        issueLinks: true,
       },
     };
   }

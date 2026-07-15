@@ -160,6 +160,7 @@ import {
 } from "@/screens/workspace/workspace-pane-content";
 import { useMountedTabSet } from "@/screens/workspace/use-mounted-tab-set";
 import { WorkspaceFocusProvider } from "@/workspace/focus";
+import { IssueTrackersProvider } from "@/issue-links/context";
 import { shouldSeedEmptyWorkspaceDraft } from "@/screens/workspace/workspace-empty-draft-seed";
 import {
   buildBulkCloseConfirmationMessage,
@@ -861,13 +862,15 @@ export const WorkspaceScreen = memo(function WorkspaceScreen({
     };
   }, [serverId, workspaceId]);
   return (
-    <WorkspaceScreenContent
-      serverId={serverId}
-      workspaceId={workspaceId}
-      isRouteFocused={isRouteFocused ?? navigationFocused}
-      recoveryRequested={recoveryRequested ?? false}
-      recoveryAgentId={recoveryAgentId ?? null}
-    />
+    <IssueTrackersProvider serverId={serverId}>
+      <WorkspaceScreenContent
+        serverId={serverId}
+        workspaceId={workspaceId}
+        isRouteFocused={isRouteFocused ?? navigationFocused}
+        recoveryRequested={recoveryRequested ?? false}
+        recoveryAgentId={recoveryAgentId ?? null}
+      />
+    </IssueTrackersProvider>
   );
 });
 

@@ -472,6 +472,7 @@ export function loadConfig(
   const persisted = loadPersistedConfig(paseoHome);
 
   const listen = resolveListenAddress(env, options?.cli, persisted);
+  const issueTrackers = persisted.daemon?.issueTrackers;
   const {
     mcpEnabled,
     mcpInjectIntoAgents,
@@ -520,6 +521,7 @@ export function loadConfig(
     enableTerminalAgentHooks: persisted.daemon?.enableTerminalAgentHooks ?? false,
     appendSystemPrompt,
     terminalProfiles,
+    issueTrackers,
     mcpDebug: env.MCP_DEBUG === "1",
     isDev: resolvePaseoNodeEnv(env) === "development",
     agentStoragePath: path.join(paseoHome, "agents"),

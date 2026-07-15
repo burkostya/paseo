@@ -8,6 +8,7 @@ import {
   MutableDaemonConfigSchema,
   MutableDaemonConfigPatchSchema,
 } from "@getpaseo/protocol/messages";
+import { assertValidIssueTrackerConfigs } from "@getpaseo/protocol/issue-trackers";
 
 export type { MutableDaemonConfig, MutableDaemonConfigPatch } from "@getpaseo/protocol/messages";
 
@@ -182,6 +183,7 @@ export class DaemonConfigStore {
       relay: initial.relay ?? { enabled: true },
     });
     this.relayEnabledMutable = options.relayEnabledMutable ?? true;
+    assertValidIssueTrackerConfigs(this.current.issueTrackers ?? []);
   }
 
   public get(): MutableDaemonConfig {
@@ -204,6 +206,7 @@ export class DaemonConfigStore {
         removedProviders,
       ),
     );
+    assertValidIssueTrackerConfigs(next.issueTrackers ?? []);
 
     const changedFieldPaths = Array.from(this.fieldChangeHandlers.keys()).filter((path) => {
       return !isEqualValue(getValueAtPath(this.current, path), getValueAtPath(next, path));
@@ -359,6 +362,7 @@ function mergeMutableConfigIntoPersistedConfig(params: {
       ...(mutable.terminalProfiles !== undefined
         ? { terminalProfiles: mutable.terminalProfiles }
         : {}),
+      ...(mutable.issueTrackers !== undefined ? { issueTrackers: mutable.issueTrackers } : {}),
     },
     agents: nextAgents,
   } as PersistedConfig;

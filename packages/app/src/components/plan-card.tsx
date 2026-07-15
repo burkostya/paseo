@@ -1,10 +1,10 @@
 import { useMemo, type ReactNode } from "react";
 import { Text, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
-import Markdown, { type ASTNode } from "react-native-markdown-display";
+import type { ASTNode } from "react-native-markdown-display";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
-import { createMarkdownStyles } from "@/styles/markdown-styles";
 import { getMarkdownListMarker } from "@/utils/markdown-list";
+import { MarkdownRenderer } from "@/components/markdown/renderer";
 
 type MarkdownRuleStyles = Record<string, TextStyle & ViewStyle & { [key: string]: unknown }>;
 
@@ -191,7 +191,6 @@ export function PlanCard({
 }) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
-  const markdownStyles = createMarkdownStyles(theme);
   const markdownRules = createPlanMarkdownRules();
   const resolvedTitle = title ?? t("agentStream.permission.plan");
 
@@ -219,9 +218,7 @@ export function PlanCard({
     <View testID={testID} style={containerStyle}>
       <Text style={titleStyle}>{resolvedTitle}</Text>
       {description ? <Text style={descriptionStyle}>{description}</Text> : null}
-      <Markdown style={markdownStyles} rules={markdownRules}>
-        {text}
-      </Markdown>
+      <MarkdownRenderer text={text} rules={markdownRules} enableHtmlish={false} />
       {footer ? <View style={styles.footer}>{footer}</View> : null}
     </View>
   );
