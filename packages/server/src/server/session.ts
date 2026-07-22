@@ -593,6 +593,13 @@ function describeRegistryTransition(record: ArchivedRecordSnapshot | null): Regi
   return record.archivedAt ? "unarchived" : "existing";
 }
 
+function resolveAppPreferencesStore(
+  paseoHome: string,
+  store: AppPreferencesStore | undefined,
+): AppPreferencesStore {
+  return store ?? new AppPreferencesStore(join(paseoHome, APP_PREFERENCES_FILE_NAME));
+}
+
 /**
  * Session represents a single connected client session.
  * It owns all state management, orchestration logic, and message processing.
@@ -783,8 +790,7 @@ export class Session {
       logger: this.sessionLogger,
     });
     this.workspaceAutoName = workspaceAutoName;
-    this.appPreferencesStore =
-      appPreferencesStore ?? new AppPreferencesStore(join(paseoHome, APP_PREFERENCES_FILE_NAME));
+    this.appPreferencesStore = resolveAppPreferencesStore(paseoHome, appPreferencesStore);
     this.workspaceProvisioning = createWorkspaceProvisioningService({
       serverId,
       workspaceRegistry: this.workspaceRegistry,

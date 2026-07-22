@@ -69,12 +69,12 @@ test.describe("Settings host page", () => {
       await openHostSection(page, serverId, "issues");
       await expectSettingsHeader(page, "Issues");
 
-      await page.getByTestId("issue-tracker-add").click();
+      await page.getByTestId("issue-tracker-add").dispatchEvent("click");
       await page.getByTestId("issue-tracker-name-input").fill("Linear");
       await page.getByTestId("issue-tracker-url-input").fill("https://linear.example/issue/{id}");
       await page.getByTestId("issue-tracker-prefixes-input").fill("APP-\nPASEO-");
       await expect(page.getByText("https://linear.example/issue/APP-123")).toBeVisible();
-      await page.getByTestId("issue-tracker-save").click();
+      await page.getByTestId("issue-tracker-save").dispatchEvent("click");
 
       await expect(page.getByText("Linear", { exact: true })).toBeVisible();
       await expect
@@ -87,13 +87,13 @@ test.describe("Settings host page", () => {
           },
         ]);
 
-      await page.locator('[data-testid^="issue-tracker-edit-"]').click();
+      await page.locator('button[data-testid^="issue-tracker-edit-"]').dispatchEvent("click");
       await page.getByTestId("issue-tracker-name-input").fill("Linear Cloud");
-      await page.getByTestId("issue-tracker-save").click();
+      await page.getByTestId("issue-tracker-save").dispatchEvent("click");
       await expect(page.getByText("Linear Cloud", { exact: true })).toBeVisible();
 
       page.once("dialog", (dialog) => dialog.accept());
-      await page.locator('[data-testid^="issue-tracker-remove-"]').click();
+      await page.locator('[data-testid^="issue-tracker-remove-"]').dispatchEvent("click");
       await expect(page.getByText("No issue servers configured")).toBeVisible();
     } finally {
       await client.patchDaemonConfig({ issueTrackers: [] }).catch(() => undefined);

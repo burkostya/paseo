@@ -23,7 +23,7 @@ export async function openChangesPanel(page: Page): Promise<void> {
   await expect(page.getByTestId("workspace-explorer-toggle").first()).toBeVisible({
     timeout: 30_000,
   });
-  await page.getByTestId("workspace-explorer-toggle").first().click();
+  await page.keyboard.press("Control+E");
   const changesTab = page.getByTestId("explorer-tab-changes").filter({ visible: true }).first();
   await expect(changesTab).toBeVisible({ timeout: 30_000 });
   await changesTab.click();

@@ -314,19 +314,21 @@ function deriveBootstrapTailTimelinePolicy({
 }): {
   replace: boolean;
   catchUpCursor: { epoch: string; endSeq: number } | null;
+  preserveLivePermissionPlans: boolean;
 } {
   if (reset) {
-    return { replace: true, catchUpCursor: null };
+    return { replace: true, catchUpCursor: null, preserveLivePermissionPlans: false };
   }
 
   const isBootstrapTailInit = direction === "tail" && isInitializing && hasActiveInitDeferred;
   if (!isBootstrapTailInit) {
-    return { replace: false, catchUpCursor: null };
+    return { replace: false, catchUpCursor: null, preserveLivePermissionPlans: false };
   }
 
   return {
     replace: true,
     catchUpCursor: endCursor ? { epoch, endSeq: endCursor.seq } : null,
+    preserveLivePermissionPlans: true,
   };
 }
 
@@ -492,6 +494,40 @@ function shouldResolveTimelineInit({
   return responseDirection === initRequestDirection;
 }
 
+function preserveLivePermissionPlansAfterReplace(params: {
+  canonicalTail: StreamItem[];
+  previousTail: StreamItem[];
+  previousHead: StreamItem[];
+}): StreamItem[] {
+  const livePlans = [...params.previousTail, ...params.previousHead].filter(
+    (item): item is Extract<StreamItem, { kind: "permission_plan" }> =>
+      item.kind === "permission_plan",
+  );
+  if (livePlans.length === 0) {
+    return params.canonicalTail;
+  }
+
+  const nextTail = [...params.canonicalTail];
+  const existingRequestIds = new Set(
+    nextTail
+      .filter(
+        (item): item is Extract<StreamItem, { kind: "permission_plan" }> =>
+          item.kind === "permission_plan",
+      )
+      .map((item) => item.request.id),
+  );
+  for (const plan of livePlans) {
+    if (existingRequestIds.has(plan.request.id)) {
+      continue;
+    }
+    const insertionIndex = nextTail.findIndex(
+      (item) => item.timestamp.getTime() > plan.timestamp.getTime(),
+    );
+    nextTail.splice(insertionIndex < 0 ? nextTail.length : insertionIndex, 0, plan);
+    existingRequestIds.add(plan.request.id);
+  }
+  return nextTail;
+}
 function applyTimelineReplacePath(args: {
   timelineUnits: TimelineUnit[];
   payload: ProcessTimelineResponseInput["payload"];
@@ -515,7 +551,7 @@ function applyTimelineReplacePath(args: {
     toHydratedEvents,
   } = args;
   const hydratedTail = hydrateStreamState(toHydratedEvents(timelineUnits), { source: "canonical" });
-  const { tail, head, acknowledgedClientMessageIds } = replaceWithCanonicalStream({
+  const replacement = replaceWithCanonicalStream({
     canonical: hydratedTail,
     previousTail: currentTail,
     previousHead: currentHead,
@@ -526,6 +562,14 @@ function applyTimelineReplacePath(args: {
       endSeq: payload.endCursor?.seq ?? null,
     },
   });
+  const tail = bootstrapPolicy.preserveLivePermissionPlans
+    ? preserveLivePermissionPlansAfterReplace({
+        canonicalTail: replacement.tail,
+        previousTail: currentTail,
+        previousHead: currentHead,
+      })
+    : replacement.tail;
+  const { head, acknowledgedClientMessageIds } = replacement;
   const cursor: TimelineCursor | null =
     payload.startCursor && payload.endCursor
       ? {

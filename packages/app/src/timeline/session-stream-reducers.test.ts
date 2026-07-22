@@ -1478,6 +1478,68 @@ describe("processTimelineResponse", () => {
     });
   });
 
+  it("preserves a live plan permission across bootstrap tail replacement", () => {
+    const plan: Extract<StreamItem, { kind: "permission_plan" }> = {
+      kind: "permission_plan",
+      id: "permission_plan_plan-1",
+      timestamp: new Date(1002),
+      request: {
+        id: "plan-1",
+        provider: "codex",
+        name: "CodexPlanApproval",
+        kind: "plan",
+        input: { plan: "- Do the work" },
+      },
+    };
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: [plan],
+      isInitializing: true,
+      hasActiveInitDeferred: true,
+      initRequestDirection: "tail",
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "tail",
+        startCursor: { seq: 1 },
+        endCursor: { seq: 3 },
+        entries: [makeTimelineEntry(1, "before", "user_message"), makeTimelineEntry(3, "after")],
+      },
+    });
+
+    expect(result.tail.map((item) => item.kind)).toEqual([
+      "user_message",
+      "permission_plan",
+      "assistant_message",
+    ]);
+    expect(result.tail[1]).toBe(plan);
+  });
+
+  it("does not preserve a live plan permission across an explicit reset", () => {
+    const plan: Extract<StreamItem, { kind: "permission_plan" }> = {
+      kind: "permission_plan",
+      id: "permission_plan_plan-1",
+      timestamp: new Date(1002),
+      request: {
+        id: "plan-1",
+        provider: "codex",
+        name: "CodexPlanApproval",
+        kind: "plan",
+      },
+    };
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: [plan],
+      payload: {
+        ...baseTimelineInput.payload,
+        reset: true,
+      },
+    });
+
+    expect(result.tail).toEqual([]);
+  });
+
   it("appends incrementally for contiguous seqs", () => {
     const existingCursor: TimelineCursor = {
       epoch: "epoch-1",

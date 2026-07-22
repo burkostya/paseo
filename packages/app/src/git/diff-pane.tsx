@@ -86,7 +86,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip
 import { lineNumberGutterWidth } from "@/components/code-insets";
 import { GitActionsSplitButton } from "@/git/actions-split-button";
 import { BranchSwitcher } from "@/components/branch-switcher";
-import { DiffBasePicker } from "@/git/diff-base-picker";
+import { DiffBasePicker, type DiffBasePickerProps } from "@/git/diff-base-picker";
 import { useGitActions } from "@/git/use-actions";
 import { GIT_ACTION_ICONS } from "@/git/action-icons";
 import { buildForgeSignInCommand, getForgePresentation, type Forge } from "@/git/forge";
@@ -1436,6 +1436,20 @@ export function DiffModeMenu({
       </DropdownMenuContent>
     </DropdownMenu>
   );
+}
+
+function DiffBaseSelectionControl({
+  canSelectBase,
+  diffMode,
+  ...pickerProps
+}: DiffBasePickerProps & {
+  canSelectBase: boolean;
+  diffMode: "uncommitted" | "base";
+}) {
+  if (!canSelectBase || diffMode !== "base") {
+    return null;
+  }
+  return <DiffBasePicker {...pickerProps} />;
 }
 
 function ChangesTabToggle({ isMobile, selected, onPress }: ChangesTabToggleProps) {
@@ -2895,17 +2909,17 @@ export function GitDiffPane({
                 onSelectUncommitted={handleSelectUncommitted}
                 onSelectBase={handleSelectBase}
               />
-              {canSelectBase && diffMode === "base" ? (
-                <DiffBasePicker
-                  serverId={serverId}
-                  workspaceId={workspaceId}
-                  cwd={cwd}
-                  selectedBaseRef={selectedBaseRef}
-                  defaultBaseRefLabel={baseRefLabel}
-                  effectiveBaseRefLabel={effectiveBaseRefLabel}
-                  onSelect={selectBaseRef}
-                />
-              ) : null}
+              <DiffBaseSelectionControl
+                canSelectBase={canSelectBase}
+                diffMode={diffMode}
+                serverId={serverId}
+                workspaceId={workspaceId}
+                cwd={cwd}
+                selectedBaseRef={selectedBaseRef}
+                defaultBaseRefLabel={baseRefLabel}
+                effectiveBaseRefLabel={effectiveBaseRefLabel}
+                onSelect={selectBaseRef}
+              />
             </View>
             <View style={styles.diffStatusButtons}>
               <ChangesTabToggle

@@ -1,4 +1,4 @@
-# Fork extensions (`v0.1.109` baseline)
+# Fork extensions (`upstream/main` at `2acb10fce`)
 
 Detailed contracts, persistence, and removal criteria live in
 [`docs/fork-extensions.md`](../../../docs/fork-extensions.md).

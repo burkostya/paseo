@@ -252,6 +252,24 @@ describe("applyStreamEvent", () => {
     });
   });
 
+  it("keeps the original timeline position when a plan request is replayed", () => {
+    let result = applyStreamEvent({
+      tail: [],
+      head: [],
+      event: planPermissionEvent(),
+      timestamp: baseTimestamp,
+    });
+    result = applyStreamEvent({
+      tail: result.tail,
+      head: result.head,
+      event: planPermissionEvent(),
+      timestamp: new Date(10),
+    });
+
+    expect(result.tail).toHaveLength(1);
+    expect(result.tail[0]?.timestamp).toEqual(baseTimestamp);
+  });
+
   it("keeps a rejected plan permission visible as resolved history", () => {
     let result = applyStreamEvent({
       tail: [],

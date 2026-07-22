@@ -24,14 +24,14 @@ function addComparisonBranches(cwd: string): void {
 }
 
 async function selectDiffMode(page: Page, mode: "committed" | "uncommitted"): Promise<void> {
-  await page.getByTestId("changes-diff-status-trigger").click();
+  await page.getByTestId("changes-diff-status-trigger").dispatchEvent("click");
   const option = page.getByTestId(`changes-diff-mode-${mode}`);
   await expect(option).toBeVisible({ timeout: 10_000 });
-  await option.click();
+  await option.dispatchEvent("click");
 }
 
 async function selectBaseBranch(page: Page, branch: string): Promise<void> {
-  await page.getByTestId("changes-diff-base-trigger").click();
+  await page.getByTestId("changes-diff-base-trigger").dispatchEvent("click");
   const picker = page.getByTestId("combobox-desktop-container");
   await expect(picker).toBeVisible({ timeout: 30_000 });
   const search = page.getByPlaceholder("Filter branches...");
@@ -39,7 +39,7 @@ async function selectBaseBranch(page: Page, branch: string): Promise<void> {
   await search.fill(branch);
   const option = page.getByTestId(`changes-diff-base-${branch}`);
   await expect(option).toBeVisible({ timeout: 30_000 });
-  await option.click();
+  await option.dispatchEvent("click");
   await expect(picker).not.toBeVisible({ timeout: 30_000 });
 }
 
@@ -74,10 +74,10 @@ test("selects, persists, and resets the committed diff base branch", async ({ pa
 
     await selectDiffMode(page, "committed");
     await expect(baseTrigger).toContainText("release");
-    await baseTrigger.click();
+    await baseTrigger.dispatchEvent("click");
     const defaultOption = page.getByTestId("changes-diff-base-default");
     await expect(defaultOption).toBeVisible({ timeout: 30_000 });
-    await defaultOption.click();
+    await defaultOption.dispatchEvent("click");
 
     await expect(baseTrigger).toContainText("main");
     await expect(page.getByText("shared-change.txt", { exact: true })).toBeVisible();

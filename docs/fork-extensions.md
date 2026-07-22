@@ -1,11 +1,11 @@
 # Fork extensions
 
-This checkout is rebased semantically on upstream `v0.1.109` (`42e101c81`). Fork behavior is
-kept behind narrow, subsystem-owned seams so a future rebase can compare behavior instead of
-replaying historical patches.
+This checkout is rebased semantically on upstream `main` (`2acb10fce`). Fork behavior is kept
+behind narrow, subsystem-owned seams so a future rebase can compare behavior instead of replaying
+historical patches.
 
 Protocol capabilities added by the fork are optional fields in `server_info.features`. Their
-compatibility gates were added on the `v0.1.109` fork baseline and have a review date of
+compatibility gates were retained on the `2acb10fce` fork baseline and have a review date of
 2027-01-16. Removing a gate does not by itself remove the extension; remove an extension only
 when the supported upstream behavior covers the acceptance criteria below.
 

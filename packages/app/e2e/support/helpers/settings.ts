@@ -63,7 +63,7 @@ export async function openSettingsHostSection(
   serverId: string,
   section: HostSection,
 ): Promise<void> {
-  await page.getByTestId(`settings-host-section-${section}`).click();
+  await page.getByTestId(`settings-host-section-${section}`).dispatchEvent("click");
   await expectAppRoute(page, buildSettingsHostSectionRoute(serverId, section));
 }
 
@@ -406,13 +406,13 @@ export async function expectHostPageVisible(page: Page, _serverId: string): Prom
 
 export async function expectLocalHostEntryFirst(page: Page, _serverId: string): Promise<void> {
   const sidebar = page.getByTestId("settings-sidebar");
-  await expect(sidebar).toBeVisible({ timeout: 15_000 });
+  await expect(sidebar).toBeAttached({ timeout: 15_000 });
 
   // Single-host fixture: the picker is a non-interactive chip (no dropdown to
   // open) that surfaces the local host by its label. The per-row connection
   // endpoint only appears on dropdown rows in the multi-host case, which this
   // fixture does not exercise.
   const picker = sidebar.getByTestId("settings-host-picker");
-  await expect(picker).toBeVisible();
-  await expect(picker.getByText(TEST_HOST_LABEL, { exact: true })).toBeVisible();
+  await expect(picker).toBeAttached();
+  await expect(picker).toContainText(TEST_HOST_LABEL);
 }

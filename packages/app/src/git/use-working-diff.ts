@@ -25,6 +25,43 @@ interface UseWorkingDiffOptions {
   queryScope?: string;
 }
 
+function useDiffBaseSelection(input: {
+  serverId: string;
+  workspaceId?: string;
+  cwd: string;
+  defaultBaseRef: string | undefined;
+}) {
+  const supportsBaseSelection = useHostFeature(input.serverId, "checkoutDiffBaseSelection");
+  const selectionKey = useMemo(
+    () =>
+      buildDiffBaseSelectionKey({
+        serverId: input.serverId,
+        workspaceId: input.workspaceId,
+        cwd: input.cwd,
+      }),
+    [input.cwd, input.serverId, input.workspaceId],
+  );
+  const persistedBaseRef = usePanelStore((state) =>
+    selectionKey ? state.diffBaseRefByWorkspace[selectionKey] : undefined,
+  );
+  const setDiffBaseRefForWorkspace = usePanelStore((state) => state.setDiffBaseRefForWorkspace);
+  const selectedBaseRef = supportsBaseSelection ? (persistedBaseRef ?? null) : null;
+  const selectBaseRef = useCallback(
+    (nextBaseRef: string | null) => {
+      if (selectionKey) {
+        setDiffBaseRefForWorkspace(selectionKey, nextBaseRef);
+      }
+    },
+    [selectionKey, setDiffBaseRefForWorkspace],
+  );
+  return {
+    canSelectBase: supportsBaseSelection && selectionKey !== null,
+    selectedBaseRef,
+    effectiveBaseRef: selectedBaseRef ?? input.defaultBaseRef,
+    selectBaseRef,
+  };
+}
+
 export function useWorkingDiff({
   serverId,
   workspaceId,
@@ -49,29 +86,12 @@ export function useWorkingDiff({
   const hasUncommittedChanges = Boolean(gitStatus?.isDirty);
   const currentBranchName =
     gitStatus?.currentBranch && gitStatus.currentBranch !== "HEAD" ? gitStatus.currentBranch : null;
-  const supportsBaseSelection = useHostFeature(serverId, "checkoutDiffBaseSelection");
-  const baseSelectionKey = useMemo(
-    () => buildDiffBaseSelectionKey({ serverId, workspaceId, cwd }),
-    [cwd, serverId, workspaceId],
-  );
-  const persistedBaseRef = usePanelStore((state) => {
-    if (!baseSelectionKey) {
-      return undefined;
-    }
-    return state.diffBaseRefByWorkspace[baseSelectionKey];
+  const { canSelectBase, selectedBaseRef, effectiveBaseRef, selectBaseRef } = useDiffBaseSelection({
+    serverId,
+    workspaceId,
+    cwd,
+    defaultBaseRef: baseRef,
   });
-  const setDiffBaseRefForWorkspace = usePanelStore((state) => state.setDiffBaseRefForWorkspace);
-  const selectedBaseRef = supportsBaseSelection ? (persistedBaseRef ?? null) : null;
-  const effectiveBaseRef = selectedBaseRef ?? baseRef;
-  const selectBaseRef = useCallback(
-    (nextBaseRef: string | null) => {
-      if (!baseSelectionKey) {
-        return;
-      }
-      setDiffBaseRefForWorkspace(baseSelectionKey, nextBaseRef);
-    },
-    [baseSelectionKey, setDiffBaseRefForWorkspace],
-  );
 
   const reviewDraftScopeKey = useMemo(
     () =>
@@ -145,7 +165,7 @@ export function useWorkingDiff({
     statusErrorMessage,
     baseRef,
     effectiveBaseRef,
-    canSelectBase: supportsBaseSelection && baseSelectionKey !== null,
+    canSelectBase,
     selectedBaseRef,
     selectBaseRef,
     currentBranchName,

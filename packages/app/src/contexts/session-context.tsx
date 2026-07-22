@@ -34,9 +34,12 @@ import {
   type NotificationPermissionRequest,
 } from "@getpaseo/protocol/agent-attention-notification";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { AgentSessionConfig } from "@getpaseo/protocol/agent-types";
+import type {
+  AgentPermissionRequest,
+  AgentPermissionResponse,
+  AgentSessionConfig,
+} from "@getpaseo/protocol/agent-types";
 import type { GitSetupOptions } from "@getpaseo/protocol/messages";
-import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
 import { getHostRuntimeStore, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useVoiceAudioEngineOptional, useVoiceRuntimeOptional } from "@/contexts/voice-context";
 import type { AudioPlaybackSource } from "@/voice/audio-engine-types";
@@ -402,6 +405,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const viewedTimelineSyncRef = useRef<ViewedTimelineSync | null>(null);
   const audioOutputBuffersRef = useRef<Map<string, BufferedAudioChunk[]>>(new Map());
   const activeAudioGroupsRef = useRef<Set<string>>(new Set());
+  const planPermissionRequestsRef = useRef<Map<string, AgentPermissionRequest>>(new Map());
   const isAppVisible = useAppVisible();
 
   useEffect(() => {
@@ -774,6 +778,35 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       if (turnLiveness.length > 0) {
         applyAgentTurnLiveness(serverId, agentId, turnLiveness);
       }
+
+      if (event.type === "permission_resolved") {
+        const pendingPermissions =
+          useSessionStore.getState().sessions[serverId]?.pendingPermissions ?? new Map();
+        const permissionKey = `${agentId}:${event.requestId}`;
+        const pendingPlanRequest =
+          Array.from(pendingPermissions.values()).find(
+            (pending) =>
+              pending.agentId === agentId &&
+              pending.request.id === event.requestId &&
+              pending.request.kind === "plan",
+          )?.request ?? planPermissionRequestsRef.current.get(permissionKey);
+        if (pendingPlanRequest?.kind === "plan") {
+          // The permission request can predate this client's timeline subscription.
+          // Recreate it before applying the resolution so the resolved plan remains
+          // in the local timeline after the pending-permission card disappears.
+          agentStreamReducerQueue.enqueue(agentId, {
+            event: {
+              type: "permission_requested",
+              provider: pendingPlanRequest.provider,
+              request: pendingPlanRequest,
+            },
+            seq: undefined,
+            epoch: undefined,
+            timestamp: parsedTimestamp,
+          });
+        }
+        planPermissionRequestsRef.current.delete(permissionKey);
+      }
       agentStreamReducerQueue.enqueue(agentId, {
         event: streamEvent,
         seq,
@@ -855,6 +888,17 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     const unsubPermissionRequest = client.on("agent_permission_request", (message) => {
       if (message.type !== "agent_permission_request") return;
       const { agentId, request } = message.payload;
+
+      if (request.kind === "plan") {
+        const permissionKey = `${agentId}:${request.id}`;
+        planPermissionRequestsRef.current.set(permissionKey, request);
+        if (planPermissionRequestsRef.current.size > 64) {
+          const oldestKey = planPermissionRequestsRef.current.keys().next().value;
+          if (oldestKey !== undefined) {
+            planPermissionRequestsRef.current.delete(oldestKey);
+          }
+        }
+      }
 
       setPendingPermissions(serverId, (prev) => {
         const next = new Map(prev);

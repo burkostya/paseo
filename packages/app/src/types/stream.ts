@@ -1209,6 +1209,7 @@ function appendPermissionPlan(
     const next = [...state];
     next[existingIndex] = {
       ...item,
+      timestamp: existing.timestamp,
       resolution: existing.resolution,
     };
     return next;
@@ -1217,11 +1218,18 @@ function appendPermissionPlan(
   return [...state, item];
 }
 
+export function ensurePermissionPlanTimelineItem(
+  state: StreamItem[],
+  request: AgentPermissionRequest,
+  timestamp: Date,
+): StreamItem[] {
+  return appendPermissionPlan(state, request, timestamp);
+}
+
 function resolvePermissionPlan(
   state: StreamItem[],
   requestId: string,
   resolution: AgentPermissionResponse,
-  timestamp: Date,
 ): StreamItem[] {
   const existingIndex = state.findIndex(
     (item) => item.kind === "permission_plan" && item.request.id === requestId,
@@ -1234,7 +1242,6 @@ function resolvePermissionPlan(
   const next = [...state];
   next[existingIndex] = {
     ...existing,
-    timestamp,
     resolution,
   };
   return next;
@@ -1482,7 +1489,6 @@ export function reduceStreamUpdate(
         finalizeActiveThoughts(state),
         event.requestId,
         event.resolution,
-        timestamp,
       );
     case "thread_started":
     case "turn_started":

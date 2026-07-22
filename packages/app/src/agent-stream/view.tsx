@@ -39,7 +39,12 @@ import {
   type InlinePathTarget,
 } from "@/components/message";
 import { PlanCard } from "@/components/plan-card";
-import { isPermissionPlanItem, type PermissionPlanItem, type StreamItem } from "@/types/stream";
+import {
+  ensurePermissionPlanTimelineItem,
+  isPermissionPlanItem,
+  type PermissionPlanItem,
+  type StreamItem,
+} from "@/types/stream";
 import type { PendingMessageSubmission } from "@/composer/submission/model";
 import type { TurnPresentation } from "@/timeline/turn-liveness";
 import type { PendingPermission } from "@/types/shared";
@@ -126,6 +131,7 @@ function renderLiveAuxiliaryNode(input: {
 function renderPendingPermissionsNode(input: {
   pendingPermissions: PendingPermission[];
   client: DaemonClient | null;
+  serverId: string;
 }): ReactNode {
   if (input.pendingPermissions.length === 0) {
     return null;
@@ -133,7 +139,12 @@ function renderPendingPermissionsNode(input: {
   return (
     <View style={stylesheet.permissionsContainer}>
       {input.pendingPermissions.map((permission) => (
-        <PermissionRequestCard key={permission.key} permission={permission} client={input.client} />
+        <PermissionRequestCard
+          key={permission.key}
+          permission={permission}
+          client={input.client}
+          serverId={input.serverId}
+        />
       ))}
     </View>
   );
@@ -829,6 +840,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                 item={item}
                 agentId={agentId}
                 client={client}
+                serverId={resolvedServerId}
                 disabledReason={
                   !item.resolution && supersededPlanPermissionRequestIds.has(item.request.id)
                     ? t("agentStream.permission.planDisabledAfterMessages")
@@ -867,6 +879,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [
         agentId,
         client,
+        resolvedServerId,
         renderUserMessageItem,
         renderAssistantMessageItem,
         renderThoughtItem,
@@ -916,8 +929,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         renderPendingPermissionsNode({
           pendingPermissions: pendingPermissionItems,
           client,
+          serverId: resolvedServerId,
         }),
-      [client, pendingPermissionItems],
+      [client, pendingPermissionItems, resolvedServerId],
     );
     const turnFooterNode = useMemo(
       () =>
@@ -1318,12 +1332,14 @@ function PermissionActionButton({
 function PermissionPlanCard({
   permission,
   client,
+  serverId,
   resolution,
   disabledReason,
   testID = "permission-plan-card",
 }: {
   permission: PendingPermission;
   client: DaemonClient | null;
+  serverId: string;
   resolution?: PermissionPlanItem["resolution"];
   disabledReason?: string;
   testID?: string;
@@ -1404,6 +1420,21 @@ function PermissionPlanCard({
       if (disabledReason) {
         return;
       }
+      const store = useSessionStore.getState();
+      store.setAgentStreamTail(serverId, (previousByAgent) => {
+        const previousTail = previousByAgent.get(permission.agentId) ?? [];
+        const nextTail = ensurePermissionPlanTimelineItem(
+          previousTail,
+          permission.request,
+          new Date(),
+        );
+        if (nextTail === previousTail) {
+          return previousByAgent;
+        }
+        const nextByAgent = new Map(previousByAgent);
+        nextByAgent.set(permission.agentId, nextTail);
+        return nextByAgent;
+      });
       setRespondingActionId(action.id);
       if (action.behavior === "allow") {
         handleResponse({
@@ -1418,7 +1449,7 @@ function PermissionPlanCard({
         message: "Denied by user",
       });
     },
-    [disabledReason, handleResponse],
+    [disabledReason, handleResponse, permission.agentId, permission.request, serverId],
   );
 
   const optionsContainerStyle = useMemo(
@@ -1511,12 +1542,14 @@ function TimelinePermissionPlanCard({
   item,
   agentId,
   client,
+  serverId,
   disabledReason,
   testID,
 }: {
   item: PermissionPlanItem;
   agentId: string;
   client: DaemonClient | null;
+  serverId: string;
   disabledReason?: string;
   testID: string;
 }) {
@@ -1528,6 +1561,7 @@ function TimelinePermissionPlanCard({
     <PermissionPlanCard
       permission={permission}
       client={client}
+      serverId={serverId}
       resolution={item.resolution}
       disabledReason={disabledReason}
       testID={testID}
@@ -1538,12 +1572,14 @@ function TimelinePermissionPlanCard({
 function PermissionRequestCard({
   permission,
   client,
+  serverId,
 }: {
   permission: PendingPermission;
   client: DaemonClient | null;
+  serverId: string;
 }) {
   if (permission.request.kind === "plan") {
-    return <PermissionPlanCard permission={permission} client={client} />;
+    return <PermissionPlanCard permission={permission} client={client} serverId={serverId} />;
   }
   return <NonPlanPermissionRequestCard permission={permission} client={client} />;
 }

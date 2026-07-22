@@ -268,6 +268,34 @@ function shouldStoreFetchedAgentInActiveDirectory(agent: Agent): boolean {
   return !agent.archivedAt && Boolean(agent.projectPlacement);
 }
 
+function materializePendingPlanTimelineItems(
+  previousByAgent: Map<string, StreamItem[]>,
+  agent: Agent,
+): Map<string, StreamItem[]> {
+  const previousTail = previousByAgent.get(agent.id) ?? [];
+  const existingRequestIds = new Set(
+    previousTail.flatMap((item) => (item.kind === "permission_plan" ? [item.request.id] : [])),
+  );
+  const missingPlans = agent.pendingPermissions.filter(
+    (request) => request.kind === "plan" && !existingRequestIds.has(request.id),
+  );
+  if (missingPlans.length === 0) {
+    return previousByAgent;
+  }
+  const timestamp = new Date();
+  const nextTail: StreamItem[] = previousTail.concat(
+    missingPlans.map((request) => ({
+      kind: "permission_plan",
+      id: `permission_plan_${request.id}`,
+      timestamp,
+      request,
+    })),
+  );
+  const nextByAgent = new Map(previousByAgent);
+  nextByAgent.set(agent.id, nextTail);
+  return nextByAgent;
+}
+
 type FetchAgentResult = Awaited<ReturnType<DaemonClient["fetchAgent"]>>;
 
 function storeFetchedAgentDetail(input: {
@@ -311,6 +339,9 @@ function storeFetchedAgentDetail(input: {
     }
     return next;
   });
+  store.setAgentStreamTail(input.serverId, (previous) =>
+    materializePendingPlanTimelineItems(previous, hydrated),
+  );
 
   return hydrated;
 }
