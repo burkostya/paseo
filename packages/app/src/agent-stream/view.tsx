@@ -90,7 +90,10 @@ import {
 } from "./bottom-anchor-controller";
 import { createAssistantImageOccurrenceKey } from "@/assistant-image/acquisition-cache";
 import { AssistantSelectionCopySurface } from "@/assistant-selection-copy/surface";
-import { collectSupersededPlanPermissionRequestIds } from "./plan-permission-state";
+import {
+  collectSupersededPlanPermissionRequestIds,
+  resolvePlanPermissionResolutionStatus,
+} from "./plan-permission-state";
 import {
   AssistantFileLinkResolverProvider,
   normalizeInlinePathTarget,
@@ -1459,12 +1462,8 @@ function PermissionPlanCard({
     ],
     [isMobile],
   );
-  let resolutionLabel: string | null = null;
-  if (resolution?.behavior === "allow") {
-    resolutionLabel = t("agentStream.permission.approved");
-  } else if (resolution?.behavior === "deny") {
-    resolutionLabel = t("agentStream.permission.rejected");
-  }
+  const resolutionStatus = resolvePlanPermissionResolutionStatus(resolution);
+  const resolutionLabel = resolutionStatus ? t(`agentStream.permission.${resolutionStatus}`) : null;
   const footer = useMemo(
     () =>
       resolutionLabel ? (

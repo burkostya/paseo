@@ -209,6 +209,7 @@ export const fr: TranslationResources = {
       proposedPlan: "Plan proposé",
       approved: "Approuvé",
       rejected: "Rejeté",
+      skipped: "Ignoré",
       planDisabledAfterMessages:
         "Ce plan ne peut plus être approuvé, car la conversation a continué après lui.",
     },

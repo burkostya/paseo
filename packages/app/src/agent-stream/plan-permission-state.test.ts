@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { StreamItem } from "@/types/stream";
-import { collectSupersededPlanPermissionRequestIds } from "./plan-permission-state";
+import {
+  collectSupersededPlanPermissionRequestIds,
+  resolvePlanPermissionResolutionStatus,
+} from "./plan-permission-state";
 
 const timestamp = new Date(0);
 
@@ -58,6 +61,21 @@ function toolCall(id: string): Extract<StreamItem, { kind: "tool_call" }> {
     },
   };
 }
+
+describe("resolvePlanPermissionResolutionStatus", () => {
+  it("distinguishes approved, rejected, and superseded plans", () => {
+    expect(resolvePlanPermissionResolutionStatus(undefined)).toBeNull();
+    expect(resolvePlanPermissionResolutionStatus({ behavior: "allow" })).toBe("approved");
+    expect(resolvePlanPermissionResolutionStatus({ behavior: "deny" })).toBe("rejected");
+    expect(
+      resolvePlanPermissionResolutionStatus({
+        behavior: "deny",
+        selectedActionId: "superseded",
+        message: "Superseded by a later prompt.",
+      }),
+    ).toBe("skipped");
+  });
+});
 
 describe("collectSupersededPlanPermissionRequestIds", () => {
   it("marks an unresolved plan when a later user message exists", () => {

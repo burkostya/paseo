@@ -205,6 +205,7 @@ export const en = {
       proposedPlan: "Proposed plan",
       approved: "Approved",
       rejected: "Rejected",
+      skipped: "Skipped",
       planDisabledAfterMessages:
         "This plan can no longer be approved because the conversation continued after it.",
     },

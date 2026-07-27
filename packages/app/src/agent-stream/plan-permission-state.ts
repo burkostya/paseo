@@ -1,4 +1,19 @@
 import { isPermissionPlanItem, type StreamItem } from "@/types/stream";
+import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
+
+export type PlanPermissionResolutionStatus = "approved" | "rejected" | "skipped";
+
+export function resolvePlanPermissionResolutionStatus(
+  resolution: AgentPermissionResponse | undefined,
+): PlanPermissionResolutionStatus | null {
+  if (!resolution) {
+    return null;
+  }
+  if (resolution.behavior === "allow") {
+    return "approved";
+  }
+  return resolution.selectedActionId === "superseded" ? "skipped" : "rejected";
+}
 
 export function collectSupersededPlanPermissionRequestIds(input: {
   tail: StreamItem[];

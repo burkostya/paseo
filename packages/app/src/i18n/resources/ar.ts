@@ -207,6 +207,7 @@ export const ar: TranslationResources = {
       proposedPlan: "الخطة المقترحة",
       approved: "موافقة",
       rejected: "مرفوض",
+      skipped: "تم التخطي",
       planDisabledAfterMessages:
         "لم يعد من الممكن الموافقة على هذه الخطة لأن المحادثة استمرت بعدها.",
     },

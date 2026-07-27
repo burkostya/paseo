@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 
 import type {
   AgentLaunchContext,
+  AgentPermissionRequest,
   AgentSession,
   AgentSessionConfig,
   AgentSlashCommand,
@@ -4399,6 +4400,114 @@ describe("Codex app-server provider", () => {
       provider: "codex",
       turnId: "test-turn",
       usage: undefined,
+    });
+  });
+
+  test("supersedes an unanswered plan before the next turn without touching other permissions", async () => {
+    const session = createSession({
+      featureValues: { plan_mode: true, fast_mode: true },
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("turn/started", {
+      turn: { id: "turn-plan-superseded-1" },
+    });
+    asInternals(session).handleNotification("turn/plan/updated", {
+      plan: [{ step: "Implement the first approach", status: "pending" }],
+    });
+    asInternals(session).handleNotification("turn/completed", {
+      turn: { status: "completed", error: null },
+    });
+
+    const firstPlan = events.find(
+      (event): event is Extract<AgentStreamEvent, { type: "permission_requested" }> =>
+        event.type === "permission_requested" && event.request.kind === "plan",
+    );
+    if (!firstPlan) {
+      throw new Error("Expected first plan permission");
+    }
+
+    const internals = castInternals<{
+      pendingPermissions: Map<string, AgentPermissionRequest>;
+      pendingPermissionHandlers: Map<
+        string,
+        {
+          resolve: (value: unknown) => void;
+          kind: "command" | "file" | "question" | "mcp_elicitation" | "plan";
+        }
+      >;
+    }>(session);
+    internals.pendingPermissions.set("tool-permission", {
+      id: "tool-permission",
+      provider: "codex",
+      name: "CodexBash",
+      kind: "tool",
+    });
+    internals.pendingPermissionHandlers.set("tool-permission", {
+      resolve: vi.fn(),
+      kind: "command",
+    });
+
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/loaded/list") {
+        return { data: ["test-thread"] };
+      }
+      if (method === "turn/start") {
+        return {};
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    session.activeForegroundTurnId = null;
+    session.client = createStub<CodexClientLike>({ request });
+
+    await session.startTurn("Try a different approach");
+
+    expect(events).toContainEqual({
+      type: "permission_resolved",
+      provider: "codex",
+      requestId: firstPlan.request.id,
+      resolution: {
+        behavior: "deny",
+        selectedActionId: "superseded",
+        message: "Superseded by a later prompt.",
+      },
+    });
+    expect(session.getPendingPermissions().map(({ id }) => id)).toEqual(["tool-permission"]);
+    expect(asInternals(session).planModeEnabled).toBe(true);
+
+    asInternals(session).handleNotification("turn/started", {
+      turn: { id: "turn-plan-superseded-2" },
+    });
+    asInternals(session).handleNotification("turn/plan/updated", {
+      plan: [{ step: "Implement the revised approach", status: "pending" }],
+    });
+    asInternals(session).handleNotification("turn/completed", {
+      turn: { status: "completed", error: null },
+    });
+
+    const secondPlan = events.findLast(
+      (event): event is Extract<AgentStreamEvent, { type: "permission_requested" }> =>
+        event.type === "permission_requested" && event.request.kind === "plan",
+    );
+    if (!secondPlan || secondPlan.request.id === firstPlan.request.id) {
+      throw new Error("Expected a distinct second plan permission");
+    }
+
+    await session.respondToPermission(secondPlan.request.id, {
+      behavior: "allow",
+      selectedActionId: "implement",
+    });
+
+    expect(session.getPendingPermissions().map(({ id }) => id)).toEqual(["tool-permission"]);
+    expect(events).toContainEqual({
+      type: "permission_resolved",
+      provider: "codex",
+      requestId: secondPlan.request.id,
+      resolution: {
+        behavior: "allow",
+        selectedActionId: "implement",
+      },
     });
   });
 

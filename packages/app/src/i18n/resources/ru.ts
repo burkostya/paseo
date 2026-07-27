@@ -207,6 +207,7 @@ export const ru: TranslationResources = {
       proposedPlan: "Предлагаемый план",
       approved: "Одобрено",
       rejected: "Отклонено",
+      skipped: "Пропущено",
       planDisabledAfterMessages:
         "Этот план больше нельзя принять, потому что после него диалог продолжился.",
     },

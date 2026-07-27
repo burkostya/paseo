@@ -207,6 +207,7 @@ export const zhCN: TranslationResources = {
       proposedPlan: "建议计划",
       approved: "已批准",
       rejected: "已拒绝",
+      skipped: "已跳过",
       planDisabledAfterMessages: "此计划之后对话已继续，因此无法再批准。",
     },
   },

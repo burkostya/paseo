@@ -207,6 +207,7 @@ export const ja: TranslationResources = {
       proposedPlan: "提案されたプラン",
       approved: "承認済み",
       rejected: "拒否済み",
+      skipped: "スキップ済み",
       planDisabledAfterMessages: "このプランの後に会話が続いたため、このプランは承認できません。",
     },
   },

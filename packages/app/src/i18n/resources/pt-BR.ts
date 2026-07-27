@@ -207,6 +207,7 @@ export const ptBR: TranslationResources = {
       proposedPlan: "Plano proposto",
       approved: "Aprovado",
       rejected: "Rejeitado",
+      skipped: "Ignorado",
       planDisabledAfterMessages:
         "Este plano não pode mais ser aprovado porque a conversa continuou depois dele.",
     },
