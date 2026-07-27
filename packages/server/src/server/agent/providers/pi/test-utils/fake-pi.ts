@@ -351,8 +351,20 @@ export class FakePiSession implements PiRuntimeSession {
   }
 
   finishTurn(message: PiAgentMessage = { role: "assistant", content: [] }): void {
+    this.finishAgentRun(message);
+    this.settleAgent();
+  }
+
+  finishAgentRun(
+    message: PiAgentMessage = { role: "assistant", content: [] },
+    willRetry = false,
+  ): void {
     this.messages = [...this.messages, message];
-    this.emit({ type: "agent_end", messages: this.messages });
+    this.emit({ type: "agent_end", messages: this.messages, willRetry });
+  }
+
+  settleAgent(): void {
+    this.emit({ type: "agent_settled" });
   }
 
   finishSubmittedUserMessage(entry: FakePiUserEntry): void {

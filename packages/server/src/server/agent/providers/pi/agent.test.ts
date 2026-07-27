@@ -608,6 +608,88 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("keeps the Pi turn active through automatic compaction and retry", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    const { turnId } = await session.startTurn("finish the task");
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.finishAgentRun({
+      role: "assistant",
+      content: [],
+      stopReason: "error",
+      errorMessage: "context window exceeded",
+    });
+
+    expect(events.turnCompletedEvents()).toHaveLength(0);
+
+    fakeSession.emit({ type: "compaction_start", reason: "overflow" });
+    fakeSession.emit({
+      type: "compaction_end",
+      reason: "overflow",
+      willRetry: true,
+    });
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({
+      type: "message_update",
+      message: { role: "assistant", content: [], responseId: "response-after-compaction" },
+      assistantMessageEvent: { type: "text_delta", delta: "task complete" },
+    });
+    fakeSession.finishAgentRun({
+      role: "assistant",
+      content: [{ type: "text", text: "task complete" }],
+      stopReason: "stop",
+    });
+
+    expect(events.turnCompletedEvents()).toHaveLength(0);
+
+    fakeSession.settleAgent();
+    await expect(events.nextTurnCompletion()).resolves.toMatchObject({
+      type: "turn_completed",
+      turnId,
+    });
+    expect(events.timelineItems()).toEqual([
+      { type: "compaction", status: "loading", trigger: "auto" },
+      { type: "compaction", status: "completed", trigger: "auto" },
+      {
+        type: "assistant_message",
+        text: "task complete",
+        messageId: "response-after-compaction",
+      },
+    ]);
+  });
+
+  test("falls back to agent_end settlement for Pi versions before 0.80.4", async () => {
+    vi.useFakeTimers();
+    try {
+      const { pi, session, events } = await createSession();
+      const fakeSession = pi.latestSession();
+
+      const { turnId } = await session.startTurn("legacy Pi");
+      fakeSession.emit({ type: "agent_start" });
+      fakeSession.finishAgentRun();
+      await vi.advanceTimersByTimeAsync(50);
+      fakeSession.emit({ type: "compaction_start", reason: "threshold" });
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(events.turnCompletedEvents()).toHaveLength(0);
+
+      fakeSession.emit({
+        type: "compaction_end",
+        reason: "threshold",
+        willRetry: false,
+      });
+      await vi.advanceTimersByTimeAsync(100);
+
+      await expect(events.nextTurnCompletion()).resolves.toMatchObject({
+        type: "turn_completed",
+        turnId,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("keeps one generated message id when Pi omits message start and response id", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();

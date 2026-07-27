@@ -95,6 +95,7 @@ const PASEO_PI_ENTRY_CAPTURE_MARKER = "PASEO_ENTRY_CAPTURE";
 const PASEO_PI_SUBMITTED_USER_ENTRY_MARKER = "PASEO_SUBMITTED_USER_ENTRY";
 const PASEO_PI_COMMAND_RESULT_MARKER = "PASEO_COMMAND_RESULT";
 const DEFAULT_PI_EXTENSION_RESULT_TIMEOUT_MS = 30_000;
+const PI_AGENT_SETTLED_FALLBACK_DELAY_MS = 100;
 const QUESTION_RESPONSE_HEADER = "Response";
 const QUESTION_COMMENT_HEADER = "Comment";
 const PI_ASK_USER_FREEFORM_SENTINEL = "✏️ Type custom response...";
@@ -1028,7 +1029,9 @@ function isPiAgentSessionEvent(event: PiRuntimeEvent): event is PiAgentSessionEv
     case "tool_execution_end":
     case "compaction_start":
     case "compaction_end":
+    case "auto_retry_start":
     case "agent_end":
+    case "agent_settled":
       return true;
     default:
       return false;
@@ -1234,6 +1237,9 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly pendingNoTurnOutputs: Array<{ turnId: string; message: string }> = [];
   private activePromptRequestId: string | null = null;
   private readonly pendingPromptResults = new Map<string, boolean>();
+  private pendingAgentEndMessages: PiAgentMessage[] = [];
+  private hasPendingAgentEnd = false;
+  private agentEndFallbackTimer: NodeJS.Timeout | null = null;
   private lastKnownThinkingOptionId: string | null;
   currentLeafOverrideId: string | null | undefined;
   private readonly capturedUserEntries: PiCapturedEntry[] = [];
@@ -1299,6 +1305,7 @@ export class PiRpcAgentSession implements AgentSession {
 
     const payload = convertPromptInput(prompt, { model: this.state.model });
     const turnId = randomUUID();
+    this.resetTurnSettlementState();
     this.activeTurnId = turnId;
     this.lastInterruptedTurnId = null;
     this.activeClientMessageId = options?.clientMessageId ?? null;
@@ -1335,6 +1342,7 @@ export class PiRpcAgentSession implements AgentSession {
         this.activeClientMessageId = null;
         this.activeTurnStarted = false;
         this.activeAssistantMessageId = null;
+        this.resetTurnSettlementState();
         this.clearNoTurnBuffers();
         if (isPiRequestAbortError(error)) {
           this.emit({
@@ -1477,6 +1485,7 @@ export class PiRpcAgentSession implements AgentSession {
       this.activeClientMessageId = null;
       this.activeTurnStarted = false;
       this.activeAssistantMessageId = null;
+      this.resetTurnSettlementState();
       this.clearNoTurnBuffers();
       this.emit({
         type: "turn_canceled",
@@ -1526,6 +1535,7 @@ export class PiRpcAgentSession implements AgentSession {
       return;
     }
     this.closed = true;
+    this.resetTurnSettlementState();
     try {
       await this.runtimeSession.close();
     } finally {
@@ -2049,6 +2059,8 @@ export class PiRpcAgentSession implements AgentSession {
     this.activeTurnId = null;
     this.activeClientMessageId = null;
     this.activeTurnStarted = false;
+    this.activeAssistantMessageId = null;
+    this.resetTurnSettlementState();
     this.clearNoTurnBuffers();
     this.emit({
       type: "turn_failed",
@@ -2063,6 +2075,9 @@ export class PiRpcAgentSession implements AgentSession {
 
     switch (event.type) {
       case "agent_start":
+        this.cancelAgentEndFallback();
+        this.pendingAgentEndMessages = [];
+        this.hasPendingAgentEnd = false;
         this.activeTurnStarted = true;
         this.clearNoTurnBuffers();
         this.emit({
@@ -2111,6 +2126,7 @@ export class PiRpcAgentSession implements AgentSession {
         return;
       }
       case "compaction_start":
+        this.cancelAgentEndFallback();
         this.emitCompactionTimeline({
           turnId,
           item: {
@@ -2129,9 +2145,25 @@ export class PiRpcAgentSession implements AgentSession {
             trigger: event.reason === "manual" ? "manual" : "auto",
           },
         });
+        this.scheduleAgentEndFallback(turnId);
+        return;
+      case "auto_retry_start":
+        this.cancelAgentEndFallback();
         return;
       case "agent_end":
-        this.completeTurn(turnId, event.messages ?? []);
+        if (!this.activeTurnId) {
+          return;
+        }
+        this.pendingAgentEndMessages = event.messages ?? [];
+        this.hasPendingAgentEnd = true;
+        this.scheduleAgentEndFallback(turnId);
+        return;
+      case "agent_settled":
+        if (!this.activeTurnId) {
+          return;
+        }
+        this.cancelAgentEndFallback();
+        this.completeTurn(turnId, this.pendingAgentEndMessages);
         return;
       default:
         return;
@@ -2307,6 +2339,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.activeClientMessageId = null;
     this.activeAssistantMessageId = null;
     this.activeTurnStarted = false;
+    this.resetTurnSettlementState();
     this.clearNoTurnBuffers();
     const errorMessage = latestPiErrorMessage(messages);
     if (typeof errorMessage === "string" && errorMessage.length > 0) {
@@ -2324,6 +2357,36 @@ export class PiRpcAgentSession implements AgentSession {
       turnId,
     });
     void this.refreshAfterTurn(turnId);
+  }
+
+  private scheduleAgentEndFallback(turnId: string | undefined): void {
+    if (!turnId || this.activeTurnId !== turnId || !this.hasPendingAgentEnd) {
+      return;
+    }
+    this.cancelAgentEndFallback();
+    // COMPAT(piAgentSettled): added in v0.2.3 for Pi <0.80.4. Remove after
+    // 2027-01-28 once the minimum supported Pi version emits agent_settled.
+    this.agentEndFallbackTimer = setTimeout(() => {
+      this.agentEndFallbackTimer = null;
+      if (this.activeTurnId !== turnId) {
+        return;
+      }
+      this.completeTurn(turnId, this.pendingAgentEndMessages);
+    }, PI_AGENT_SETTLED_FALLBACK_DELAY_MS);
+  }
+
+  private cancelAgentEndFallback(): void {
+    if (!this.agentEndFallbackTimer) {
+      return;
+    }
+    clearTimeout(this.agentEndFallbackTimer);
+    this.agentEndFallbackTimer = null;
+  }
+
+  private resetTurnSettlementState(): void {
+    this.cancelAgentEndFallback();
+    this.pendingAgentEndMessages = [];
+    this.hasPendingAgentEnd = false;
   }
 
   private async refreshState(): Promise<void> {
