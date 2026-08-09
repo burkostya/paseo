@@ -1,4 +1,2 @@
-- Нельзя перетаскивать workspaces в левой панели внутри проекта.
 - При работе с Pi-агентом, если во время его размышления отправить ему сообщение, возникает ошибка: `[System Error] Request was aborted (stopReason=aborted, model=llama-nixos/Qwen3.6-35B-A3B-Thinking)`.
-- При превышении размера контекста отображается ошибка `[System Error] 400: {“code”:400,“message”:“request (135317 tokens) exceeds the available context size (131072 tokens), try increasing it”,“type”:“exceed_context_size_error”,“n_prompt_tokens”:135317,“n_ctx”:131072} (stopReason=error, model=llama-nixos/Qwen3.6-35B-A3B-Thinking)`, хотя compaction отображается и успешно выполняется. Выводить эту ошибку пользователю избыточно.
-- В разделе Changes правой панели нет древовидного представления файлов — доступен только плоский список, в котором неудобно ориентироваться.
+- Добавить WYSIWYG-редактор для Markdown.
