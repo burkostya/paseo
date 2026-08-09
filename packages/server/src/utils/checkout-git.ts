@@ -1228,7 +1228,9 @@ function isSameBaseRef(stored: string, requested: string): boolean {
 // Names both refs rather than labelling either one correct: a caller's ref can be stale, but the
 // stored ref can equally be wrong, so the message states the two facts and leaves the diagnosis open.
 function baseRefMismatchError(refs: { stored: string; requested: string }): Error {
-  return new Error(`Base ref mismatch: stored ${refs.stored}, requested ${refs.requested}`);
+  return new Error(
+    `Base ref mismatch: stored ${branchNameFromRef(refs.stored)}, requested ${refs.requested}`,
+  );
 }
 
 function resolveOperationBaseRef(input: {

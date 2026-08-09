@@ -468,7 +468,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-history-next",
       section: "navigation",
       label: "Next recent workspace",
-      keys: ["ctrl", "Tab"],
     },
   },
   {
@@ -481,7 +480,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-history-prev",
       section: "navigation",
       label: "Previous recent workspace",
-      keys: ["ctrl", "shift", "Tab"],
     },
   },
   {

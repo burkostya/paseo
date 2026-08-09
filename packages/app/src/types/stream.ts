@@ -742,6 +742,7 @@ export interface ToolCallItem {
 export interface PermissionPlanItem {
   kind: "permission_plan";
   id: string;
+  timelineCursor?: TimelinePosition;
   timestamp: Date;
   request: AgentPermissionRequest;
   resolution?: AgentPermissionResponse;

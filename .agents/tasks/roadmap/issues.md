@@ -1,4 +1,4 @@
-# Fork extensions (`upstream/main` at `2acb10fce`)
+# Fork extensions (`v0.3.1` at `bfec7ac3a`)
 
 Detailed contracts, persistence, and removal criteria live in
 [`docs/fork-extensions.md`](../../../docs/fork-extensions.md).
@@ -9,11 +9,10 @@ Detailed contracts, persistence, and removal criteria live in
 - Selectable diff base
 - Native Codex commands
 - Retained plan cards
-- Shared sidebar row actions
 - Composer prompt history
 - Ctrl-Tab workspace MRU
-- Prompt marker navigator
 - Desktop/Sway attention
+- Pi settled lifecycle after compaction
 
 ## Open issues
 

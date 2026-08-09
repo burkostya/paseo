@@ -4626,7 +4626,8 @@ describe("Codex app-server provider", () => {
       requestId: pendingPlan!.id,
       resolution: {
         behavior: "deny",
-        message: "Dismissed by a new prompt",
+        message: "Superseded by a later prompt.",
+        selectedActionId: "superseded",
       },
     });
   });

@@ -1384,7 +1384,7 @@ export function processTimelineResponse(
       timelineUnits,
       payload,
       bootstrapPolicy: isResumeReplacement
-        ? { replace: true, catchUpCursor: null }
+        ? { replace: true, catchUpCursor: null, preserveLivePermissionPlans: false }
         : bootstrapPolicy,
       currentTail,
       currentHead,

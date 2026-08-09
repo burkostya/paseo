@@ -1,12 +1,15 @@
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
-import { expect, test, type Page } from "./fixtures";
-import { gotoAppShell } from "./helpers/app";
-import { openChangesPanel } from "./helpers/branch-switcher";
-import { seedWorkspace } from "./helpers/seed-client";
-import { getServerId } from "./helpers/server-id";
-import { switchWorkspaceViaSidebar, waitForSidebarHydration } from "./helpers/workspace-ui";
+import { expect, test, type Page } from "../support/fixtures";
+import { gotoAppShell } from "../support/helpers/app";
+import { openChangesPanel } from "../support/helpers/branch-switcher";
+import { seedWorkspace } from "../support/helpers/seed-client";
+import { getServerId } from "../support/helpers/server-id";
+import {
+  switchWorkspaceViaSidebar,
+  waitForSidebarHydration,
+} from "../support/helpers/workspace-ui";
 
 function git(cwd: string, args: string[]): void {
   execFileSync("git", args, { cwd, stdio: "ignore" });
