@@ -44,6 +44,7 @@ import { CompactExplorerSidebarHost } from "@/components/compact-explorer-sideba
 import { ProviderSettingsHost } from "@/components/provider-settings-host";
 import { RootErrorBoundary } from "@/components/root-error-boundary";
 import { WorkspaceSetupDialog } from "@/components/workspace-setup-dialog";
+import { IssueLinkModifierClickHandler } from "@/issue-links/modifier-click";
 import { WorkspaceShortcutTargetsSubscriber } from "@/components/workspace-shortcut-targets-subscriber";
 import { FloatingPanelPortalHost } from "@/components/ui/floating-panel-portal";
 import { HostChooserModal, useHostChooser } from "@/hosts/host-chooser";
@@ -602,6 +603,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
       <HostChooserModal />
       <ProviderSettingsHost />
       <WorkspaceSetupDialog />
+      <IssueLinkModifierClickHandler />
       <KeyboardShortcutsDialog />
       <AppDiagnosticHost />
       <QuittingOverlay />

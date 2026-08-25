@@ -122,9 +122,10 @@ const UNSCOPED_WINDOWS: ReadonlyArray<{
   field: "five_hour" | "seven_day";
   id: string;
   label: string;
+  windowMinutes: number;
 }> = [
-  { field: "five_hour", id: "five_hour", label: "Session" },
-  { field: "seven_day", id: "weekly", label: "Weekly" },
+  { field: "five_hour", id: "five_hour", label: "Session", windowMinutes: 300 },
+  { field: "seven_day", id: "weekly", label: "Weekly", windowMinutes: 10_080 },
 ];
 
 // Scoped windows from before `limits[]` existed. Declaring the dimension here is what
@@ -265,6 +266,7 @@ function unscopedWindows(resp: ClaudeUsageResponse): ProviderUsageWindow[] {
         label: spec.label,
         utilizationPct: window.utilization,
         resetsAt: window.resets_at ?? null,
+        windowMinutes: spec.windowMinutes,
         tone: toneFromUsedPct(window.utilization),
       }),
     );
@@ -284,6 +286,7 @@ function scopedWindows(limits: ScopedLimit[]): ProviderUsageWindow[] {
       label: `Weekly \u00b7 ${limit.name}`,
       utilizationPct: limit.usedPct,
       resetsAt: limit.resetsAt,
+      windowMinutes: 10_080,
       tone: toneFromUsedPct(limit.usedPct),
     });
   });

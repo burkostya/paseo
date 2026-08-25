@@ -2067,18 +2067,23 @@ export class AgentManager {
     };
   }
 
-  /**
-   * Try to run a prompt out-of-band — i.e. without allocating a foreground turn
-   * and without canceling any active turn. Returns true when the session
-   * accepted the prompt as a side-effect command (e.g. /goal pause). Events
-   * emitted by the handler flow through dispatchStream so they persist and
-   * broadcast like normal timeline events.
-   */
-  tryRunOutOfBand(agentId: string, prompt: AgentPromptInput, options?: AgentRunOptions): boolean {
+  /** Resolve provider-native commands before a foreground run is allocated. */
+  async resolveCommand(
+    agentId: string,
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions,
+  ): Promise<{ handled: true } | { handled: false; prompt: AgentPromptInput }> {
     const agent = this.requireSessionAgent(agentId);
-    const handler = agent.session.tryHandleOutOfBand?.(prompt);
+    const resolution = await agent.session.resolveCommand?.(prompt);
+    if (resolution?.kind === "foreground") {
+      return { handled: false, prompt: resolution.prompt };
+    }
+    const handler =
+      resolution?.kind === "handled"
+        ? resolution
+        : (agent.session.tryHandleOutOfBand?.(prompt) ?? null);
     if (!handler) {
-      return false;
+      return { handled: false, prompt };
     }
     if (options?.clientMessageId) {
       this.recordSubmittedPrompt(agent, prompt, options.clientMessageId);
@@ -2111,7 +2116,7 @@ export class AgentManager {
         });
       }
     })();
-    return true;
+    return { handled: true };
   }
 
   async appendTimelineItem(agentId: string, item: AgentTimelineItem): Promise<void> {

@@ -29,6 +29,7 @@ import {
   CircleDot,
   FileText,
   GitPullRequest,
+  History,
   Image as ImageIcon,
   ClipboardPaste,
   Paperclip,
@@ -79,6 +80,7 @@ import { useVoiceOptional } from "@/contexts/voice-context";
 import { useToast } from "@/contexts/toast-context";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
+import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { AutocompletePopover } from "@/components/ui/autocomplete-popover";
 import type { AutocompleteOption } from "@/components/ui/autocomplete";
@@ -146,6 +148,14 @@ import {
   resolveWorkspaceFileDrop,
   type WorkspaceFileDragPayload,
 } from "@/attachments/workspace-file-drag";
+import type { StreamItem } from "@/types/stream";
+import {
+  buildComposerHistoryEntries,
+  getComposerHistoryNavigationResult,
+  initialComposerHistoryNavigationState,
+  shouldNavigateComposerHistory,
+  type ComposerHistoryEntry,
+} from "./history";
 
 const composerImageAttachmentPersister: Pick<
   AttachmentPersister,
@@ -163,6 +173,7 @@ type AttachmentListUpdater =
   | ((prev: UserComposerAttachment[]) => UserComposerAttachment[]);
 
 const EMPTY_ATTACHMENT_SCOPE_KEYS: readonly string[] = [];
+const HISTORY_SHEET_SNAP_POINTS = ["45%", "70%"];
 
 function noop() {}
 const noopCallback = () => {};
@@ -978,6 +989,7 @@ interface ComposerProps {
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 
 const EMPTY_ARRAY: readonly QueuedMessage[] = [];
+const EMPTY_STREAM_ITEMS: readonly StreamItem[] = [];
 const StableMessageInput = memo(MessageInput);
 
 function resolveContextWindowValues(
@@ -1135,6 +1147,105 @@ type ComposerContentProps = Omit<ComposerProps, "isPaneFocused">;
 
 const ComposerContent = memo(ComposerContentImpl);
 
+function ComposerHistoryButton({
+  label,
+  onPress,
+  buttonIconSize,
+}: {
+  label: string;
+  onPress: () => void;
+  buttonIconSize: number;
+}) {
+  const renderContent = useCallback(
+    ({ hovered }: PressableStateCallbackType & { hovered?: boolean }) => {
+      const colorMapping = hovered ? iconForegroundMapping : iconForegroundMutedMapping;
+      return <ThemedHistory size={buttonIconSize} uniProps={colorMapping} />;
+    },
+    [buttonIconSize],
+  );
+  const buttonStyle = useCallback(
+    ({ pressed }: PressableStateCallbackType) => [
+      styles.historyButton,
+      pressed && styles.iconButtonHovered,
+    ],
+    [],
+  );
+
+  return (
+    <Pressable
+      accessibilityLabel={label}
+      accessibilityRole="button"
+      testID="composer-history-button"
+      onPress={onPress}
+      style={buttonStyle}
+    >
+      {renderContent}
+    </Pressable>
+  );
+}
+
+function ComposerHistorySheet({
+  entries,
+  header,
+  visible,
+  onClose,
+  onSelect,
+}: {
+  entries: readonly ComposerHistoryEntry[];
+  header: SheetHeader;
+  visible: boolean;
+  onClose: () => void;
+  onSelect: (entry: ComposerHistoryEntry) => void;
+}) {
+  return (
+    <AdaptiveModalSheet
+      header={header}
+      visible={visible}
+      onClose={onClose}
+      snapPoints={HISTORY_SHEET_SNAP_POINTS}
+      testID="composer-history-sheet"
+    >
+      <View style={styles.historySheetList}>
+        {entries.map((entry) => (
+          <ComposerHistorySheetItem key={entry.id} entry={entry} onSelect={onSelect} />
+        ))}
+      </View>
+    </AdaptiveModalSheet>
+  );
+}
+
+function ComposerHistorySheetItem({
+  entry,
+  onSelect,
+}: {
+  entry: ComposerHistoryEntry;
+  onSelect: (entry: ComposerHistoryEntry) => void;
+}) {
+  const handlePress = useCallback(() => {
+    onSelect(entry);
+  }, [entry, onSelect]);
+  const itemStyle = useCallback(
+    ({ pressed }: PressableStateCallbackType) => [
+      styles.historySheetItem,
+      pressed && styles.historySheetItemPressed,
+    ],
+    [],
+  );
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      testID={`composer-history-item-${entry.id}`}
+      onPress={handlePress}
+      style={itemStyle}
+    >
+      <Text style={styles.historySheetItemText} numberOfLines={3}>
+        {entry.text}
+      </Text>
+    </Pressable>
+  );
+}
+
 // oxlint-disable-next-line complexity
 function ComposerContentImpl({
   agentId,
@@ -1200,6 +1311,12 @@ function ComposerContentImpl({
   const { settings: appSettings } = useAppSettings();
 
   const agentState = useSessionStore(useShallow(buildAgentStateSelector(serverId, agentId)));
+  const historyHeadRaw = useSessionStore((state) =>
+    state.sessions[serverId]?.agentStreamHead?.get(agentId),
+  );
+  const historyTailRaw = useSessionStore((state) =>
+    state.sessions[serverId]?.agentStreamTail?.get(agentId),
+  );
 
   const queuedMessagesRaw = useSessionStore((state) =>
     state.sessions[serverId]?.queuedMessages?.get(agentId),
@@ -1215,6 +1332,15 @@ function ComposerContentImpl({
   const messagePlaceholder = resolveMessagePlaceholder(inputMode, isDesktopLayout, t, placeholder);
   const userInput = value;
   const setUserInput = onChangeText;
+  const historyEntries = useMemo(
+    () =>
+      buildComposerHistoryEntries({
+        head: historyHeadRaw ?? EMPTY_STREAM_ITEMS,
+        tail: historyTailRaw ?? EMPTY_STREAM_ITEMS,
+      }),
+    [historyHeadRaw, historyTailRaw],
+  );
+  const recentHistoryEntries = useMemo(() => historyEntries.toReversed(), [historyEntries]);
   const workspaceAttachments = useWorkspaceAttachmentsForScopes(attachmentScopeKeys);
   const {
     selectedAttachments,
@@ -1250,6 +1376,8 @@ function ComposerContentImpl({
   });
   const [cursorIndex, setCursorIndex] = useState(0);
   const cursorPublication = useMemo(() => new AfterPaintPublication<number>(setCursorIndex), []);
+  const [historyNavigation, setHistoryNavigation] = useState(initialComposerHistoryNavigationState);
+  const [isHistorySheetOpen, setIsHistorySheetOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isUploadingFile, setIsUploadingFile] = useState(false);
   const [pendingNativeImagePastes, setPendingNativeImagePastes] = useState(0);
@@ -1283,6 +1411,9 @@ function ComposerContentImpl({
     },
     [onChangeText],
   );
+  const resetHistoryNavigation = useCallback(() => {
+    setHistoryNavigation(initialComposerHistoryNavigationState);
+  }, []);
 
   const runClientSlashCommand = useCallback(
     (command: ClientSlashCommand): boolean => {
@@ -1347,6 +1478,11 @@ function ComposerContentImpl({
   }, [userInput.length]);
 
   useEffect(() => () => cursorPublication.cancel(), [cursorPublication]);
+
+  useEffect(() => {
+    resetHistoryNavigation();
+    setIsHistorySheetOpen(false);
+  }, [agentId, resetHistoryNavigation, serverId]);
 
   const { pickImages } = useImageAttachmentPicker();
   const { pickFiles } = useFilePicker();
@@ -1587,6 +1723,7 @@ function ComposerContentImpl({
 
   const handleSubmit = useCallback(
     (payload: MessagePayload) => {
+      resetHistoryNavigation();
       const outgoingAttachments = buildOutgoingAttachments(attachments);
       const clientSlashCommand = resolveClientSlashCommand({
         text: payload.text,
@@ -1605,6 +1742,7 @@ function ComposerContentImpl({
       attachments,
       blurOnSubmit,
       buildOutgoingAttachments,
+      resetHistoryNavigation,
       runClientSlashCommand,
       sendMessageWithContent,
     ],
@@ -1869,8 +2007,37 @@ function ComposerContentImpl({
 
   // Handle keyboard navigation for command autocomplete.
   const handleCommandKeyPress = useCallback(
-    (event: ComposerKeyPressEvent) => autocompleteOnKeyPressRef.current(event),
-    [],
+    (event: ComposerKeyPressEvent) => {
+      if (autocompleteOnKeyPressRef.current(event)) {
+        return true;
+      }
+      if (
+        !shouldNavigateComposerHistory({
+          key: event.key,
+          selection: event.input.selection,
+          valueLength: event.input.text.length,
+          isNavigating: historyNavigation.selectedIndex !== null,
+        })
+      ) {
+        return false;
+      }
+
+      const result = getComposerHistoryNavigationResult({
+        state: historyNavigation,
+        entries: historyEntries,
+        draft: event.input.text,
+        direction: event.key === "ArrowUp" ? "older" : "newer",
+      });
+      if (!result) {
+        return false;
+      }
+
+      event.preventDefault();
+      setHistoryNavigation(result.state);
+      replaceUserInput(result.value, { start: result.value.length, end: result.value.length });
+      return true;
+    },
+    [historyEntries, historyNavigation, replaceUserInput],
   );
 
   const cancelButtonStyle = useMemo(
@@ -2100,7 +2267,35 @@ function ComposerContentImpl({
     ],
   );
 
-  const leftContent = useMemo(
+  const handleOpenHistorySheet = useCallback(() => {
+    if (historyEntries.length === 0) {
+      return;
+    }
+    setIsHistorySheetOpen(true);
+  }, [historyEntries.length]);
+
+  const handleCloseHistorySheet = useCallback(() => {
+    setIsHistorySheetOpen(false);
+  }, []);
+
+  const historySheetHeader = useMemo<SheetHeader>(
+    () => ({ title: t("composer.history.title") }),
+    [t],
+  );
+
+  const historyButton = useMemo(
+    () =>
+      isCompactLayout && historyEntries.length > 0 ? (
+        <ComposerHistoryButton
+          label={t("composer.history.open")}
+          onPress={handleOpenHistorySheet}
+          buttonIconSize={buttonIconSize}
+        />
+      ) : null,
+    [buttonIconSize, handleOpenHistorySheet, historyEntries.length, isCompactLayout, t],
+  );
+
+  const agentControlsContent = useMemo(
     () =>
       renderLeftContent({
         agentControls,
@@ -2111,6 +2306,18 @@ function ComposerContentImpl({
         showAgentControls: mode.showAgentControls,
       }),
     [agentControls, agentId, focusInput, isCompactLayout, mode.showAgentControls, serverId],
+  );
+  const leftContent = useMemo(
+    () =>
+      historyButton ? (
+        <>
+          {historyButton}
+          {agentControlsContent}
+        </>
+      ) : (
+        agentControlsContent
+      ),
+    [agentControlsContent, historyButton],
   );
 
   const handleAttachButtonRef = useCallback((node: View | null) => {
@@ -2126,6 +2333,24 @@ function ComposerContentImpl({
       }
     },
     [cursorPublication],
+  );
+
+  const handleUserInputChange = useCallback(
+    (nextValue: string) => {
+      resetHistoryNavigation();
+      setUserInput(nextValue);
+    },
+    [resetHistoryNavigation, setUserInput],
+  );
+
+  const handleSelectHistoryEntry = useCallback(
+    (entry: ComposerHistoryEntry) => {
+      resetHistoryNavigation();
+      replaceUserInput(entry.text, { start: entry.text.length, end: entry.text.length });
+      setIsHistorySheetOpen(false);
+      focusInput();
+    },
+    [focusInput, replaceUserInput, resetHistoryNavigation],
   );
 
   const handleFocusChange = useCallback(
@@ -2268,6 +2493,13 @@ function ComposerContentImpl({
       />
       <Animated.View style={composerContainerStyle}>
         <AttachmentLightbox source={lightboxSource} onClose={handleLightboxClose} />
+        <ComposerHistorySheet
+          entries={recentHistoryEntries}
+          header={historySheetHeader}
+          visible={isHistorySheetOpen}
+          onClose={handleCloseHistorySheet}
+          onSelect={handleSelectHistoryEntry}
+        />
         {/* Input area */}
         <View style={inputAreaContainerStyle}>
           <View style={styles.inputAreaContent}>
@@ -2292,7 +2524,7 @@ function ComposerContentImpl({
                 <StableMessageInput
                   ref={messageInputRef}
                   value={userInput}
-                  onChangeText={setUserInput}
+                  onChangeText={handleUserInputChange}
                   onSubmit={handleSubmit}
                   hasExternalContent={hasExternalContent}
                   allowEmptySubmit={allowEmptySubmit}
@@ -2441,8 +2673,34 @@ const styles = StyleSheet.create((theme: Theme) => ({
     backgroundColor: theme.colors.palette.green[600],
     borderColor: theme.colors.palette.green[800],
   },
+  historyButton: {
+    width: 28,
+    height: 28,
+    borderRadius: theme.borderRadius.full,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   iconButtonHovered: {
     backgroundColor: theme.colors.surface2,
+  },
+  historySheetList: {
+    gap: theme.spacing[1],
+    paddingBottom: theme.spacing[4],
+  },
+  historySheetItem: {
+    minHeight: 44,
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    borderRadius: theme.borderRadius.xl,
+  },
+  historySheetItemPressed: {
+    backgroundColor: theme.colors.surface2,
+  },
+  historySheetItemText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.normal,
+    lineHeight: theme.fontSize.base * 1.35,
   },
   attachmentTray: {
     flexDirection: "row",
@@ -2513,6 +2771,8 @@ const ThemedPaperclip = withUnistyles(Paperclip);
 const ThemedImageIcon = withUnistyles(ImageIcon);
 const ThemedClipboardPaste = withUnistyles(ClipboardPaste);
 const ThemedFileText = withUnistyles(FileText);
+const ThemedHistory = withUnistyles(History);
+
 const iconForegroundMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const iconForegroundMutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const iconAccentForegroundMapping = (theme: Theme) => ({ color: theme.colors.accentForeground });

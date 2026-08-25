@@ -403,6 +403,20 @@ Providers that can accept native tool definitions should set `supportsNativePase
 6. Tool calls are normalized to `ToolCallDetail` (shell, read, edit, write, search, etc.)
 7. Permission requests flow: agent → server → client → user decision → server → agent
 
+## Issue links
+
+Issue tracker rules belong to the host daemon because one host may represent a different
+organization or tracker namespace from another. The client receives them through the existing
+daemon-config snapshot and push event, gated by `server_info.features.issueLinks`.
+
+Rendered Markdown is transformed at the Markdown token layer: eligible plain-text tokens become
+normal links, while existing links and code tokens remain untouched. Mobile, browser, and desktop
+therefore share the same Markdown behavior. Browser and Electron additionally install a global
+primary-click resolver for Ctrl-click (Cmd-click on macOS) on plain UI text. It resolves the host
+from the nearest annotated UI context, then the active workspace, and otherwise opens only a
+mapping that is unambiguous across connected hosts. All navigation goes through
+`openExternalUrl`; authentication remains the system browser's responsibility.
+
 ## Storage
 
 `$PASEO_HOME` defaults to `~/.paseo`. The most important files:

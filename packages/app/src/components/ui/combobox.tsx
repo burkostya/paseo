@@ -239,6 +239,7 @@ export interface ComboboxItemProps {
   elevated?: boolean;
   onPress: () => void;
   testID?: string;
+  dataSet?: Record<string, string>;
 }
 
 export function ComboboxItem({
@@ -254,6 +255,7 @@ export function ComboboxItem({
   elevated,
   onPress,
   testID,
+  dataSet,
 }: ComboboxItemProps): ReactElement {
   const { theme } = useUnistyles();
 
@@ -293,6 +295,7 @@ export function ComboboxItem({
   return (
     <Pressable
       testID={testID}
+      dataSet={dataSet}
       disabled={disabled}
       onPress={onPress}
       style={itemPressableStyle}

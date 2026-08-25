@@ -1103,6 +1103,10 @@ function WorkspaceRowInner({
   }, [interaction]);
 
   const accessibilityState = useMemo(() => ({ selected }), [selected]);
+  const issueServerDataSet = useMemo(
+    () => ({ issueServerId: workspace.serverId }),
+    [workspace.serverId],
+  );
 
   return (
     <SidebarWorkspaceRowFrame workspace={workspace} isDragging={isDragging}>
@@ -1122,6 +1126,7 @@ function WorkspaceRowInner({
             {...dragHandleProps?.listeners}
             ref={dragHandleProps?.setActivatorNodeRef as unknown as Ref<View>}
             style={styles.workspaceRowContainer}
+            dataSet={issueServerDataSet}
             {...hoverHandlers}
           >
             <SidebarWorkspaceContextMenu

@@ -11,6 +11,7 @@ import { asInternals, createStub } from "./test-utils/class-mocks.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
 import type { PushNotificationSender, PushPayload } from "./push/index.js";
 import type { WorkspaceAutoName } from "./workspace-auto-name.js";
+import type { ProviderUsageAlert } from "./messages.js";
 
 const WORKSPACE_ID = "workspace-1";
 
@@ -52,6 +53,10 @@ interface WebSocketServerInternals {
     providerId?: string;
     timestamp?: string;
   }): Promise<void>;
+  broadcastProviderUsageAlerts(snapshot: {
+    alerts: ProviderUsageAlert[];
+    newlyCrossed: ProviderUsageAlert[];
+  }): void;
 }
 
 function createLogger() {
@@ -276,6 +281,33 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       },
     ]);
     expect(getLastAssistantMessage).toHaveBeenCalledWith("agent-1");
+  });
+
+  it("pushes an aggregated provider usage warning with a Usage settings route", async () => {
+    const { server, pushNotifications } = createServer();
+    const alert: ProviderUsageAlert = {
+      providerId: "codex",
+      displayName: "Codex",
+      windowId: "weekly",
+      windowLabel: "Weekly",
+      windowMinutes: 10_080,
+      usedPct: 95,
+      thresholdPct: 95,
+      resetsAt: "2026-07-20T00:00:00.000Z",
+      observedAt: "2026-07-15T00:00:00.000Z",
+    };
+
+    asInternals<WebSocketServerInternals>(server).broadcastProviderUsageAlerts({
+      alerts: [alert],
+      newlyCrossed: [alert],
+    });
+    await Promise.resolve();
+
+    expect(pushNotifications.sent).toContainEqual({
+      title: "Provider usage reached 95%",
+      body: "Codex · Weekly: 95% used",
+      data: { settingsSection: "usage", serverId: "srv-test" },
+    });
   });
 
   it("sends push notifications regardless of UI label presence", async () => {

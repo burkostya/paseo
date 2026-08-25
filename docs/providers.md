@@ -55,6 +55,8 @@ Implement the `AgentClient` and `AgentSession` interfaces from `agent-sdk-types.
 
 Existing direct providers: `claude` (in `providers/claude/agent.ts`), `codex` (`codex-app-server-agent.ts`), `opencode` (`opencode-agent.ts`), `pi` (`providers/pi/agent.ts`), and `omp` (`providers/omp/agent.ts`). The dev-only `mock` provider (`mock-load-test-agent.ts`) is also direct.
 
+Provider slash-command catalogs are executable contracts, not autocomplete hints. A provider must advertise only commands it can execute through its headless API. Implement `resolveCommand` when commands need validation, native RPC dispatch, or prompt rewriting before a foreground turn: return `handled` for out-of-band work and persisted status output, `foreground` for a validated/re-written provider turn, and `null` for ordinary prompts. Providers with strict native catalogs such as Codex and Pi must turn unknown root slash commands and slash commands mixed with attachments into explicit handled errors; never fall back to sending them to the model. Keep terminal-only picker, navigation, settings, and clipboard commands out of the catalog.
+
 Claude first-party model metadata lives in `packages/server/src/server/agent/providers/claude/model-manifest.ts`. When adding or updating a Claude model, update that manifest only; the model picker thinking options and Claude-specific feature gates are derived from the manifest. Do not add model-specific Claude capability lists in feature code.
 
 Paseo tools are not implemented as MCP tools internally. They live in a shared tool catalog under `packages/server/src/server/agent/tools/`; MCP is only the fallback adapter. A provider that can register runtime tools directly should set `supportsNativePaseoTools: true` and consume `launchContext.paseoTools` in `createSession`/`resumeSession`. When native tools are present, `AgentManager` strips the internal Paseo MCP server from the provider launch config so the provider does not receive the same tools twice. Providers that only know MCP should keep `supportsMcpServers: true` and let the daemon inject `/mcp/agents`.
@@ -136,7 +138,9 @@ Boundary tests should assert observable behavior: cold reads may call provider a
 
 ## Provider Usage Fetchers
 
-Provider plan usage is fetch-on-demand, not a daemon push subscription. The app calls `provider.usage.list.request` through React Query when the usage tooltip or Host Usage settings screen is shown, and the daemon returns the normalized `ProviderUsage` list directly.
+Provider plan usage is normalized and cached per provider. The app calls `provider.usage.list.request` through React Query when the usage tooltip or Host Usage settings screen is shown. The daemon also refreshes usage every 15 minutes and shortly after a provider turn ends so 5-hour and weekly limit warnings work without an open client. Provider-specific refreshes must not fan out to every fetcher.
+
+`ProviderUsageWindow.windowMinutes` identifies windows whose duration is known from the provider response or a provider-defined API field. The alert monitor considers only 300-minute and 10,080-minute windows, persists threshold delivery in `$PASEO_HOME/provider-usage-alerts.json`, and broadcasts an authoritative `provider.usage.alerts.changed` snapshot. Errors and unavailable provider responses retain the last known alert state rather than manufacturing a reset.
 
 To add plan usage for a provider, add `packages/server/src/services/quota-fetcher/providers/<provider>.ts` and register it in `packages/server/src/services/quota-fetcher/manifest.ts`. The provider file exports only its fetcher class; provider auth, endpoint constants, API schemas, and normalization helpers stay private in that file. A fetcher owns provider auth/API parsing and returns the generic shape:
 

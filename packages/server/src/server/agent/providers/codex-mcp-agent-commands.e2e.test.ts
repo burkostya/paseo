@@ -1,12 +1,29 @@
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createDaemonTestContext, type DaemonTestContext } from "../../test-utils/index.js";
 import { getFullAccessConfig } from "../../daemon-e2e/agent-configs.js";
+import type { AgentTimelineItem } from "../agent-sdk-types.js";
 
 function tmpDir(prefix: string): string {
   return mkdtempSync(path.join(tmpdir(), prefix));
+}
+
+async function fetchCanonicalTimelineItems(
+  ctx: DaemonTestContext,
+  agentId: string,
+): Promise<AgentTimelineItem[]> {
+  const timeline = await ctx.client.fetchAgentTimeline(agentId, {
+    direction: "tail",
+    limit: 20,
+    projection: "canonical",
+  });
+  return timeline.entries.map((entry) => entry.item);
+}
+
+function hasAssistantMessageStartingWith(items: AgentTimelineItem[], prefix: string): boolean {
+  return items.some((item) => item.type === "assistant_message" && item.text.startsWith(prefix));
 }
 
 describe("codex agent commands E2E", () => {
@@ -160,20 +177,43 @@ describe("codex agent commands E2E", () => {
     }
   }, 30_000);
 
-  test("sendMessage keeps unknown slash input as plain prompt text", async () => {
+  test("sendMessage handles unknown slash input without starting a model turn", async () => {
     const agent = await ctx.client.createAgent({
       ...getFullAccessConfig("codex"),
       cwd: "/tmp",
       title: "Codex Slash Fallback",
     });
 
-    const token = `RAW_PROMPT_TOKEN_${Date.now()}`;
-    await ctx.client.sendMessage(agent.id, `/not-a-real-command respond with exactly: ${token}`);
-    const state = await ctx.client.waitForFinish(agent.id, 30_000);
+    await ctx.client.sendMessage(agent.id, "/not-a-real-command");
 
-    expect(state.status).toBe("idle");
-    expect(state.lastMessage).toContain(token);
-    expect(state.lastMessage).not.toContain("PASEO_SKILL_OK");
+    await vi.waitFor(
+      async () => {
+        const items = await fetchCanonicalTimelineItems(ctx, agent.id);
+        expect(items).toContainEqual({
+          type: "assistant_message",
+          text: "[Error] Unknown command /not-a-real-command. Type / to see available commands.",
+        });
+      },
+      { timeout: 10_000 },
+    );
+  }, 30_000);
+
+  test("executes /status as a native Codex command", async () => {
+    const agent = await ctx.client.createAgent({
+      ...getFullAccessConfig("codex"),
+      cwd: "/tmp",
+      title: "Codex Native Status",
+    });
+
+    await ctx.client.sendMessage(agent.id, "/status");
+
+    await vi.waitFor(
+      async () => {
+        const items = await fetchCanonicalTimelineItems(ctx, agent.id);
+        expect(hasAssistantMessageStartingWith(items, "Codex status\n")).toBe(true);
+      },
+      { timeout: 10_000 },
+    );
   }, 30_000);
 
   test("returns error for non-existent agent", async () => {

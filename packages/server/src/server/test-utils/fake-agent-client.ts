@@ -6,6 +6,7 @@ import path from "node:path";
 import type {
   AgentCapabilityFlags,
   AgentClient,
+  AgentCommandResolution,
   AgentFeature,
   AgentLaunchContext,
   AgentMode,
@@ -883,7 +884,13 @@ class FakeAgentSession implements AgentSession {
     if (this.providerName === "codex") {
       const codexHome = process.env.CODEX_HOME ?? path.join(process.env.HOME ?? "/tmp", ".codex");
 
-      const commands: AgentSlashCommand[] = [];
+      const commands: AgentSlashCommand[] = [
+        {
+          name: "status",
+          description: "Show Codex session status",
+          argumentHint: "",
+        },
+      ];
 
       const promptsDir = path.join(codexHome, "prompts");
       try {
@@ -935,6 +942,48 @@ class FakeAgentSession implements AgentSession {
       { name: "help", description: "Help", argumentHint: "" },
       { name: "context", description: "Context", argumentHint: "" },
     ];
+  }
+
+  async resolveCommand(prompt: AgentPromptInput): Promise<AgentCommandResolution | null> {
+    if (this.providerName !== "codex" || typeof prompt !== "string") {
+      return null;
+    }
+    const parsed = this.parseSlashCommandInput(prompt);
+    if (!parsed) {
+      return null;
+    }
+    const commands = await this.listCommands();
+    if (parsed.commandName === "status") {
+      return {
+        kind: "handled",
+        run: async ({ emit }) => {
+          emit({
+            type: "timeline",
+            provider: "codex",
+            item: {
+              type: "assistant_message",
+              text: "Codex status\n- Provider: deterministic test adapter",
+            },
+          });
+        },
+      };
+    }
+    if (commands.some((command) => command.name === parsed.commandName)) {
+      return { kind: "foreground", prompt };
+    }
+    return {
+      kind: "handled",
+      run: async ({ emit }) => {
+        emit({
+          type: "timeline",
+          provider: "codex",
+          item: {
+            type: "assistant_message",
+            text: `[Error] Unknown command /${parsed.commandName}. Type / to see available commands.`,
+          },
+        });
+      },
+    };
   }
 
   private async runSlashCommand(

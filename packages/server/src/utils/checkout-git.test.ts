@@ -3598,8 +3598,49 @@ const x = 1;
     });
 
     await expect(
-      getCheckoutDiff(worktree.worktreePath, { mode: "base", baseRef: "other" }, { paseoHome }),
+      mergeFromBase(worktree.worktreePath, { baseRef: "other" }, { paseoHome }),
     ).rejects.toThrow("Base ref mismatch: stored refs/heads/main, requested other");
+  });
+
+  it("allows a read-only Paseo worktree diff against a different base branch", async () => {
+    execFileSync("git", ["checkout", "-b", "develop"], { cwd: repoDir });
+    writeFileSync(join(repoDir, "develop.txt"), "develop\n");
+    execFileSync("git", ["add", "develop.txt"], { cwd: repoDir });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "develop commit"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["checkout", "main"], { cwd: repoDir });
+
+    const worktree = await createLegacyWorktreeForTest({
+      branchName: "feature",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "alternate-diff-base",
+      paseoHome,
+    });
+    writeFileSync(join(worktree.worktreePath, "feature.txt"), "feature\n");
+    execFileSync("git", ["add", "feature.txt"], { cwd: worktree.worktreePath });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "feature commit"], {
+      cwd: worktree.worktreePath,
+    });
+
+    const diff = await getCheckoutDiff(
+      worktree.worktreePath,
+      { mode: "base", baseRef: "develop" },
+      { paseoHome },
+    );
+
+    expect(diff.diff).toContain("feature.txt");
+    await expect(
+      getCheckoutDiff(
+        worktree.worktreePath,
+        { mode: "base", baseRef: "missing-branch" },
+        { paseoHome },
+      ),
+    ).rejects.toThrow("Base branch not found locally or on origin: missing-branch");
+    await expect(
+      mergeFromBase(worktree.worktreePath, { baseRef: "develop" }, { paseoHome }),
+    ).rejects.toThrow("Base ref mismatch: stored refs/heads/main, requested develop");
   });
 
   it("excludes dirty working tree changes from Paseo worktree base diffs", async () => {

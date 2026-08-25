@@ -45,6 +45,7 @@ Store APIs own persistence atomicity and should not make services coordinate raw
 ```
 $PASEO_HOME/
 ├── config.json                          # Daemon configuration
+├── provider-usage-alerts.json           # Active quota alerts and delivered-threshold cursors
 ├── server-id                            # Stable daemon identifier (plain text, "srv_<base64url>")
 ├── daemon-keypair.json                  # E2EE keypair for relay (mode 0600)
 ├── paseo.pid                            # Daemon PID lock file
@@ -71,7 +72,11 @@ $PASEO_HOME/
 
 The `agents/{sanitized-cwd}/` directory name is derived from the agent's `cwd` by stripping the filesystem root and replacing path separators with `-` (Windows drive letters become a `C-` style prefix). Persistent server stores write atomically by writing a temp file in the target directory and then renaming it into place.
 
----
+### Provider usage alerts
+
+**Path:** `$PASEO_HOME/provider-usage-alerts.json`
+
+## The daemon persists active 5-hour/weekly quota alerts together with the highest 75/90/95 threshold already notified for each provider window. This prevents duplicate notifications across daemon restarts. State is written atomically; provider fetch errors retain the last authoritative state, while a reset or a successful reading below 75% re-arms the window.
 
 ## 1. Agent Record
 
@@ -203,6 +208,12 @@ snapshot so a mixed edit can apply its live subset and still name the paths that
     appendSystemPrompt: string,    // appended to supported provider system/developer prompts
     terminalProfiles: TerminalProfile[],  // named shell commands; omitted means DEFAULT_TERMINAL_PROFILES
     agentProfiles: AgentProfile[],        // named agent launch bundles; omitted means none
+    issueTrackers: [{
+      id: string,                  // stable tracker identity
+      name: string,
+      urlTemplate: string,         // HTTP(S), contains {id}
+      prefixes: string[]           // exact-case literal prefixes, unique per host
+    }],
     cors: { allowedOrigins: string[] },
     relay: { enabled: boolean, endpoint: string, publicEndpoint: string, useTls: boolean, publicUseTls: boolean }, // new homes materialize enabled: false
     auth: { password: string }    // bcrypt hash, optional
@@ -308,6 +319,14 @@ Environment variables override `config.json`:
 `PASEO_GIT_MAX_PROCESS_CONCURRENCY` wins when it and the legacy alias are both set. Run `paseo reload`
 after changing `config.json`. Environment changes require a daemon restart; the launch environment
 remains authoritative during reload.
+
+### Issue trackers
+
+`daemon.issueTrackers` is host-owned mutable configuration. Host Settings writes the whole
+validated list through the daemon-config RPC, and the daemon persists it atomically before
+broadcasting the authoritative config snapshot. Paseo only recognizes a configured literal
+prefix followed by digits and substitutes the percent-encoded complete ID into `{id}`; it does
+not store tracker credentials or call tracker APIs.
 
 `agents.metadataGeneration.providers` controls the preferred structured-generation fallback order for daemon-side metadata tasks such as commit messages, PR text, branch names, and generated agent titles. Entries are tried first in the configured order, then Paseo falls through to dynamically discovered defaults and finally the current selection when available.
 

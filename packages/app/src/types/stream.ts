@@ -1,4 +1,6 @@
 import type {
+  AgentPermissionRequest,
+  AgentPermissionResponse,
   AgentProvider,
   AgentTimelineItem,
   ToolCallDetail,
@@ -82,6 +84,7 @@ export type StreamItem =
   | AssistantMessageItem
   | ThoughtItem
   | ToolCallItem
+  | PermissionPlanItem
   | TodoListItem
   | ActivityLogItem
   | CompactionItem
@@ -745,6 +748,20 @@ export interface ToolCallItem {
   payload: ToolCallPayload;
 }
 
+export interface PermissionPlanItem {
+  kind: "permission_plan";
+  id: string;
+  timelineCursor?: TimelinePosition;
+  turnId?: string;
+  timestamp: Date;
+  request: AgentPermissionRequest;
+  resolution?: AgentPermissionResponse;
+}
+
+export function isPermissionPlanItem(item: StreamItem): item is PermissionPlanItem {
+  return item.kind === "permission_plan";
+}
+
 export type AgentToolCallItem = ToolCallItem & {
   payload: { source: "agent"; data: AgentToolCallData };
 };
@@ -1207,6 +1224,60 @@ function appendActivityLog(state: StreamItem[], entry: ActivityLogItem): StreamI
   return [...state, entry];
 }
 
+function appendPermissionPlan(
+  state: StreamItem[],
+  request: AgentPermissionRequest,
+  timestamp: Date,
+): StreamItem[] {
+  const existingIndex = state.findIndex(
+    (item) => item.kind === "permission_plan" && item.request.id === request.id,
+  );
+  const item: PermissionPlanItem = {
+    kind: "permission_plan",
+    id: `permission_plan_${request.id}`,
+    timestamp,
+    request,
+  };
+
+  if (existingIndex >= 0) {
+    const existing = state[existingIndex];
+    if (!existing || existing.kind !== "permission_plan") {
+      return state;
+    }
+    const next = [...state];
+    next[existingIndex] = {
+      ...item,
+      resolution: existing.resolution,
+    };
+    return next;
+  }
+
+  return [...state, item];
+}
+
+function resolvePermissionPlan(
+  state: StreamItem[],
+  requestId: string,
+  resolution: AgentPermissionResponse,
+  timestamp: Date,
+): StreamItem[] {
+  const existingIndex = state.findIndex(
+    (item) => item.kind === "permission_plan" && item.request.id === requestId,
+  );
+  const existing = state[existingIndex];
+  if (existingIndex < 0 || !existing || existing.kind !== "permission_plan") {
+    return state;
+  }
+
+  const next = [...state];
+  next[existingIndex] = {
+    ...existing,
+    timestamp,
+    resolution,
+  };
+  return next;
+}
+
 function appendTodoList(
   state: StreamItem[],
   provider: AgentProvider,
@@ -1546,13 +1617,23 @@ export function reduceStreamUpdate(
         ),
         event,
       );
+    case "permission_requested":
+      if (event.request.kind === "plan") {
+        return appendPermissionPlan(finalizeActiveThoughts(state), event.request, timestamp);
+      }
+      return finalizeActiveThoughts(state);
+    case "permission_resolved":
+      return resolvePermissionPlan(
+        finalizeActiveThoughts(state),
+        event.requestId,
+        event.resolution,
+        timestamp,
+      );
     case "thread_started":
     case "turn_started":
     case "turn_completed":
     case "turn_failed":
     case "turn_canceled":
-    case "permission_requested":
-    case "permission_resolved":
     case "attention_required":
       return finalizeActiveThoughts(state);
     default:
@@ -1658,6 +1739,9 @@ function getEventItemKind(
   event: AgentStreamEventPayload,
   transformedTimelineItems?: InstalledPluginTimelineItem[],
 ): StreamItem["kind"] | null {
+  if (event.type === "permission_requested" && event.request.kind === "plan") {
+    return "permission_plan";
+  }
   if (event.type !== "timeline") {
     return null;
   }

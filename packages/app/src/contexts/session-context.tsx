@@ -68,6 +68,27 @@ function consumeForcedTimelineTailReplacement(
   return { ...payload, reset: true };
 }
 
+function providerUsageNotificationFromStatus(payload: Record<string, unknown>): {
+  title: string;
+  body?: string;
+  data?: Record<string, unknown>;
+} | null {
+  if (payload.status !== "provider.usage.alerts.changed" || payload.shouldNotify !== true) {
+    return null;
+  }
+  const notification = payload.notification;
+  if (typeof notification !== "object" || notification === null) return null;
+  const record = notification as Record<string, unknown>;
+  if (typeof record.title !== "string") return null;
+  return {
+    title: record.title,
+    ...(typeof record.body === "string" ? { body: record.body } : {}),
+    ...(typeof record.data === "object" && record.data !== null
+      ? { data: record.data as Record<string, unknown> }
+      : {}),
+  };
+}
+
 // Re-export types from session-store and draft-store for backward compatibility
 export type { DraftInput } from "@/stores/draft-store";
 export type {
@@ -619,6 +640,8 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
     const unsubStatus = client.on("status", (message) => {
       if (message.type !== "status") return;
+      const usageNotification = providerUsageNotificationFromStatus(message.payload);
+      if (usageNotification) void sendOsNotification(usageNotification);
       const serverInfo = parseServerInfoStatusPayload(message.payload);
       if (serverInfo) {
         viewedTimelineSyncRef.current?.setDeliveryMode(

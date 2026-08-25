@@ -140,6 +140,7 @@ function toWeeklyWindow(modelName: string, model: MiniMaxModelRemain): ProviderU
     label: `${modelName} · Weekly`,
     utilizationPct: usedPct,
     resetsAt: epochMsToIso(model.weekly_end_time),
+    windowMinutes: 10_080,
     tone: toneForStatus(model.current_weekly_status),
   });
 }

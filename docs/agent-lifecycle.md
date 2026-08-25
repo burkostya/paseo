@@ -144,6 +144,14 @@ Workspace status is an aggregate activity signal computed **per `workspaceId`**.
 
 Running provider-native subagents contribute `running` to the workspace owned by their parent agent. Their completed, failed, and canceled states stay in the parent's subagents track.
 
+### Desktop attention
+
+The desktop app treats workspace status buckets `attention`, `needs_input`, and `failed` as actionable. The same global, cross-host aggregation drives the macOS Dock badge and Linux window attention.
+
+Linux attention belongs to the most recently focused Paseo window, even when several renderer windows report the same global status. Focusing another Paseo window transfers ownership instead of highlighting every OS workspace. Attention remains logically requested until all actionable workspace statuses resolve: a focused window cannot be urgent, but leaving Paseo reapplies the unresolved signal.
+
+On Sway, Electron's native Wayland window cannot publish an X11 urgency hint. The desktop therefore records the focused Paseo container from `swaymsg -t get_tree` and applies `urgent enable|disable` to its numeric `con_id`. This path requires `SWAYSOCK` and `swaymsg`; failures are non-fatal. Electron's `BrowserWindow.flashFrame` remains the fallback for XWayland and other Linux window managers. Do not force Electron back to XWayland solely for attention support.
+
 ## The subagents track
 
 The track is a pill at the foot of an agent's pane (`packages/app/src/subagents/track.tsx`): a count you can read at a glance, and a panel behind it — a popover on wide screens, a sheet on compact ones — holding the rows. It floats over the transcript rather than sitting in a band above the composer, so the timeline scrolls underneath it; `packages/app/src/panels/agent-tracks.tsx` owns that placement, and the pill frame is shared with the task list in `packages/app/src/composer/tracks.tsx`.

@@ -32,8 +32,11 @@ class FakePermissionAgentManager {
     return this.permissionResult;
   }
 
-  tryRunOutOfBand(): boolean {
-    return this.outOfBandHandled;
+  async resolveCommand(
+    _agentId: string,
+    prompt: AgentPromptInput,
+  ): Promise<{ handled: true } | { handled: false; prompt: AgentPromptInput }> {
+    return this.outOfBandHandled ? { handled: true } : { handled: false, prompt };
   }
 
   getAgent() {

@@ -65,6 +65,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip
 import { GitActionsSplitButton } from "@/git/actions-split-button";
 import type { GitActions } from "@/git/policy";
 import { BranchSwitcher } from "@/components/branch-switcher";
+import { DiffBasePicker } from "@/git/diff-base-picker";
 import { useGitActions } from "@/git/use-actions";
 import { GIT_ACTION_ICONS } from "@/git/action-icons";
 import { buildForgeSignInCommand, getForgePresentation, type Forge } from "@/git/forge";
@@ -473,6 +474,7 @@ interface ChangesRepositoryToolbarModel {
 }
 
 interface ChangesComparisonToolbarModel {
+  basePicker: ReactElement | null;
   committedDescription?: string;
   diffMode: "uncommitted" | "base";
   mode: ChangesToolbarMode;
@@ -489,6 +491,7 @@ interface ChangesHeaderProps {
 }
 
 interface BuildChangesHeaderModelInput {
+  basePicker: ReactElement | null;
   branchName: string | null;
   committedDescription?: string;
   compact: boolean;
@@ -521,6 +524,7 @@ function buildChangesHeaderModel(input: BuildChangesHeaderModelInput): {
       workspaceId: input.workspaceId,
     },
     comparison: {
+      basePicker: input.basePicker,
       committedDescription: input.committedDescription,
       diffMode: input.diffMode,
       mode: input.mode,
@@ -729,6 +733,7 @@ function ChangesComparisonToolbar({
           onSelectUncommitted={model.onSelectUncommitted}
           onSelectBase={model.onSelectBase}
         />
+        {model.basePicker}
         {model.selectedDiffStat ? (
           <DiffStat
             additions={model.selectedDiffStat.additions}
@@ -1663,6 +1668,10 @@ export function ChangesSurface({
     notGit,
     statusErrorMessage,
     baseRef,
+    effectiveBaseRef,
+    canSelectBase,
+    selectedBaseRef,
+    selectBaseRef,
     currentBranchName,
     diffMode,
     selectUncommitted: handleSelectUncommitted,
@@ -1876,20 +1885,29 @@ export function ChangesSurface({
     () => computeBaseRefLabel(baseRef, t("workspace.git.diff.base")),
     [baseRef, t],
   );
+  const effectiveBaseRefLabel = useMemo(
+    () => computeBaseRefLabel(effectiveBaseRef, t("workspace.git.diff.base")),
+    [effectiveBaseRef, t],
+  );
   const { gitActions, branchLabel } = useGitActions({
     serverId,
     cwd,
     icons: GIT_ACTION_ICONS,
   });
   const committedDiffDescription = useMemo(
-    () => computeCommittedDiffDescription(branchLabel, baseRefLabel),
-    [baseRefLabel, branchLabel],
+    () => computeCommittedDiffDescription(branchLabel, effectiveBaseRefLabel),
+    [branchLabel, effectiveBaseRefLabel],
   );
-  const emptyMessage = computeEmptyMessage(preferences.hideWhitespace, diffMode, baseRefLabel, {
-    hiddenWhitespace: t("workspace.git.diff.emptyHiddenWhitespace"),
-    uncommitted: t("workspace.git.diff.emptyUncommitted"),
-    againstBase: (label) => t("workspace.git.diff.emptyAgainstBase", { baseRef: label }),
-  });
+  const emptyMessage = computeEmptyMessage(
+    preferences.hideWhitespace,
+    diffMode,
+    effectiveBaseRefLabel,
+    {
+      hiddenWhitespace: t("workspace.git.diff.emptyHiddenWhitespace"),
+      uncommitted: t("workspace.git.diff.emptyUncommitted"),
+      againstBase: (label) => t("workspace.git.diff.emptyAgainstBase", { baseRef: label }),
+    },
+  );
   const emptyAction = computeChangesEmptyAction({
     hideWhitespace: preferences.hideWhitespace,
     diffMode,
@@ -1991,6 +2009,18 @@ export function ChangesSurface({
   const changesHeaderModel = useMemo(
     () =>
       buildChangesHeaderModel({
+        basePicker:
+          canSelectBase && diffMode === "base" ? (
+            <DiffBasePicker
+              serverId={serverId}
+              workspaceId={workspaceId}
+              cwd={cwd}
+              selectedBaseRef={selectedBaseRef}
+              defaultBaseRefLabel={baseRefLabel}
+              effectiveBaseRefLabel={effectiveBaseRefLabel}
+              onSelect={selectBaseRef}
+            />
+          ) : null,
         branchName: currentBranchName,
         committedDescription: committedDiffDescription,
         compact: isMobile,
@@ -2008,9 +2038,12 @@ export function ChangesSurface({
       }),
     [
       committedDiffDescription,
+      baseRefLabel,
+      canSelectBase,
       currentBranchName,
       cwd,
       diffMode,
+      effectiveBaseRefLabel,
       gitActions,
       handleOpenPullRequest,
       handleSelectBase,
@@ -2019,6 +2052,8 @@ export function ChangesSurface({
       forge,
       pullRequestStatus,
       selectedDiffStat,
+      selectedBaseRef,
+      selectBaseRef,
       serverId,
       toolbarMode,
       workspaceId,

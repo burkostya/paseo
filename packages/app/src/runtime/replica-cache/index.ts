@@ -394,6 +394,9 @@ function serializeAgentToolCall(data: AgentToolCallData): StoredToolCall {
 function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
   const base = timelineBase(item);
   switch (item.kind) {
+    case "permission_plan":
+      // Permission plans are reconstructed from canonical permission events.
+      return null;
     case "user_message":
       return {
         ...base,

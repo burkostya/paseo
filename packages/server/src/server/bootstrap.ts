@@ -175,6 +175,7 @@ import type {
   AgentProfile,
   AgentSkillSelection,
   FirstAgentContext,
+  IssueTrackerConfig,
   PluginSource,
   TerminalProfile,
 } from "@getpaseo/protocol/messages";
@@ -405,6 +406,7 @@ export interface PaseoDaemonConfig {
   skillSelection?: AgentSkillSelection;
   pluginsEnabled?: boolean;
   plugins?: Record<string, PluginSource>;
+  issueTrackers?: IssueTrackerConfig[];
   staticDir: string;
   mcpDebug: boolean;
   isDev?: boolean;
@@ -548,6 +550,7 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
     appendSystemPrompt: config.appendSystemPrompt ?? "",
     pluginsEnabled: config.pluginsEnabled ?? false,
     plugins: config.plugins ?? {},
+    issueTrackers: config.issueTrackers,
     skills: { selection: config.skillSelection },
   };
 

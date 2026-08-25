@@ -17,6 +17,7 @@ import type { DaemonConfigStore, MutableDaemonConfig } from "./daemon-config-sto
 import {
   type ServerInfoStatusPayload,
   type SessionOutboundMessage,
+  type ProviderUsageAlert,
   type WorkspaceSetupSnapshot,
   type WSHelloMessage,
   type WSInboundMessage,
@@ -84,6 +85,12 @@ import {
   type WebSocketRuntimeDiagnosticSnapshot,
 } from "./websocket/runtime-metrics.js";
 import { ProviderUsageService } from "../services/quota-fetcher/service.js";
+import {
+  PROVIDER_USAGE_ALERTS_FILE_NAME,
+  ProviderUsageAlertMonitor,
+  ProviderUsageAlertStore,
+  type ProviderUsageAlertSnapshot,
+} from "../services/quota-fetcher/alert-monitor.js";
 import { getProcessMemoryDiagnostics, getProcessUptimeSeconds } from "./process-diagnostics.js";
 import {
   CLIENT_SHUTDOWN_RPC_REASON,
@@ -186,6 +193,26 @@ function resolveTerminalAttentionReason(input: {
 
 function terminalAttentionTitle(reason: TerminalAttentionReason): string {
   return reason === "needs_input" ? "Terminal needs input" : "Terminal finished";
+}
+
+function buildProviderUsageAlertNotification(alerts: readonly ProviderUsageAlert[]): {
+  title: string;
+  body: string;
+  data: Record<string, unknown>;
+} | null {
+  const highest = [...alerts].sort(
+    (a, b) => b.thresholdPct - a.thresholdPct || b.usedPct - a.usedPct,
+  )[0];
+  if (!highest) return null;
+  const roundedPct = Math.round(highest.usedPct);
+  const additional = alerts.length - 1;
+  return {
+    title: `Provider usage reached ${highest.thresholdPct}%`,
+    body: `${highest.displayName} · ${highest.windowLabel}: ${roundedPct}% used${
+      additional > 0 ? ` · ${additional} more limit${additional === 1 ? "" : "s"}` : ""
+    }`,
+    data: { settingsSection: "usage" },
+  };
 }
 
 function createFallbackWorkspaceGitSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {
@@ -590,6 +617,9 @@ export class VoiceAssistantWebSocketServer {
   private unsubscribeSpeechReadiness: (() => void) | null = null;
   private unsubscribeDaemonConfigChange: (() => void) | null = null;
   private readonly providerUsageService: ProviderUsageService;
+  private readonly providerUsageAlertMonitor: ProviderUsageAlertMonitor;
+  private unsubscribeProviderUsageAlerts: (() => void) | null = null;
+  private unsubscribeProviderUsageTurns: (() => void) | null = null;
   private unsubscribeTerminalActivity: (() => void) | null = null;
   private readonly browserToolsBroker: BrowserToolsBroker | null;
   private readonly hubRelationships: HubRelationshipManagement | null;
@@ -734,6 +764,30 @@ export class VoiceAssistantWebSocketServer {
 
     this.providerUsageService = new ProviderUsageService({
       logger: this.logger,
+    });
+    this.providerUsageAlertMonitor = new ProviderUsageAlertMonitor({
+      logger: this.logger,
+      usageService: this.providerUsageService,
+      store: new ProviderUsageAlertStore(join(paseoHome, PROVIDER_USAGE_ALERTS_FILE_NAME)),
+    });
+    this.unsubscribeProviderUsageAlerts = this.providerUsageAlertMonitor.onChange((snapshot) => {
+      this.broadcastProviderUsageAlerts(snapshot);
+    });
+    this.unsubscribeProviderUsageTurns = this.agentManager.subscribe(
+      (event) => {
+        if (
+          event.type === "agent_stream" &&
+          (event.event.type === "turn_completed" ||
+            event.event.type === "turn_failed" ||
+            event.event.type === "turn_canceled")
+        ) {
+          this.providerUsageAlertMonitor.scheduleProviderRefresh(event.event.provider);
+        }
+      },
+      { replayState: false },
+    );
+    void this.providerUsageAlertMonitor.start().catch((error) => {
+      this.logger.warn({ err: error }, "Provider usage alert monitor failed to start");
     });
 
     this.wss = this.createWebSocketServer(server, wsConfig, auth);
@@ -1029,6 +1083,11 @@ export class VoiceAssistantWebSocketServer {
     this.unsubscribeDaemonConfigChange = null;
     this.unsubscribeTerminalActivity?.();
     this.unsubscribeTerminalActivity = null;
+    this.unsubscribeProviderUsageAlerts?.();
+    this.unsubscribeProviderUsageAlerts = null;
+    this.unsubscribeProviderUsageTurns?.();
+    this.unsubscribeProviderUsageTurns = null;
+    await this.providerUsageAlertMonitor.stop();
     if (this.runtimeMetricsInterval) {
       clearInterval(this.runtimeMetricsInterval);
       this.runtimeMetricsInterval = null;
@@ -1562,6 +1621,7 @@ export class VoiceAssistantWebSocketServer {
     pending.identity.sessionId = connection.session.getSessionId();
     this.syncBrowserToolsClientRegistration(connection);
     this.sendToClient(ws, this.createServerInfoMessage(connection.session));
+    this.sendProviderUsageAlertSnapshot(ws);
     connection.connectionLogger.info(
       {
         ...toConnectionLogFields(pending.identity),
@@ -1606,6 +1666,7 @@ export class VoiceAssistantWebSocketServer {
     pending.identity.sessionId = existing.session.getSessionId();
     this.syncBrowserToolsClientRegistration(existing);
     this.sendToClient(ws, this.createServerInfoMessage(existing.session));
+    this.sendProviderUsageAlertSnapshot(ws);
     pending.connectionLogger.info(
       {
         ...toConnectionLogFields(pending.identity),
@@ -1757,6 +1818,12 @@ export class VoiceAssistantWebSocketServer {
         agentProfiles: true,
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: true,
+        // COMPAT(providerUsageWarnings): added in the v0.1.109 fork, remove after 2027-01-16.
+        providerUsageWarnings: true,
+        // COMPAT(issueLinks): added in the v0.1.109 fork, remove after 2027-01-16.
+        issueLinks: true,
+        // COMPAT(checkoutDiffBaseSelection): added in the v0.1.109 fork, remove after 2027-01-16.
+        checkoutDiffBaseSelection: true,
       },
     };
   }
@@ -1791,6 +1858,80 @@ export class VoiceAssistantWebSocketServer {
     this.broadcast(this.createDaemonConfigChangedMessage(config));
   }
 
+  private sendProviderUsageAlertSnapshot(ws: WebSocketLike): void {
+    void this.providerUsageAlertMonitor
+      .getAlerts()
+      .then((alerts) => {
+        if (!this.sessions.has(ws)) return;
+        this.sendToClient(
+          ws,
+          wrapSessionMessage({
+            type: "status",
+            payload: {
+              status: "provider.usage.alerts.changed",
+              alerts,
+            },
+          }),
+        );
+        return undefined;
+      })
+      .catch((error) => {
+        this.logger.debug({ err: error }, "Failed to send provider usage alert snapshot");
+      });
+  }
+
+  private broadcastProviderUsageAlerts(snapshot: ProviderUsageAlertSnapshot): void {
+    const notification = buildProviderUsageAlertNotification(snapshot.newlyCrossed);
+    if (!notification) {
+      this.broadcast(
+        wrapSessionMessage({
+          type: "status",
+          payload: {
+            status: "provider.usage.alerts.changed",
+            alerts: snapshot.alerts,
+          },
+        }),
+      );
+      return;
+    }
+
+    const clientEntries = [...this.sessions.entries()].map(([ws, connection]) => ({
+      ws,
+      state: this.getClientActivityState(connection.session),
+    }));
+    const plan = computeNotificationPlan({
+      allStates: clientEntries.map((entry) => entry.state),
+      focusTarget: null,
+      pushEligible: true,
+      nowMs: Date.now(),
+    });
+    const payloadNotification = {
+      ...notification,
+      data: { ...notification.data, serverId: this.serverId },
+    };
+
+    if (plan.shouldPush) {
+      void this.pushNotificationSender.send(payloadNotification).catch((error) => {
+        this.logger.warn({ err: error }, "Failed to send provider usage push notification");
+      });
+    }
+
+    for (const [index, entry] of clientEntries.entries()) {
+      this.sendToClient(
+        entry.ws,
+        wrapSessionMessage({
+          type: "status",
+          payload: {
+            status: "provider.usage.alerts.changed",
+            alerts: snapshot.alerts,
+            ...(index === plan.inAppRecipientIndex
+              ? { shouldNotify: true, notification: payloadNotification }
+              : {}),
+          },
+        }),
+      );
+    }
+  }
   private bindSocketHandlers(ws: WebSocketLike): void {
     ws.on("message", (...args: unknown[]) => {
       const data = args[0] as Buffer | ArrayBuffer | Buffer[] | string;

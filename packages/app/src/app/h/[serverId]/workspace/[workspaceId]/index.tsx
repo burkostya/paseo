@@ -4,6 +4,7 @@ import { StyleSheet, View } from "react-native";
 import { useGlobalSearchParams, useLocalSearchParams, useRootNavigationState } from "expo-router";
 import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
 import { RetainedPanel } from "@/components/retained-panel";
+import { IssueTrackersProvider } from "@/issue-links/context";
 import {
   type ActiveWorkspaceSelection,
   useActiveWorkspaceSelection,
@@ -295,6 +296,10 @@ function WorkspaceDeckEntry({
   recoveryAgentId: string | null;
   onUnmountInactive: (selection: ActiveWorkspaceSelection) => void;
 }) {
+  const issueServerDataSet = useMemo(
+    () => ({ issueServerId: selection.serverId }),
+    [selection.serverId],
+  );
   const hasHydratedWorkspaces = useHasHydratedWorkspaces(selection.serverId);
   const workspaceExists = useWorkspaceExists(selection.serverId, selection.workspaceId);
   const shouldKeepMounted = shouldKeepWorkspaceDeckEntryMounted({
@@ -317,14 +322,17 @@ function WorkspaceDeckEntry({
     <RetainedPanel
       active={active}
       testID={`workspace-deck-entry-${selection.serverId}:${selection.workspaceId}`}
+      dataSet={issueServerDataSet}
     >
-      <WorkspaceScreen
-        serverId={selection.serverId}
-        workspaceId={selection.workspaceId}
-        isRouteFocused={active}
-        recoveryRequested={active && recoveryRequested}
-        recoveryAgentId={active ? recoveryAgentId : null}
-      />
+      <IssueTrackersProvider serverId={selection.serverId}>
+        <WorkspaceScreen
+          serverId={selection.serverId}
+          workspaceId={selection.workspaceId}
+          isRouteFocused={active}
+          recoveryRequested={active && recoveryRequested}
+          recoveryAgentId={active ? recoveryAgentId : null}
+        />
+      </IssueTrackersProvider>
     </RetainedPanel>
   );
 }

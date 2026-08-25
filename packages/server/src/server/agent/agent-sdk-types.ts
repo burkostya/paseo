@@ -522,7 +522,9 @@ export type AgentSlashCommandKind = "command" | "skill";
 
 /**
  * Represents a slash command available in an agent session.
- * Commands are executed by sending them as prompts with / prefix.
+ * The provider's command resolver decides whether a command becomes a native
+ * foreground turn or is handled out of band. Commands must not be advertised
+ * unless the provider can execute them.
  */
 export interface AgentSlashCommand {
   name: string;
@@ -530,6 +532,16 @@ export interface AgentSlashCommand {
   argumentHint: string;
   kind?: AgentSlashCommandKind;
 }
+
+export type AgentCommandResolution =
+  | {
+      kind: "foreground";
+      prompt: AgentPromptInput;
+    }
+  | {
+      kind: "handled";
+      run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void>;
+    };
 
 export interface ListImportableSessionsOptions {
   limit?: number;
@@ -662,6 +674,13 @@ export interface AgentSession {
   /** Release live runtime resources without archiving or deleting the durable native session. */
   close(): Promise<void>;
   listCommands?(): Promise<AgentSlashCommand[]>;
+  /**
+   * Resolve provider-native slash commands before Paseo allocates or replaces a
+   * foreground turn. Returning null keeps the prompt on the ordinary path.
+   * Handled commands may emit timeline events without disturbing an active
+   * turn; foreground commands may validate or rewrite their prompt first.
+   */
+  resolveCommand?(prompt: AgentPromptInput): Promise<AgentCommandResolution | null>;
   setModel?(modelId: string | null): Promise<void>;
   setThinkingOption?(thinkingOptionId: string | null): Promise<void | AgentProviderNotice>;
   setFeature?(featureId: string, value: unknown): Promise<void>;

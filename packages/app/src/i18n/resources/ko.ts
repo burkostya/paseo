@@ -2,6 +2,7 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ko: TranslationResources = {
+  providerUsageAlerts: en.providerUsageAlerts,
   common: {
     back: "뒤로",
     loading: "불러오는 중...",
@@ -86,6 +87,7 @@ export const ko: TranslationResources = {
     },
   },
   composer: {
+    history: en.composer.history,
     placeholders: {
       desktop: "에이전트에게 메시지를 보내거나 @files 태그, /commands, /skills를 사용하세요",
       mobile: "메시지, @files, /commands",
@@ -205,6 +207,7 @@ export const ko: TranslationResources = {
     historyLoadFailed: "에이전트 기록을 로드할 수 없습니다.",
     messageCapped: "이 메시지는 길이 제한으로 잘렸습니다({{bytes}}바이트).",
     permission: {
+      ...en.agentStream.permission,
       plan: "계획",
       required: "권한 필요",
       deny: "거부",
@@ -862,6 +865,7 @@ export const ko: TranslationResources = {
         },
       },
       diff: {
+        basePicker: en.workspace.git.diff.basePicker,
         openChangesTab: "변경사항 탭 열기",
         openDiffTab: "Diff 탭 열기",
         closeChangesTab: "변경사항 탭 닫기",
@@ -1939,6 +1943,7 @@ export const ko: TranslationResources = {
       usage: "사용량",
       terminals: "터미널",
       plugins: "플러그인",
+      issues: "이슈 링크",
       host: "개요",
     },
     plugins: pluginSettings.ko,
@@ -2170,6 +2175,8 @@ export const ko: TranslationResources = {
         jumpToTab: "탭으로 이동",
         previousWorkspace: "이전 워크스페이스",
         nextWorkspace: "다음 워크스페이스",
+        previousRecentWorkspace: "이전 최근 워크스페이스",
+        nextRecentWorkspace: "다음 최근 워크스페이스",
         previousTab: "이전 탭",
         nextTab: "다음 탭",
         splitPaneRight: "창을 오른쪽으로 분할",
@@ -2236,6 +2243,7 @@ export const ko: TranslationResources = {
       },
     },
     host: {
+      issueTrackers: en.settings.host.issueTrackers,
       appearance: {
         title: "모양",
         name: {

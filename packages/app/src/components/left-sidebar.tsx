@@ -1,6 +1,7 @@
 import { router, usePathname } from "expo-router";
 import {
   CalendarClock,
+  AlertTriangle,
   FolderPlus,
   GitBranch,
   History,
@@ -58,6 +59,7 @@ import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useHosts } from "@/runtime/host-runtime";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useWorkspace } from "@/stores/session-store-hooks";
+import { useProviderUsageAlerts } from "@/provider-usage/alerts";
 import { usePanelStore } from "@/stores/panel-store";
 import { useOwnsWindowChromeCorner, WindowChromeSafeArea } from "@/utils/desktop-window";
 import { useCloseAgentListGesture } from "@/mobile-panels/gestures";
@@ -68,6 +70,7 @@ import {
   buildSchedulesRoute,
   buildSessionsRoute,
   buildSettingsAddHostRoute,
+  buildSettingsHostSectionRoute,
   buildSettingsRoute,
 } from "@/utils/host-routes";
 import { openHostOverview } from "@/navigation/settings-navigation";
@@ -440,6 +443,9 @@ function SidebarHostPicker({
   );
 
   const handleOpen = useCallback(() => setIsOpen(true), []);
+  const handleOpenUsage = useCallback((serverId: string) => {
+    router.push(buildSettingsHostSectionRoute(serverId, "usage"));
+  }, []);
 
   return (
     <HostPicker
@@ -453,22 +459,46 @@ function SidebarHostPicker({
       onAddHost={onAddHost}
       showActiveConnection
       onOpenHostSettings={onOpenHostSettings}
+      onOpenHostUsage={handleOpenUsage}
       searchable
       desktopPlacement="top-start"
       desktopMinWidth={240}
       addHostTestID="sidebar-host-add"
       hostOptionTestID={sidebarHostOptionTestID}
     >
-      <FooterIconButton
-        buttonRef={triggerRef}
-        onPress={handleOpen}
-        testID="sidebar-hosts-trigger"
-        label={label}
-        icon={Server}
-        iconSize={theme.iconSize.sm}
-        theme={theme}
-      />
+      <View style={styles.hostTriggerContainer}>
+        <FooterIconButton
+          buttonRef={triggerRef}
+          onPress={handleOpen}
+          testID="sidebar-hosts-trigger"
+          label={label}
+          icon={Server}
+          iconSize={theme.iconSize.sm}
+          theme={theme}
+        />
+        {hosts.map((host) => (
+          <SidebarHostUsageAlertDot key={host.serverId} serverId={host.serverId} theme={theme} />
+        ))}
+      </View>
     </HostPicker>
+  );
+}
+
+function SidebarHostUsageAlertDot({ serverId, theme }: { serverId: string; theme: SidebarTheme }) {
+  const highestAlert = useProviderUsageAlerts(serverId)[0];
+  const danger = (highestAlert?.thresholdPct ?? 0) >= 90;
+  const dotStyle = useMemo(
+    () => [styles.hostUsageAlertDot, danger && styles.hostUsageAlertDotDanger],
+    [danger],
+  );
+  if (!highestAlert) return null;
+  return (
+    <View style={dotStyle} testID="sidebar-hosts-usage-alert" pointerEvents="none">
+      <AlertTriangle
+        size={9}
+        color={danger ? theme.colors.statusDanger : theme.colors.statusWarning}
+      />
+    </View>
   );
 }
 
@@ -1190,6 +1220,23 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     paddingVertical: theme.spacing[1],
     paddingHorizontal: theme.spacing[1],
+  },
+  hostTriggerContainer: {
+    position: "relative",
+  },
+  hostUsageAlertDot: {
+    position: "absolute",
+    right: -1,
+    top: -1,
+    width: 12,
+    height: 12,
+    borderRadius: theme.borderRadius.full,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.colors.surfaceSidebar,
+  },
+  hostUsageAlertDotDanger: {
+    zIndex: 1,
   },
   tooltipRow: {
     flexDirection: "row",

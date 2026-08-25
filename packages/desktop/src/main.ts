@@ -35,6 +35,7 @@ import {
   getWindowBackgroundColor,
   resolveSystemWindowTheme,
   resolveWindowBounds,
+  setupWindowAttentionEvents,
   setupWindowResizeEvents,
   setupWindowStatePersistence,
   setupDefaultContextMenu,
@@ -707,6 +708,7 @@ async function createWindow(
   }
 
   setupDarwinCompositorWatchdog(mainWindow);
+  setupWindowAttentionEvents(mainWindow);
   setupWindowResizeEvents(mainWindow);
   if (windowStateStore) {
     setupWindowStatePersistence(mainWindow, windowStateStore);

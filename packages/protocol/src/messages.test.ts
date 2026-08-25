@@ -346,6 +346,33 @@ describe("agent detach RPC", () => {
   });
 });
 
+describe("checkout diff base selection capability", () => {
+  test("parses the optional server feature gate", () => {
+    const parsed = parseServerInfoStatusPayload({
+      status: "server_info",
+      serverId: "srv-test",
+      features: {
+        checkoutDiffBaseSelection: true,
+      },
+    });
+
+    if (!parsed) {
+      throw new Error("Expected server info payload to parse");
+    }
+    expect(parsed.features?.checkoutDiffBaseSelection).toBe(true);
+  });
+
+  test("keeps old server info without the gate valid", () => {
+    const parsed = parseServerInfoStatusPayload({
+      status: "server_info",
+      serverId: "srv-test",
+      features: {},
+    });
+
+    expect(parsed?.features?.checkoutDiffBaseSelection).toBeUndefined();
+  });
+});
+
 describe("agent setting action responses", () => {
   test("parses optional provider notices on mode and thinking responses", () => {
     const mode = SessionOutboundMessageSchema.parse({

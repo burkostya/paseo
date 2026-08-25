@@ -2,6 +2,7 @@ import type { Query, QueryCacheNotifyEvent, QueryClient, QueryKey } from "@tanst
 import type {
   ListTerminalsResponse,
   MutableDaemonConfig,
+  ProviderUsageAlert,
   SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
 import { agentCommandsQueryRoot } from "@/hooks/agent-commands-query";
@@ -14,6 +15,7 @@ import {
   providersSnapshotQueryKey,
   providersSnapshotQueryRoot,
 } from "@/data/providers-snapshot";
+import { providerUsageAlertsQueryKey } from "@/provider-usage/alerts";
 
 type ProvidersSnapshotUpdateMessage = Extract<
   SessionOutboundMessage,
@@ -291,6 +293,11 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
   });
   const unsubscribeDaemonConfig = input.client.on("status", (message) => {
     applyDaemonConfigStatus({ queryClient: input.queryClient, serverId: input.serverId, message });
+    applyProviderUsageAlertsStatus({
+      queryClient: input.queryClient,
+      serverId: input.serverId,
+      message,
+    });
   });
   const unsubscribeCheckoutDiffUpdate = input.client.on("checkout_diff_update", (message) => {
     applyCheckoutDiffUpdate({
@@ -431,6 +438,18 @@ function applyDaemonConfigStatus(input: {
   });
 }
 
+export function applyProviderUsageAlertsStatus(input: {
+  queryClient: QueryClient;
+  serverId: string;
+  message: StatusMessage;
+}): void {
+  const payload = input.message.payload;
+  if (!isProviderUsageAlertsChangedPayload(payload)) return;
+  input.queryClient.setQueryData<ProviderUsageAlert[]>(
+    providerUsageAlertsQueryKey(input.serverId),
+    payload.alerts.map((alert) => Object.assign({}, alert)),
+  );
+}
 function applyCheckoutDiffUpdate(input: {
   activeCheckoutDiffSubscriptions: Map<string, CheckoutDiffRoute>;
   queryClient: QueryClient;
@@ -783,4 +802,10 @@ function isDaemonConfigChangedPayload(
   payload: StatusMessage["payload"],
 ): payload is { status: "daemon_config_changed"; config: MutableDaemonConfig } {
   return payload.status === "daemon_config_changed" && isRecord(payload.config);
+}
+function isProviderUsageAlertsChangedPayload(payload: StatusMessage["payload"]): payload is {
+  status: "provider.usage.alerts.changed";
+  alerts: ProviderUsageAlert[];
+} {
+  return payload.status === "provider.usage.alerts.changed" && Array.isArray(payload.alerts);
 }

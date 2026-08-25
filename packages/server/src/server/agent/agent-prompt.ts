@@ -16,7 +16,7 @@ export type AgentUnarchiveController = Pick<AgentManager, "notifyAgentState" | "
 export type AgentRunController = Pick<
   AgentManager,
   | "getAgent"
-  | "tryRunOutOfBand"
+  | "resolveCommand"
   | "hasInFlightRun"
   | "replaceAgentRun"
   | "steerOrReplaceActiveTurn"
@@ -98,19 +98,20 @@ export async function startAgentRun(
     },
     "agent.session.start_stream.request",
   );
-  // Out-of-band commands (e.g. /goal pause) must run WITHOUT canceling an
-  // in-flight turn — replaceAgentRun would interrupt the running turn. The
-  // intercept lives at this layer so it covers every prompt entrypoint.
-  if (agentManager.tryRunOutOfBand(agentId, prompt, options?.runOptions)) {
+  // Resolve provider-native and out-of-band commands before choosing how to
+  // dispatch the foreground prompt. This layer covers every prompt entrypoint.
+  const command = await agentManager.resolveCommand(agentId, prompt, options?.runOptions);
+  if (command.handled) {
     return { disposition: "out_of_band" };
   }
-  const steered = await steerOrReplaceActiveRun(agentManager, agentId, prompt, options);
+  const effectivePrompt = command.prompt;
+  const steered = await steerOrReplaceActiveRun(agentManager, agentId, effectivePrompt, options);
   if (steered?.disposition === "steered") {
     return steered;
   }
   const { iterator, replaced } = steered
     ? { iterator: steered.iterator, replaced: true }
-    : await startOrReplaceRun(agentManager, agentId, prompt, options);
+    : await startOrReplaceRun(agentManager, agentId, effectivePrompt, options);
   logger.trace(
     {
       agentId,

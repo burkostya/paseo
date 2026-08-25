@@ -40,7 +40,7 @@ import {
   type InlinePathTarget,
 } from "@/components/message";
 import { PlanCard } from "@/components/plan-card";
-import type { StreamItem } from "@/types/stream";
+import { isPermissionPlanItem, type PermissionPlanItem, type StreamItem } from "@/types/stream";
 import type { PendingMessageSubmission } from "@/composer/submission/model";
 import type { TurnPresentation } from "@/timeline/turn-liveness";
 import type { PendingPermission } from "@/types/shared";
@@ -89,6 +89,10 @@ import {
 } from "./bottom-anchor-controller";
 import { createAssistantImageOccurrenceKey } from "@/assistant-image/acquisition-cache";
 import { AssistantSelectionCopySurface } from "@/assistant-selection-copy/surface";
+import {
+  collectSupersededPlanPermissionRequestIds,
+  resolvePlanPermissionResolutionStatus,
+} from "./plan-permission-state";
 import {
   AssistantFileLinkResolverProvider,
   normalizeInlinePathTarget,
@@ -151,6 +155,19 @@ function renderPendingPermissionsNode(input: {
       ))}
     </View>
   );
+}
+
+function getPermissionPlanMarkdown(request: PendingPermission["request"]): string | undefined {
+  const planFromMetadata =
+    typeof request.metadata?.planText === "string" ? request.metadata.planText : undefined;
+  if (planFromMetadata) {
+    return planFromMetadata;
+  }
+  const candidate = request.input?.["plan"];
+  if (typeof candidate === "string") {
+    return candidate;
+  }
+  return undefined;
 }
 
 function renderStreamItemWithTurnFooter(input: {
@@ -570,6 +587,28 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const isLoadingOlder = remoteIsLoadingOlder;
     const hasOlder = hasLocalHistory || remoteHasOlder;
     const progressKey = `${remoteProgressKey ?? "local"}:${historyWindowStart}`;
+    const renderedPlanPermissionRequestIds = useMemo(() => {
+      const requestIds = new Set<string>();
+      for (const item of effectiveStreamItems) {
+        if (isPermissionPlanItem(item)) {
+          requestIds.add(item.request.id);
+        }
+      }
+      for (const item of effectiveStreamHead ?? EMPTY_STREAM_HEAD) {
+        if (isPermissionPlanItem(item)) {
+          requestIds.add(item.request.id);
+        }
+      }
+      return requestIds;
+    }, [effectiveStreamHead, effectiveStreamItems]);
+    const supersededPlanPermissionRequestIds = useMemo(
+      () =>
+        collectSupersededPlanPermissionRequestIds({
+          tail: effectiveStreamItems,
+          head: effectiveStreamHead ?? EMPTY_STREAM_HEAD,
+        }),
+      [effectiveStreamHead, effectiveStreamItems],
+    );
 
     const baseRenderModel = useMemo(() => {
       return buildAgentStreamRenderModel({
@@ -868,6 +907,21 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           case "tool_call":
             return renderToolCallItem(layoutItem, item);
 
+          case "permission_plan":
+            return (
+              <TimelinePermissionPlanCard
+                item={item}
+                agentId={agentId}
+                client={client}
+                disabledReason={
+                  !item.resolution && supersededPlanPermissionRequestIds.has(item.request.id)
+                    ? t("agentStream.permission.planDisabledAfterMessages")
+                    : undefined
+                }
+                testID={item.resolution ? "timeline-plan-card" : "permission-plan-card"}
+              />
+            );
+
           case "activity_log":
             return (
               <ActivityLog
@@ -901,11 +955,14 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       },
       [
         agentId,
+        client,
         renderUserMessageItem,
         renderAssistantMessageItem,
         renderThoughtItem,
         renderToolCallItem,
         resolvedServerId,
+        supersededPlanPermissionRequestIds,
+        t,
       ],
     );
 
@@ -932,8 +989,16 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     );
 
     const pendingPermissionItems = useMemo(
-      () => Array.from(pendingPermissions.values()).filter((perm) => perm.agentId === agentId),
-      [pendingPermissions, agentId],
+      () =>
+        Array.from(pendingPermissions.values()).filter((perm) => {
+          if (perm.agentId !== agentId) {
+            return false;
+          }
+          return (
+            perm.request.kind !== "plan" || !renderedPlanPermissionRequestIds.has(perm.request.id)
+          );
+        }),
+      [pendingPermissions, agentId, renderedPlanPermissionRequestIds],
     );
 
     const pendingPermissionsNode = useMemo(
@@ -1338,6 +1403,7 @@ interface PermissionActionButtonProps {
   action: AgentPermissionAction;
   isRespondingAction: boolean;
   isResponding: boolean;
+  isDisabled?: boolean;
   isPrimary: boolean;
   Icon: typeof ThemedCheckIcon;
   testID: string;
@@ -1348,12 +1414,20 @@ function PermissionActionButton({
   action,
   isRespondingAction,
   isResponding,
+  isDisabled = false,
   isPrimary,
   Icon,
   testID,
   onPress,
 }: PermissionActionButtonProps) {
   const handlePress = useCallback(() => onPress(action), [onPress, action]);
+  const buttonStyle = useCallback(
+    (state: PressableStateCallbackType) => [
+      ...pressableStyle(state),
+      isDisabled ? permissionStyles.optionButtonDisabled : null,
+    ],
+    [isDisabled],
+  );
   const optionTextStyle = isPrimary
     ? [permissionStyles.optionText, permissionStyles.optionTextPrimary]
     : permissionStyles.optionText;
@@ -1362,9 +1436,9 @@ function PermissionActionButton({
     <Pressable
       accessibilityRole="button"
       testID={testID}
-      style={pressableStyle}
+      style={buttonStyle}
       onPress={handlePress}
-      disabled={isResponding}
+      disabled={isResponding || isDisabled}
     >
       {isRespondingAction ? (
         <ThemedLoadingSpinner size="small" uniProps={colorMapping} />
@@ -1378,7 +1452,236 @@ function PermissionActionButton({
   );
 }
 
+function PermissionPlanCard({
+  permission,
+  client,
+  resolution,
+  disabledReason,
+  testID = "permission-plan-card",
+}: {
+  permission: PendingPermission;
+  client: DaemonClient | null;
+  resolution?: PermissionPlanItem["resolution"];
+  disabledReason?: string;
+  testID?: string;
+}) {
+  const { t } = useTranslation();
+  const isMobile = useIsCompactFormFactor();
+  const { request } = permission;
+  const title = t("agentStream.permission.plan");
+  const description = request.description ?? "";
+  const planMarkdown = getPermissionPlanMarkdown(request);
+  const resolvedActions = useMemo((): AgentPermissionAction[] => {
+    if (resolution) {
+      return [];
+    }
+    if (Array.isArray(request.actions) && request.actions.length > 0) {
+      return request.actions;
+    }
+    return [
+      {
+        id: "reject",
+        label: t("agentStream.permission.deny"),
+        behavior: "deny",
+        variant: "danger",
+        intent: "dismiss",
+      },
+      {
+        id: "accept",
+        label: t("agentStream.permission.implement"),
+        behavior: "allow",
+        variant: "primary",
+      },
+    ];
+  }, [request.actions, resolution, t]);
+
+  const permissionMutation = useMutation({
+    mutationFn: async (input: {
+      agentId: string;
+      requestId: string;
+      response: AgentPermissionResponse;
+    }) => {
+      if (!client) {
+        throw new Error(t("common.errors.daemonClientUnavailable"));
+      }
+      return client.respondToPermissionAndWait(
+        input.agentId,
+        input.requestId,
+        input.response,
+        15000,
+      );
+    },
+  });
+  const {
+    reset: resetPermissionMutation,
+    mutateAsync: respondToPermission,
+    isPending: isResponding,
+  } = permissionMutation;
+  const [respondingActionId, setRespondingActionId] = useState<string | null>(null);
+
+  useEffect(() => {
+    resetPermissionMutation();
+    setRespondingActionId(null);
+  }, [permission.request.id, resetPermissionMutation]);
+
+  const handleResponse = useCallback(
+    (response: AgentPermissionResponse) => {
+      respondToPermission({
+        agentId: permission.agentId,
+        requestId: permission.request.id,
+        response,
+      }).catch((error) => {
+        console.error("[PermissionPlanCard] Failed to respond to permission:", error);
+      });
+    },
+    [permission.agentId, permission.request.id, respondToPermission],
+  );
+  const handleActionPress = useCallback(
+    (action: AgentPermissionAction) => {
+      if (disabledReason) {
+        return;
+      }
+      setRespondingActionId(action.id);
+      if (action.behavior === "allow") {
+        handleResponse({
+          behavior: "allow",
+          selectedActionId: action.id,
+        });
+        return;
+      }
+      handleResponse({
+        behavior: "deny",
+        selectedActionId: action.id,
+        message: "Denied by user",
+      });
+    },
+    [disabledReason, handleResponse],
+  );
+
+  const optionsContainerStyle = useMemo(
+    () => [
+      permissionStyles.optionsContainer,
+      !isMobile && permissionStyles.optionsContainerDesktop,
+    ],
+    [isMobile],
+  );
+  const resolutionStatus = resolvePlanPermissionResolutionStatus(resolution);
+  const resolutionLabel = resolutionStatus ? t(`agentStream.permission.${resolutionStatus}`) : null;
+  const footer = useMemo(
+    () =>
+      resolutionLabel ? (
+        <Text testID="permission-plan-resolution" style={permissionStyles.question}>
+          {resolutionLabel}
+        </Text>
+      ) : (
+        <>
+          <Text
+            testID={
+              disabledReason ? "permission-plan-disabled-reason" : "permission-request-question"
+            }
+            style={permissionStyles.question}
+          >
+            {disabledReason ?? t("agentStream.permission.question")}
+          </Text>
+
+          <View style={optionsContainerStyle}>
+            {resolvedActions.map((action) => {
+              const isPrimary = action.variant === "primary";
+              const isRespondingAction = respondingActionId === action.id;
+              const Icon = action.behavior === "allow" ? ThemedCheckIcon : ThemedXIcon;
+              let actionTestID: string;
+              if (action.behavior === "deny") actionTestID = "permission-request-deny";
+              else if (action.id === "accept" || action.id === "implement")
+                actionTestID = "permission-request-accept";
+              else actionTestID = `permission-request-action-${action.id}`;
+
+              return (
+                <PermissionActionButton
+                  key={action.id}
+                  action={action}
+                  isRespondingAction={isRespondingAction}
+                  isResponding={isResponding}
+                  isDisabled={disabledReason !== undefined}
+                  isPrimary={isPrimary}
+                  Icon={Icon}
+                  testID={actionTestID}
+                  onPress={handleActionPress}
+                />
+              );
+            })}
+          </View>
+        </>
+      ),
+    [
+      disabledReason,
+      handleActionPress,
+      isResponding,
+      optionsContainerStyle,
+      resolutionLabel,
+      resolvedActions,
+      respondingActionId,
+      t,
+    ],
+  );
+
+  if (!planMarkdown) {
+    return null;
+  }
+
+  return (
+    <PlanCard
+      title={title}
+      description={description}
+      text={planMarkdown}
+      footer={footer}
+      testID={testID}
+      disableOuterSpacing
+    />
+  );
+}
+
+function TimelinePermissionPlanCard({
+  item,
+  agentId,
+  client,
+  disabledReason,
+  testID,
+}: {
+  item: PermissionPlanItem;
+  agentId: string;
+  client: DaemonClient | null;
+  disabledReason?: string;
+  testID: string;
+}) {
+  const permission = useMemo<PendingPermission>(
+    () => ({ key: item.id, agentId, request: item.request }),
+    [agentId, item.id, item.request],
+  );
+  return (
+    <PermissionPlanCard
+      permission={permission}
+      client={client}
+      resolution={item.resolution}
+      disabledReason={disabledReason}
+      testID={testID}
+    />
+  );
+}
+
 function PermissionRequestCard({
+  permission,
+  client,
+}: {
+  permission: PendingPermission;
+  client: DaemonClient | null;
+}) {
+  if (permission.request.kind === "plan") {
+    return <PermissionPlanCard permission={permission} client={client} />;
+  }
+  return <NonPlanPermissionRequestCard permission={permission} client={client} />;
+}
+
+function NonPlanPermissionRequestCard({
   permission,
   client,
 }: {
@@ -1389,10 +1692,7 @@ function PermissionRequestCard({
   const isMobile = useIsCompactFormFactor();
 
   const { request } = permission;
-  const isPlanRequest = request.kind === "plan";
-  const title = isPlanRequest
-    ? t("agentStream.permission.plan")
-    : (request.title ?? request.name ?? t("agentStream.permission.required"));
+  const title = request.title ?? request.name ?? t("agentStream.permission.required");
   const description = request.description ?? "";
   const resolvedToolCallDetail = useMemo(
     () =>
@@ -1420,30 +1720,14 @@ function PermissionRequestCard({
       },
       {
         id: "accept",
-        label: isPlanRequest
-          ? t("agentStream.permission.implement")
-          : t("agentStream.permission.accept"),
+        label: t("agentStream.permission.accept"),
         behavior: "allow",
         variant: "primary",
       },
     ];
-  }, [isPlanRequest, request, t]);
+  }, [request, t]);
 
-  const planMarkdown = useMemo(() => {
-    if (!request) {
-      return undefined;
-    }
-    const planFromMetadata =
-      typeof request.metadata?.planText === "string" ? request.metadata.planText : undefined;
-    if (planFromMetadata) {
-      return planFromMetadata;
-    }
-    const candidate = request.input?.["plan"];
-    if (typeof candidate === "string") {
-      return candidate;
-    }
-    return undefined;
-  }, [request]);
+  const planMarkdown = getPermissionPlanMarkdown(request);
 
   const permissionMutation = useMutation({
     mutationFn: async (input: {
@@ -1557,19 +1841,6 @@ function PermissionRequestCard({
     </>
   );
 
-  if (isPlanRequest && planMarkdown) {
-    return (
-      <PlanCard
-        title={title}
-        description={description}
-        text={planMarkdown}
-        footer={footer}
-        testID="permission-plan-card"
-        disableOuterSpacing
-      />
-    );
-  }
-
   return (
     <View style={permissionStyles.container}>
       <Text style={permissionStyles.title}>{title}</Text>
@@ -1585,9 +1856,7 @@ function PermissionRequestCard({
         />
       ) : null}
 
-      {!isPlanRequest ? (
-        <ToolCallDetailsContent detail={resolvedToolCallDetail} maxHeight={200} />
-      ) : null}
+      <ToolCallDetailsContent detail={resolvedToolCallDetail} maxHeight={200} />
 
       {footer}
     </View>
@@ -1734,6 +2003,9 @@ const permissionStyles = StyleSheet.create((theme) => ({
   },
   optionButtonPressed: {
     opacity: 0.9,
+  },
+  optionButtonDisabled: {
+    opacity: 0.45,
   },
   optionContent: {
     flexDirection: "row",

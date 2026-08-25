@@ -731,6 +731,87 @@ describe("DaemonConfigStore", () => {
     expect(persisted.daemon?.appendSystemPrompt).toBe("Prefer terse replies.");
   });
 
+  test("patch persists issue trackers and reloads them from config.json", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {},
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+      },
+      undefined,
+    );
+    const issueTrackers = [
+      {
+        id: "linear",
+        name: "Linear",
+        urlTemplate: "https://linear.example/issue/{id}",
+        prefixes: ["APP-", "PASEO-"],
+      },
+    ];
+
+    store.patch({ issueTrackers });
+
+    expect(store.get().issueTrackers).toEqual(issueTrackers);
+    expect(loadPersistedConfig(paseoHome).daemon?.issueTrackers).toEqual(issueTrackers);
+  });
+
+  test("rejects an invalid issue tracker patch without changing memory or disk", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {},
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+        issueTrackers: [
+          {
+            id: "linear",
+            name: "Linear",
+            urlTemplate: "https://linear.example/issue/{id}",
+            prefixes: ["APP-"],
+          },
+        ],
+      },
+      undefined,
+    );
+
+    expect(() =>
+      store.patch({
+        issueTrackers: [
+          {
+            id: "linear",
+            name: "Linear",
+            urlTemplate: "https://linear.example/issue/{id}",
+            prefixes: ["APP-"],
+          },
+          {
+            id: "jira",
+            name: "Jira",
+            urlTemplate: "https://jira.example/browse/{id}",
+            prefixes: ["APP-"],
+          },
+        ],
+      }),
+    ).toThrow("duplicate_prefix");
+
+    expect(store.get().issueTrackers).toHaveLength(1);
+    expect(loadPersistedConfig(paseoHome).daemon?.issueTrackers).toBeUndefined();
+  });
+
   test("patch persists enable terminal agent hooks into config.json", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);

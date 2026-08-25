@@ -3,6 +3,7 @@ import {
   type AgentPermissionAction,
   type AgentCapabilityFlags,
   type AgentClient,
+  type AgentCommandResolution,
   type AgentCreateSessionOptions,
   type AgentFeature,
   type AgentLaunchContext,
@@ -168,6 +169,100 @@ const CODEX_PLAN_IMPLEMENTATION_PROMPT_PREFIX =
 // (and the /goal slash command) when the binary is too old.
 const CODEX_GOALS_MIN_VERSION: readonly [number, number, number] = [0, 128, 0];
 const CODEX_AUTO_REVIEW_MIN_VERSION: readonly [number, number, number] = [0, 115, 0];
+// COMPAT(codexNativeCommands): added for Codex 0.144.3; remove the gate after
+// the provider floor reaches 0.144.3. Target removal: 2027-01-15.
+const CODEX_NATIVE_COMMANDS_MIN_VERSION: readonly [number, number, number] = [0, 144, 3];
+
+const CODEX_INIT_PROMPT = `Generate a file named AGENTS.md that serves as a contributor guide for this repository.
+If an AGENTS.md file already exists, improve it instead of overwriting useful instructions.
+
+Write a clear, concise guide titled "Repository Guidelines". Aim for 200-400 words and use Markdown headings. Include sections that fit this repository, such as project structure, build and test commands, coding style, testing expectations, and commit and pull request guidelines. Add security, configuration, or architecture notes only when they are relevant. Use concrete repository-specific examples.`;
+
+const CODEX_NATIVE_SLASH_COMMANDS: readonly AgentSlashCommand[] = [
+  { name: "apps", description: "List available Codex apps", argumentHint: "", kind: "command" },
+  {
+    name: "clean",
+    description: "Stop all background terminals (alias for /stop)",
+    argumentHint: "",
+    kind: "command",
+  },
+  {
+    name: "debug-config",
+    description: "Show safe configuration source metadata",
+    argumentHint: "",
+    kind: "command",
+  },
+  {
+    name: "diff",
+    description: "Show staged, unstaged, and untracked changes",
+    argumentHint: "",
+    kind: "command",
+  },
+  { name: "hooks", description: "List configured Codex hooks", argumentHint: "", kind: "command" },
+  { name: "init", description: "Create or improve AGENTS.md", argumentHint: "", kind: "command" },
+  {
+    name: "logout",
+    description: "Log out of Codex",
+    argumentHint: "",
+    kind: "command",
+  },
+  {
+    name: "mcp",
+    description: "List configured MCP servers",
+    argumentHint: "[verbose]",
+    kind: "command",
+  },
+  {
+    name: "plan",
+    description: "Enable plan mode, optionally starting with a prompt",
+    argumentHint: "[prompt]",
+    kind: "command",
+  },
+  {
+    name: "plugins",
+    description: "List available Codex plugins",
+    argumentHint: "",
+    kind: "command",
+  },
+  {
+    name: "ps",
+    description: "List background terminals",
+    argumentHint: "",
+    kind: "command",
+  },
+  {
+    name: "rename",
+    description: "Rename the current Codex thread",
+    argumentHint: "<name>",
+    kind: "command",
+  },
+  {
+    name: "review",
+    description: "Review uncommitted changes or use custom instructions",
+    argumentHint: "[instructions]",
+    kind: "command",
+  },
+  {
+    name: "rollout",
+    description: "Show the current rollout path",
+    argumentHint: "",
+    kind: "command",
+  },
+  { name: "skills", description: "List available Codex skills", argumentHint: "", kind: "command" },
+  { name: "status", description: "Show Codex session status", argumentHint: "", kind: "command" },
+  {
+    name: "stop",
+    description: "Stop all background terminals",
+    argumentHint: "",
+    kind: "command",
+  },
+  {
+    name: "usage",
+    description: "Show Codex token usage",
+    argumentHint: "[daily|weekly|cumulative]",
+    kind: "command",
+  },
+];
 
 function parseCodexVersion(versionOutput: string): [number, number, number] | null {
   const match = versionOutput.match(/(\d+)\.(\d+)\.(\d+)/);
@@ -252,7 +347,8 @@ interface CodexAppServerClientLike {
 }
 
 interface CodexAppServerAgentDeps {
-  workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
+  workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot"> &
+    Partial<Pick<WorkspaceGitService, "getCheckoutDiff">>;
   customProvider?: {
     id: string;
     label: string;
@@ -3380,6 +3476,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     private readonly autoReviewEnabled: boolean = false,
     private readonly agentId?: string,
     private readonly initialResumePurpose: "interactive" | "history" = "interactive",
+    private readonly nativeCommandsEnabled: boolean = true,
   ) {
     this.logger = logger.child({
       module: "agent",
@@ -3725,6 +3822,28 @@ export class CodexAppServerAgentSession implements AgentSession {
       planText,
     });
     this.emitEvent({ type: "permission_requested", provider: CODEX_PROVIDER, request });
+  }
+
+  private dismissSupersededPlanApprovals(): void {
+    for (const [requestId, pending] of this.pendingPermissionHandlers) {
+      if (pending.kind !== "plan") {
+        continue;
+      }
+      const pendingRequest = this.pendingPermissions.get(requestId) ?? null;
+      if (pendingRequest?.metadata?.source !== "codex_plan_approval") {
+        continue;
+      }
+      this.handlePlanPermissionResponse({
+        requestId,
+        response: {
+          behavior: "deny",
+          selectedActionId: "superseded",
+          message: "Superseded by a later prompt.",
+        },
+        pending,
+        pendingRequest,
+      });
+    }
   }
 
   /**
@@ -4136,6 +4255,43 @@ export class CodexAppServerAgentSession implements AgentSession {
     });
   }
 
+  private async tryStartNativeReviewTurn(
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions,
+  ): Promise<{ turnId: string } | null> {
+    const nativeSlashCommand =
+      this.nativeCommandsEnabled && typeof prompt === "string"
+        ? this.parseSlashCommandInput(prompt)
+        : null;
+    if (nativeSlashCommand?.commandName !== "review") {
+      return null;
+    }
+    if (this.currentThreadId) {
+      await this.ensureThreadLoaded();
+    } else {
+      await this.ensureThread();
+    }
+    if (!this.currentThreadId || !this.client) {
+      throw new Error("Codex thread is not available");
+    }
+    const turnId = this.createTurnId();
+    this.activeForegroundTurnId = turnId;
+    this.activeClientMessageId = options?.clientMessageId ?? null;
+    this.currentTurnId = null;
+    await this.client.request(
+      "review/start",
+      {
+        threadId: this.currentThreadId,
+        delivery: "inline",
+        target: nativeSlashCommand.args
+          ? { type: "custom", instructions: nativeSlashCommand.args }
+          : { type: "uncommittedChanges" },
+      },
+      TURN_START_TIMEOUT_MS,
+    );
+    return { turnId };
+  }
+
   async startTurn(
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
@@ -4154,12 +4310,17 @@ export class CodexAppServerAgentSession implements AgentSession {
     };
     this.pendingForegroundStart = pendingStart;
 
-    this.dismissPendingPlanApprovals("Dismissed by a new prompt");
+    this.dismissSupersededPlanApprovals();
 
     try {
       await this.connect();
       if (!this.client) {
         throw new Error("Codex client not initialized");
+      }
+
+      const nativeReviewTurn = await this.tryStartNativeReviewTurn(prompt, options);
+      if (nativeReviewTurn) {
+        return nativeReviewTurn;
       }
 
       const slashCommand = await this.resolveSlashCommandInvocation(prompt);
@@ -4836,20 +4997,69 @@ export class CodexAppServerAgentSession implements AgentSession {
         kind: "command",
       });
     }
+    if (this.nativeCommandsEnabled) {
+      builtin.push(...CODEX_NATIVE_SLASH_COMMANDS);
+    }
     return [...builtin, ...appServerSkills, ...fallbackSkills, ...prompts].sort((a, b) =>
       a.name.localeCompare(b.name),
     );
   }
 
-  tryHandleOutOfBand(
-    prompt: AgentPromptInput,
-  ): { run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void> } | null {
-    if (typeof prompt !== "string") return null;
-    const parsed = this.parseSlashCommandInput(prompt);
-    if (!parsed) return null;
+  async resolveCommand(prompt: AgentPromptInput): Promise<AgentCommandResolution | null> {
+    const commandPrompt = this.readSlashCommandPrompt(prompt);
+    if (!commandPrompt) {
+      return null;
+    }
+    if (commandPrompt.hasAttachments) {
+      return this.commandError("Slash commands cannot be combined with attachments.");
+    }
+    const parsed = commandPrompt.invocation;
+    const alwaysAvailable = this.resolveAlwaysAvailableCommand(parsed);
+    if (alwaysAvailable) {
+      return alwaysAvailable;
+    }
 
+    let commands: AgentSlashCommand[];
+    try {
+      commands = await this.listCommands();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return this.commandError(`Failed to load Codex commands: ${message}`);
+    }
+    const command = commands.find((entry) => entry.name === parsed.commandName);
+    if (!command) {
+      return this.commandError(
+        `Unknown command /${parsed.commandName}. Type / to see available commands.`,
+      );
+    }
+
+    if (command.kind === "skill" || parsed.commandName.startsWith("prompts:")) {
+      return { kind: "foreground", prompt };
+    }
+    if (!this.nativeCommandsEnabled) {
+      return { kind: "foreground", prompt };
+    }
+
+    const foreground = this.resolveNativeForegroundCommand(parsed, prompt);
+    if (foreground) {
+      return foreground;
+    }
+
+    return this.commandHandler(
+      async () => await this.executeNativeCommand(parsed.commandName, parsed.args),
+    );
+  }
+
+  private resolveAlwaysAvailableCommand(parsed: {
+    commandName: string;
+    args?: string;
+  }): AgentCommandResolution | null {
     if (parsed.commandName === "compact") {
+      if (this.activeForegroundTurnId) {
+        return this.commandError("/compact is disabled while a task is in progress.");
+      }
       return {
+        kind: "handled",
         run: async ({ emit }) => {
           const error = await this.executeCompactCommand();
           if (error) {
@@ -4862,20 +5072,472 @@ export class CodexAppServerAgentSession implements AgentSession {
         },
       };
     }
+    if (this.goalsEnabled && parsed.commandName === "goal") {
+      const subcommand = parseGoalSubcommand(parsed.args);
+      return this.commandHandler(async () => await this.executeGoalSubcommand(subcommand), true);
+    }
+    return null;
+  }
 
-    if (!this.goalsEnabled || parsed.commandName !== "goal") return null;
+  private resolveNativeForegroundCommand(
+    parsed: { commandName: string; args?: string },
+    prompt: AgentPromptInput,
+  ): AgentCommandResolution | null {
+    if (parsed.commandName === "init") {
+      if (this.activeForegroundTurnId) {
+        return this.commandError("/init is disabled while a task is in progress.");
+      }
+      return parsed.args
+        ? this.commandError("Usage: /init")
+        : { kind: "foreground", prompt: CODEX_INIT_PROMPT };
+    }
+    if (parsed.commandName === "plan") {
+      if (this.activeForegroundTurnId) {
+        return this.commandError("/plan is disabled while a task is in progress.");
+      }
+      this.applyFeatureValue("plan_mode", true);
+      return parsed.args
+        ? { kind: "foreground", prompt: parsed.args }
+        : this.commandMessage("Plan mode enabled.");
+    }
+    if (parsed.commandName === "review") {
+      return this.activeForegroundTurnId
+        ? this.commandError("/review is disabled while a task is in progress.")
+        : { kind: "foreground", prompt };
+    }
+    return null;
+  }
 
-    const subcommand = parseGoalSubcommand(parsed.args);
+  private readSlashCommandPrompt(prompt: AgentPromptInput): {
+    invocation: { commandName: string; args?: string };
+    hasAttachments: boolean;
+  } | null {
+    if (typeof prompt === "string") {
+      const invocation = this.parseSlashCommandInput(prompt);
+      return invocation ? { invocation, hasAttachments: false } : null;
+    }
+    const text = prompt
+      .filter(
+        (block): block is Extract<(typeof prompt)[number], { type: "text" }> =>
+          block.type === "text",
+      )
+      .map((block) => block.text)
+      .join("\n");
+    const invocation = this.parseSlashCommandInput(text);
+    if (!invocation) {
+      return null;
+    }
+    return { invocation, hasAttachments: prompt.length !== 1 || prompt[0]?.type !== "text" };
+  }
+
+  private commandHandler(
+    execute: () => Promise<string | null>,
+    appendSpacing = false,
+  ): AgentCommandResolution {
     return {
+      kind: "handled",
       run: async ({ emit }) => {
-        const text = formatOutOfBandStatusMessage(await this.executeGoalSubcommand(subcommand));
+        const result = await execute();
+        if (result === null) {
+          return;
+        }
         emit({
           type: "timeline",
           provider: CODEX_PROVIDER,
-          item: { type: "assistant_message", text },
+          item: {
+            type: "assistant_message",
+            text: appendSpacing ? formatOutOfBandStatusMessage(result) : result,
+          },
         });
       },
     };
+  }
+
+  private commandMessage(message: string): AgentCommandResolution {
+    return this.commandHandler(async () => message);
+  }
+
+  private commandError(message: string): AgentCommandResolution {
+    return this.commandMessage(`[Error] ${message}`);
+  }
+
+  private async ensureNativeCommandClient(options?: { thread?: boolean }): Promise<{
+    client: CodexAppServerClientLike;
+    threadId: string | null;
+  }> {
+    await this.connect();
+    if (options?.thread !== false) {
+      if (this.currentThreadId) {
+        await this.ensureThreadLoaded();
+      } else {
+        await this.ensureThread();
+      }
+    }
+    if (!this.client) {
+      throw new Error("Codex client is not initialized");
+    }
+    return { client: this.client, threadId: this.currentThreadId };
+  }
+
+  private assertNoCommandArgs(commandName: string, args: string | undefined): void {
+    if (args) {
+      throw new Error(`Usage: /${commandName}`);
+    }
+  }
+
+  private async executeNativeCommand(
+    commandName: string,
+    args: string | undefined,
+  ): Promise<string | null> {
+    switch (commandName) {
+      case "status":
+        this.assertNoCommandArgs(commandName, args);
+        return await this.renderStatusCommand();
+      case "diff":
+        this.assertNoCommandArgs(commandName, args);
+        return await this.renderDiffCommand();
+      case "usage":
+        return await this.renderUsageCommand(args);
+      case "mcp":
+        return await this.renderMcpCommand(args);
+      case "skills":
+        this.assertNoCommandArgs(commandName, args);
+        return await this.renderSkillsCommand();
+      case "hooks":
+        this.assertNoCommandArgs(commandName, args);
+        return await this.renderHooksCommand();
+      case "apps":
+        this.assertNoCommandArgs(commandName, args);
+        return await this.renderAppsCommand();
+      case "plugins":
+        this.assertNoCommandArgs(commandName, args);
+        return await this.renderPluginsCommand();
+      case "debug-config":
+        this.assertNoCommandArgs(commandName, args);
+        return await this.renderDebugConfigCommand();
+      case "rollout":
+        this.assertNoCommandArgs(commandName, args);
+        return await this.renderRolloutCommand();
+      case "ps":
+        this.assertNoCommandArgs(commandName, args);
+        return await this.renderBackgroundTerminalsCommand();
+      case "stop":
+      case "clean":
+        this.assertNoCommandArgs(commandName, args);
+        return await this.cleanBackgroundTerminals();
+      case "rename":
+        return await this.renameThread(args);
+      case "logout":
+        this.assertNoCommandArgs(commandName, args);
+        return await this.logoutCodex();
+      default:
+        throw new Error(`Unsupported native Codex command: /${commandName}`);
+    }
+  }
+
+  private async renderStatusCommand(): Promise<string> {
+    const { client, threadId } = await this.ensureNativeCommandClient();
+    const preset = MODE_PRESETS[this.currentMode] ?? MODE_PRESETS[DEFAULT_CODEX_MODE_ID];
+    const lines = [
+      "Codex status",
+      `- Model: ${this.config.model ?? "default"}`,
+      `- Reasoning: ${normalizeCodexThinkingOptionId(this.config.thinkingOptionId) ?? "default"}`,
+      `- Working directory: ${this.config.cwd}`,
+      `- Mode: ${this.currentMode}`,
+      `- Collaboration mode: ${this.resolvedCollaborationMode?.name ?? "default"}`,
+      `- Approval policy: ${preset.approvalPolicy}`,
+      `- Sandbox: ${preset.sandbox}`,
+      `- Session: ${threadId ?? "not started"}`,
+    ];
+    this.appendLatestUsageStatus(lines);
+
+    const [accountResponse, limitsResponse] = await Promise.all([
+      client.request("account/read", {}).catch(() => null),
+      client.request("account/rateLimits/read", null).catch(() => null),
+    ]);
+    this.appendAccountStatus(lines, accountResponse, limitsResponse);
+    return lines.join("\n");
+  }
+
+  private appendLatestUsageStatus(lines: string[]): void {
+    if (!this.latestUsage) {
+      return;
+    }
+    const used = this.latestUsage.contextWindowUsedTokens;
+    const max = this.latestUsage.contextWindowMaxTokens;
+    const percentage = used !== undefined && max ? ` (${Math.round((used / max) * 100)}%)` : "";
+    lines.push(
+      `- Context: ${used ?? "unknown"}${max ? ` / ${max}` : ""}${percentage}`,
+      `- Tokens: ${this.latestUsage.inputTokens ?? 0} input, ${this.latestUsage.outputTokens ?? 0} output`,
+    );
+  }
+
+  private appendAccountStatus(
+    lines: string[],
+    accountResponse: unknown,
+    limitsResponse: unknown,
+  ): void {
+    const account = toObjectRecord(toObjectRecord(accountResponse)?.account);
+    if (account) {
+      const accountLabel =
+        typeof account.email === "string"
+          ? `${account.type ?? "account"} (${account.email})`
+          : String(account.type ?? "account");
+      lines.push(`- Account: ${accountLabel}`);
+      if (typeof account.planType === "string") {
+        lines.push(`- Plan: ${account.planType}`);
+      }
+    }
+    const rateLimits = toObjectRecord(toObjectRecord(limitsResponse)?.rateLimits);
+    for (const [label, value] of [
+      ["Primary limit", rateLimits?.primary],
+      ["Secondary limit", rateLimits?.secondary],
+    ] as const) {
+      const window = toObjectRecord(value);
+      if (typeof window?.usedPercent === "number") {
+        lines.push(`- ${label}: ${window.usedPercent}% used`);
+      }
+    }
+  }
+
+  private async renderDiffCommand(): Promise<string> {
+    const getCheckoutDiff = this.deps.workspaceGitService?.getCheckoutDiff;
+    if (!getCheckoutDiff) {
+      throw new Error("Workspace diff service is unavailable");
+    }
+    const result = await getCheckoutDiff(this.config.cwd, { mode: "uncommitted" });
+    const diff = result.diff.trim();
+    return diff ? `Uncommitted changes:\n\n\`\`\`diff\n${diff}\n\`\`\`` : "No uncommitted changes.";
+  }
+
+  private async renderUsageCommand(args: string | undefined): Promise<string> {
+    const scope = args?.toLowerCase() ?? "summary";
+    if (!["summary", "daily", "weekly", "cumulative"].includes(scope)) {
+      throw new Error("Usage: /usage [daily|weekly|cumulative]");
+    }
+    const { client } = await this.ensureNativeCommandClient({ thread: false });
+    const response = toObjectRecord(await client.request("account/usage/read", null));
+    const summary = toObjectRecord(response?.summary);
+    const buckets = Array.isArray(response?.dailyUsageBuckets)
+      ? response.dailyUsageBuckets.map(toObjectRecord).filter((entry) => entry !== null)
+      : [];
+    const cumulative = [
+      `Lifetime tokens: ${summary?.lifetimeTokens ?? "unknown"}`,
+      `Peak daily tokens: ${summary?.peakDailyTokens ?? "unknown"}`,
+      `Current streak: ${summary?.currentStreakDays ?? "unknown"} days`,
+    ].join("\n");
+    if (scope === "cumulative") {
+      return cumulative;
+    }
+    if (scope === "weekly") {
+      const recent = buckets.slice(-7);
+      const total = recent.reduce(
+        (sum, bucket) => sum + (typeof bucket?.tokens === "number" ? bucket.tokens : 0),
+        0,
+      );
+      return `Last ${recent.length} days: ${total} tokens`;
+    }
+    const daily = buckets
+      .map((bucket) => `${bucket?.startDate ?? "unknown"}: ${bucket?.tokens ?? 0} tokens`)
+      .join("\n");
+    if (scope === "daily") {
+      return daily || "No daily usage data.";
+    }
+    return `Codex usage\n${cumulative}${daily ? `\n\nRecent daily usage:\n${daily}` : ""}`;
+  }
+
+  private async renderMcpCommand(args: string | undefined): Promise<string> {
+    if (args && args.toLowerCase() !== "verbose") {
+      throw new Error("Usage: /mcp [verbose]");
+    }
+    const { client, threadId } = await this.ensureNativeCommandClient();
+    const response = toObjectRecord(
+      await client.request("mcpServerStatus/list", {
+        threadId,
+        detail: args ? "full" : "toolsAndAuthOnly",
+      }),
+    );
+    const servers = Array.isArray(response?.data) ? response.data : [];
+    if (servers.length === 0) {
+      return "No MCP servers configured.";
+    }
+    return servers
+      .map((value) => {
+        const server = toObjectRecord(value);
+        const tools = toObjectRecord(server?.tools);
+        const toolNames = tools ? Object.keys(tools) : [];
+        const base = `- ${server?.name ?? "unknown"}: ${server?.authStatus ?? "unknown"}; tools: ${toolNames.join(", ") || "none"}`;
+        if (!args) return base;
+        const resources = Array.isArray(server?.resources) ? server.resources.length : 0;
+        const templates = Array.isArray(server?.resourceTemplates)
+          ? server.resourceTemplates.length
+          : 0;
+        return `${base}; resources: ${resources}; templates: ${templates}`;
+      })
+      .join("\n");
+  }
+
+  private async renderSkillsCommand(): Promise<string> {
+    const { client } = await this.ensureNativeCommandClient({ thread: false });
+    const response = toObjectRecord(
+      await client.request("skills/list", { cwds: [this.config.cwd] }),
+    );
+    const entries = Array.isArray(response?.data) ? response.data : [];
+    const lines: string[] = [];
+    for (const value of entries) {
+      const entry = toObjectRecord(value);
+      const skills = Array.isArray(entry?.skills) ? entry.skills : [];
+      for (const skillValue of skills) {
+        const skill = toObjectRecord(skillValue);
+        lines.push(
+          `- ${skill?.name ?? "unknown"}${skill?.enabled === false ? " (disabled)" : ""}: ${skill?.description ?? ""}`.trimEnd(),
+        );
+      }
+    }
+    return lines.length > 0 ? lines.join("\n") : "No Codex skills found.";
+  }
+
+  private async renderHooksCommand(): Promise<string> {
+    const { client } = await this.ensureNativeCommandClient({ thread: false });
+    const response = toObjectRecord(
+      await client.request("hooks/list", { cwds: [this.config.cwd] }),
+    );
+    const entries = Array.isArray(response?.data) ? response.data : [];
+    const lines: string[] = [];
+    for (const value of entries) {
+      const entry = toObjectRecord(value);
+      const hooks = Array.isArray(entry?.hooks) ? entry.hooks : [];
+      for (const hookValue of hooks) {
+        const hook = toObjectRecord(hookValue);
+        lines.push(
+          `- ${hook?.eventName ?? "unknown"}: ${hook?.key ?? "unknown"} (${hook?.enabled === false ? "disabled" : "enabled"}, ${hook?.source ?? "unknown"})`,
+        );
+      }
+    }
+    return lines.length > 0 ? lines.join("\n") : "No Codex hooks configured.";
+  }
+
+  private async renderAppsCommand(): Promise<string> {
+    const { client, threadId } = await this.ensureNativeCommandClient();
+    const response = toObjectRecord(await client.request("app/list", { threadId }));
+    const apps = Array.isArray(response?.data) ? response.data : [];
+    if (apps.length === 0) {
+      return "No Codex apps available.";
+    }
+    return apps
+      .map((value) => {
+        const app = toObjectRecord(value);
+        let state = "available";
+        if (app?.isEnabled === false) {
+          state = "disabled";
+        } else if (app?.isAccessible) {
+          state = "connected";
+        }
+        return `- ${app?.name ?? app?.id ?? "unknown"} (${state})`;
+      })
+      .join("\n");
+  }
+
+  private async renderPluginsCommand(): Promise<string> {
+    const { client } = await this.ensureNativeCommandClient({ thread: false });
+    const response = toObjectRecord(
+      await client.request("plugin/list", { cwds: [this.config.cwd] }),
+    );
+    const marketplaces = Array.isArray(response?.marketplaces) ? response.marketplaces : [];
+    const lines: string[] = [];
+    for (const value of marketplaces) {
+      const marketplace = toObjectRecord(value);
+      const plugins = Array.isArray(marketplace?.plugins) ? marketplace.plugins : [];
+      for (const pluginValue of plugins) {
+        const plugin = toObjectRecord(pluginValue);
+        let state = "available";
+        if (plugin?.installed) {
+          state = plugin.enabled === false ? "disabled" : "installed";
+        }
+        lines.push(`- ${plugin?.name ?? plugin?.id ?? "unknown"} (${state})`);
+      }
+    }
+    return lines.length > 0 ? lines.join("\n") : "No Codex plugins available.";
+  }
+
+  private async renderDebugConfigCommand(): Promise<string> {
+    const { client } = await this.ensureNativeCommandClient({ thread: false });
+    const response = toObjectRecord(await client.request("config/read", {}));
+    const layers = Array.isArray(response?.layers) ? response.layers : [];
+    const lines = layers.map((value) => {
+      const layer = toObjectRecord(value);
+      return `- ${JSON.stringify(layer?.name ?? "unknown")} (version ${layer?.version ?? "unknown"})${layer?.disabledReason ? `, disabled: ${layer.disabledReason}` : ""}`;
+    });
+    const origins = toObjectRecord(response?.origins);
+    if (origins) {
+      lines.push(`- Origin entries: ${Object.keys(origins).length}`);
+    }
+    return lines.length > 0
+      ? `Codex configuration sources (values omitted):\n${lines.join("\n")}`
+      : "No Codex configuration source metadata available.";
+  }
+
+  private async renderRolloutCommand(): Promise<string> {
+    const { client, threadId } = await this.ensureNativeCommandClient();
+    if (!threadId) {
+      return "No Codex rollout exists yet.";
+    }
+    const response = toObjectRecord(await client.request("thread/read", { threadId }));
+    const thread = toObjectRecord(response?.thread);
+    return typeof thread?.path === "string" && thread.path.length > 0
+      ? `Rollout: ${thread.path}`
+      : "The current Codex rollout path is unavailable.";
+  }
+
+  private async renderBackgroundTerminalsCommand(): Promise<string> {
+    const { client, threadId } = await this.ensureNativeCommandClient();
+    if (!threadId) {
+      return "No background terminals.";
+    }
+    const response = toObjectRecord(
+      await client.request("thread/backgroundTerminals/list", { threadId }),
+    );
+    const terminals = Array.isArray(response?.data) ? response.data : [];
+    if (terminals.length === 0) {
+      return "No background terminals.";
+    }
+    return terminals
+      .map((value) => {
+        const terminal = toObjectRecord(value);
+        return `- ${terminal?.processId ?? "unknown"}: ${terminal?.command ?? "unknown"} (${terminal?.cwd ?? "unknown"})`;
+      })
+      .join("\n");
+  }
+
+  private async cleanBackgroundTerminals(): Promise<string> {
+    const { client, threadId } = await this.ensureNativeCommandClient();
+    if (!threadId) {
+      return "No background terminals to stop.";
+    }
+    await client.request("thread/backgroundTerminals/clean", { threadId });
+    return "Background terminals stopped.";
+  }
+
+  private async renameThread(args: string | undefined): Promise<string> {
+    const name = args?.trim();
+    if (!name) {
+      throw new Error("Usage: /rename <name>");
+    }
+    const { client, threadId } = await this.ensureNativeCommandClient();
+    if (!threadId) {
+      throw new Error("Codex thread is not available");
+    }
+    await client.request("thread/name/set", { threadId, name });
+    return `Thread renamed to ${name}.`;
+  }
+
+  private async logoutCodex(): Promise<string> {
+    if (this.activeForegroundTurnId) {
+      throw new Error("/logout is disabled while a task is in progress.");
+    }
+    const { client } = await this.ensureNativeCommandClient({ thread: false });
+    await client.request("account/logout", {});
+    return "Logged out of Codex.";
   }
 
   private async executeCompactCommand(): Promise<string | null> {
@@ -6831,6 +7493,7 @@ export class CodexAppServerAgentClient implements AgentClient {
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
   private goalsEnabledPromise: Promise<boolean> | null = null;
   private autoReviewEnabledPromise: Promise<boolean> | null = null;
+  private nativeCommandsEnabledPromise: Promise<boolean> | null = null;
 
   constructor(
     private readonly logger: Logger,
@@ -6900,6 +7563,27 @@ export class CodexAppServerAgentClient implements AgentClient {
     }
   }
 
+  private resolveNativeCommandsEnabled(): Promise<boolean> {
+    if (!this.nativeCommandsEnabledPromise) {
+      this.nativeCommandsEnabledPromise = (async () => {
+        try {
+          const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
+          const versionOutput = await resolveBinaryVersion(launchPrefix.command);
+          const enabled = codexVersionAtLeast(versionOutput, CODEX_NATIVE_COMMANDS_MIN_VERSION);
+          this.logger.trace(
+            { provider: CODEX_PROVIDER, versionOutput, enabled },
+            "provider.codex.config.native_commands_resolved",
+          );
+          return enabled;
+        } catch (error) {
+          this.logger.warn({ err: error }, "Failed to probe codex version for native command gate");
+          return false;
+        }
+      })();
+    }
+    return this.nativeCommandsEnabledPromise;
+  }
+
   private async spawnAppServer(
     launchEnv?: Record<string, string>,
     options?: { goalsEnabled?: boolean; agentId?: string },
@@ -6945,6 +7629,7 @@ export class CodexAppServerAgentClient implements AgentClient {
     const sessionConfig: AgentSessionConfig = { ...config, provider: CODEX_PROVIDER };
     const goalsEnabled = await this.resolveGoalsEnabled();
     const autoReviewEnabled = await this.resolveAutoReviewEnabled();
+    const nativeCommandsEnabled = await this.resolveNativeCommandsEnabled();
     const session = new CodexAppServerAgentSession(
       sessionConfig,
       null,
@@ -6956,6 +7641,8 @@ export class CodexAppServerAgentClient implements AgentClient {
       goalsEnabled,
       autoReviewEnabled,
       launchContext?.agentId,
+      "interactive",
+      nativeCommandsEnabled,
     );
     await session.connect();
     return session;
@@ -6976,6 +7663,7 @@ export class CodexAppServerAgentClient implements AgentClient {
     };
     const goalsEnabled = await this.resolveGoalsEnabled();
     const autoReviewEnabled = await this.resolveAutoReviewEnabled();
+    const nativeCommandsEnabled = await this.resolveNativeCommandsEnabled();
     const session = new CodexAppServerAgentSession(
       merged,
       handle,
@@ -6988,6 +7676,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       autoReviewEnabled,
       launchContext?.agentId,
       options?.purpose ?? "interactive",
+      nativeCommandsEnabled,
     );
     await session.connect();
     return session;
