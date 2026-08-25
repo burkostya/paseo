@@ -26,6 +26,7 @@ export type ShortcutAction =
   | { kind: "none" }
   | { kind: "dispatch"; action: KeyboardActionDefinition }
   | { kind: "navigate-workspace"; serverId: string; workspaceId: string }
+  | { kind: "navigate-workspace-history"; delta: 1 | -1 }
   | { kind: "navigate-last-workspace" }
   | { kind: "router-replace"; route: string }
   | { kind: "router-back" }
@@ -201,6 +202,10 @@ export function routeKeyboardShortcut(
       return routeWorkspaceNavigateIndex(input.payload, ctx);
     case "workspace.navigate.relative":
       return routeWorkspaceNavigateRelative(input.payload, ctx);
+    case "workspace.navigate.history":
+      return hasPayloadKey(input.payload, "delta")
+        ? { kind: "navigate-workspace-history", delta: input.payload.delta }
+        : NONE;
     case "message-input.action":
       return routeMessageInputAction(input.payload);
     case "agent.new":

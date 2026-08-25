@@ -217,6 +217,20 @@ describe("keyboard-shortcuts", () => {
       payload: { delta: 1 },
     },
     {
+      name: "matches Ctrl+Tab for the next recent workspace from terminal focus",
+      event: { key: "Tab", code: "Tab", ctrlKey: true },
+      context: { isDesktop: true, focusScope: "terminal" },
+      action: "workspace.navigate.history",
+      payload: { delta: 1 },
+    },
+    {
+      name: "matches Ctrl+Shift+Tab for the previous recent workspace from message input",
+      event: { key: "Tab", code: "Tab", ctrlKey: true, shiftKey: true },
+      context: { isDesktop: true, focusScope: "message-input" },
+      action: "workspace.navigate.history",
+      payload: { delta: -1 },
+    },
+    {
       name: "matches tab relative navigation via Alt+Shift+]",
       event: { key: "}", code: "BracketRight", altKey: true, shiftKey: true },
       action: "workspace.tab.navigate.relative",
@@ -452,6 +466,16 @@ describe("keyboard-shortcuts", () => {
       context: { isMac: true, isDesktop: true },
     },
     {
+      name: "does not capture Ctrl+Tab in a regular browser",
+      event: { key: "Tab", code: "Tab", ctrlKey: true },
+      context: { isDesktop: false },
+    },
+    {
+      name: "does not switch recent workspaces while command center is open",
+      event: { key: "Tab", code: "Tab", ctrlKey: true },
+      context: { isDesktop: true, commandCenterOpen: true, focusScope: "command-center" },
+    },
+    {
       name: "does not close tab with Ctrl+W on non-mac desktop when terminal is focused",
       event: { key: "w", code: "KeyW", ctrlKey: true },
       context: { isMac: false, isDesktop: true, focusScope: "terminal" },
@@ -653,6 +677,8 @@ describe("keyboard-shortcut help sections", () => {
         "new-workspace": ["mod", "N"],
         "workspace-tab-new": ["mod", "T"],
         "workspace-jump-index": ["mod", "1-9"],
+        "workspace-history-next": ["ctrl", "Tab"],
+        "workspace-history-prev": ["ctrl", "shift", "Tab"],
         "workspace-tab-jump-index": ["mod", "alt", "1-9"],
         // Derived from `combo: "Cmd+W"`, so the token is `mod` where the row
         // used to be hand-authored as `meta`. This binding is mac-only and

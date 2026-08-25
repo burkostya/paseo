@@ -3,9 +3,7 @@ import { allowPermission, waitForPermissionPrompt } from "../support/helpers/per
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 
 test.describe("Codex plan approval", () => {
-  test("shows a single actionable plan panel and removes it after implementation starts", async ({
-    page,
-  }) => {
+  test("shows a single actionable plan panel and keeps resolved plan history", async ({ page }) => {
     test.setTimeout(180_000);
 
     const session = await seedMockAgentWorkspace({
@@ -27,7 +25,8 @@ test.describe("Codex plan approval", () => {
       await expect(page.getByTestId("permission-plan-card")).toHaveCount(0, {
         timeout: 30_000,
       });
-      await expect(page.getByTestId("timeline-plan-card")).toHaveCount(0);
+      await expect(page.getByTestId("timeline-plan-card")).toHaveCount(1);
+      await expect(page.getByTestId("permission-plan-resolution")).toContainText("Approved");
     } finally {
       await session.cleanup();
     }

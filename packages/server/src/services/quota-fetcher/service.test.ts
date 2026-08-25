@@ -479,9 +479,13 @@ describe("real provider usage fetchers", () => {
       status: "available",
       planLabel: "Pro 1x",
       windows: expect.arrayContaining([
-        expect.objectContaining({ id: "five_hour", usedPct: 11 }),
-        expect.objectContaining({ id: "weekly", usedPct: 1 }),
-        expect.objectContaining({ id: "weekly_model_opus", usedPct: 0.5 }),
+        expect.objectContaining({ id: "five_hour", usedPct: 11, windowMinutes: 300 }),
+        expect.objectContaining({ id: "weekly", usedPct: 1, windowMinutes: 10_080 }),
+        expect.objectContaining({
+          id: "weekly_model_opus",
+          usedPct: 0.5,
+          windowMinutes: 10_080,
+        }),
       ]),
     });
     expect(fetchApi).toHaveBeenCalledWith(
@@ -598,8 +602,8 @@ describe("real provider usage fetchers", () => {
       status: "available",
       planLabel: "plus",
       windows: expect.arrayContaining([
-        expect.objectContaining({ id: "session", usedPct: 42 }),
-        expect.objectContaining({ id: "weekly", usedPct: 8 }),
+        expect.objectContaining({ id: "session", usedPct: 42, windowMinutes: 300 }),
+        expect.objectContaining({ id: "weekly", usedPct: 8, windowMinutes: 10_080 }),
       ]),
       balances: [expect.objectContaining({ id: "credits", remaining: 0 })],
     });
@@ -1309,6 +1313,33 @@ describe("real provider usage fetchers", () => {
         }),
       ]),
     });
+  });
+
+  it("refreshes one provider without fetching the rest", async () => {
+    const calls = { claude: 0, codex: 0 };
+    const makeFetcher = (providerId: "claude" | "codex"): ProviderUsageFetcher => ({
+      providerId,
+      displayName: providerId,
+      fetchUsage: async () => {
+        calls[providerId] += 1;
+        return {
+          providerId,
+          displayName: providerId,
+          status: "available",
+          planLabel: null,
+          windows: [],
+        };
+      },
+    });
+    const usageService = new ProviderUsageService({
+      logger: createLogger(),
+      fetchers: [makeFetcher("claude"), makeFetcher("codex")],
+    });
+
+    await usageService.listUsage();
+    await usageService.refreshProvider("codex");
+
+    expect(calls).toEqual({ claude: 1, codex: 2 });
   });
 });
 

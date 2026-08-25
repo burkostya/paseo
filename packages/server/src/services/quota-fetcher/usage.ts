@@ -52,6 +52,7 @@ export function windowFromUsedPct(input: {
   label: string;
   utilizationPct: number | null | undefined;
   resetsAt?: string | null;
+  windowMinutes?: number | null;
   tone?: ProviderUsageWindow["tone"];
 }): ProviderUsageWindow {
   const usedPct = typeof input.utilizationPct === "number" ? input.utilizationPct : null;
@@ -61,6 +62,7 @@ export function windowFromUsedPct(input: {
     usedPct,
     remainingPct: usedPct === null ? null : Math.max(0, 100 - usedPct),
     resetsAt: input.resetsAt ?? null,
+    ...(input.windowMinutes != null ? { windowMinutes: input.windowMinutes } : {}),
   };
   if (input.tone) {
     window.tone = input.tone;

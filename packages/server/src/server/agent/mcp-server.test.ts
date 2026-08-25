@@ -219,7 +219,7 @@ function buildAgentManagerSpies() {
     appendTimelineItem: vi.fn().mockResolvedValue(undefined),
     emitLiveTimelineItem: vi.fn().mockResolvedValue(undefined),
     hasInFlightRun: vi.fn().mockReturnValue(false),
-    tryRunOutOfBand: vi.fn().mockReturnValue(false),
+    resolveCommand: vi.fn(async (_agentId, prompt) => ({ handled: false as const, prompt })),
     subscribe: vi.fn().mockReturnValue(() => {}),
     streamAgent: vi.fn(() => (async function* noop() {})()),
     waitForAgentRunStart: vi.fn().mockResolvedValue(undefined),

@@ -123,6 +123,23 @@ describe("routeKeyboardShortcut — workspace.tab.navigate", () => {
   });
 });
 
+describe("routeKeyboardShortcut — workspace.navigate.history", () => {
+  it("forwards the MRU delta to the history navigator", () => {
+    expect(
+      routeKeyboardShortcut(
+        { action: "workspace.navigate.history", payload: { delta: 1 } },
+        makeCtx(),
+      ),
+    ).toEqual<ShortcutAction>({ kind: "navigate-workspace-history", delta: 1 });
+  });
+
+  it("returns none when the MRU delta is missing", () => {
+    expect(
+      routeKeyboardShortcut({ action: "workspace.navigate.history", payload: null }, makeCtx()),
+    ).toEqual<ShortcutAction>({ kind: "none" });
+  });
+});
+
 describe("routeKeyboardShortcut — workspace.navigate.index", () => {
   it("navigates to the sidebar target at index-1", () => {
     expect(

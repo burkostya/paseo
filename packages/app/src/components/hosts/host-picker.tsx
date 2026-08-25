@@ -1,13 +1,15 @@
 import { useCallback, useMemo, type ReactElement, type ReactNode } from "react";
-import { Pressable, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import type { GestureResponderEvent } from "react-native";
-import { Plus, Server, Settings } from "lucide-react-native";
+import { AlertTriangle, Plus, Server, Settings } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { useTranslation } from "react-i18next";
 import { HostStatusDot } from "@/components/host-status-dot";
 import { Combobox, ComboboxItem, type ComboboxProps } from "@/components/ui/combobox";
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import { useHostRuntimeSnapshot, type ActiveConnection } from "@/runtime/host-runtime";
 import { orderHostsLocalFirst } from "@/types/host-connection";
+import { useProviderUsageAlerts } from "@/provider-usage/alerts";
 import {
   ADD_HOST_OPTION_ID,
   ALL_HOSTS_OPTION_ID,
@@ -60,6 +62,7 @@ export interface HostPickerOptionProps {
   active: boolean;
   onPress: () => void;
   onOpenHostSettings?: (serverId: string) => void;
+  onOpenHostUsage?: (serverId: string) => void;
   testID?: string;
 }
 
@@ -71,15 +74,32 @@ export function HostPickerOption({
   active,
   onPress,
   onOpenHostSettings,
+  onOpenHostUsage,
   testID,
 }: HostPickerOptionProps): ReactElement {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
+  const usageAlerts = useProviderUsageAlerts(serverId);
+  const highestUsageAlert = usageAlerts[0] ?? null;
   const activeConnection = useHostRuntimeSnapshot(serverId)?.activeConnection ?? null;
   const connectionLabel =
     showActiveConnection && activeConnection
       ? formatActiveConnectionLabel(activeConnection)
       : undefined;
+  const usageLabel = highestUsageAlert
+    ? `${t("providerUsageAlerts.hostSummary", {
+        provider: highestUsageAlert.displayName,
+        window: highestUsageAlert.windowLabel,
+        percentage: Math.round(highestUsageAlert.usedPct),
+      })}${
+        usageAlerts.length > 1
+          ? ` ${t("providerUsageAlerts.additional", { count: usageAlerts.length - 1 })}`
+          : ""
+      }`
+    : undefined;
+  const description = [connectionLabel, usageLabel].filter(Boolean).join(" · ") || undefined;
   const leadingSlot = useMemo(() => <HostStatusDotSlot serverId={serverId} />, [serverId]);
+  const issueServerDataSet = useMemo(() => ({ issueServerId: serverId }), [serverId]);
   const handleSettingsPress = useCallback(
     (event: GestureResponderEvent) => {
       event.stopPropagation();
@@ -87,22 +107,60 @@ export function HostPickerOption({
     },
     [onOpenHostSettings, serverId],
   );
+  const handleUsagePress = useCallback(
+    (event: GestureResponderEvent) => {
+      event.stopPropagation();
+      onOpenHostUsage?.(serverId);
+    },
+    [onOpenHostUsage, serverId],
+  );
   const trailingSlot = useMemo(() => {
-    if (!onOpenHostSettings) return undefined;
+    if (!onOpenHostSettings && !(highestUsageAlert && onOpenHostUsage)) return undefined;
     return (
-      <Pressable
-        onPress={handleSettingsPress}
-        hitSlop={8}
-        accessibilityRole="button"
-        accessibilityLabel={`Open ${label} settings`}
-      >
-        <Settings size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-      </Pressable>
+      <View style={styles.trailingRow}>
+        {highestUsageAlert && onOpenHostUsage ? (
+          <Pressable
+            onPress={handleUsagePress}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel={t("providerUsageAlerts.openUsage", { host: label })}
+            style={styles.usageBadge}
+            testID={`host-usage-alert-${serverId}`}
+          >
+            <AlertTriangle
+              size={12}
+              color={
+                highestUsageAlert.thresholdPct >= 90
+                  ? theme.colors.statusDanger
+                  : theme.colors.statusWarning
+              }
+            />
+            <Text style={styles.usageBadgeText}>{Math.round(highestUsageAlert.usedPct)}%</Text>
+          </Pressable>
+        ) : null}
+        {onOpenHostSettings ? (
+          <Pressable
+            onPress={handleSettingsPress}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel={`Open ${label} settings`}
+          >
+            <Settings size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+          </Pressable>
+        ) : null}
+      </View>
     );
   }, [
     handleSettingsPress,
+    handleUsagePress,
+    highestUsageAlert,
     label,
     onOpenHostSettings,
+    onOpenHostUsage,
+    serverId,
+    t,
+    theme.colors.statusDanger,
+    theme.colors.statusWarning,
     theme.colors.foregroundMuted,
     theme.iconSize.sm,
   ]);
@@ -110,13 +168,14 @@ export function HostPickerOption({
   return (
     <ComboboxItem
       label={label}
-      description={connectionLabel}
+      description={description}
       leadingSlot={leadingSlot}
       trailingSlot={trailingSlot}
       selected={selected}
       active={active}
       onPress={onPress}
       testID={testID}
+      dataSet={issueServerDataSet}
     />
   );
 }
@@ -174,6 +233,7 @@ export interface HostPickerProps {
   onEnableBuiltInDaemon?: () => void;
   showActiveConnection?: boolean;
   onOpenHostSettings?: (serverId: string) => void;
+  onOpenHostUsage?: (serverId: string) => void;
   searchable?: boolean;
   title?: string;
   desktopPlacement?: ComboboxProps["desktopPlacement"];
@@ -197,6 +257,7 @@ export function HostPicker({
   onEnableBuiltInDaemon,
   showActiveConnection,
   onOpenHostSettings,
+  onOpenHostUsage,
   searchable,
   title,
   desktopPlacement = "bottom-start",
@@ -246,6 +307,13 @@ export function HostPicker({
     },
     [onOpenHostSettings, onOpenChange],
   );
+  const handleOpenHostUsage = useCallback(
+    (serverId: string) => {
+      onOpenHostUsage?.(serverId);
+      onOpenChange(false);
+    },
+    [onOpenHostUsage, onOpenChange],
+  );
 
   const renderOption = useCallback<RenderHostOption>(
     ({ option, selected, active, onPress }) => {
@@ -284,6 +352,7 @@ export function HostPicker({
           active={active}
           onPress={onPress}
           onOpenHostSettings={onOpenHostSettings ? handleOpenHostSettings : undefined}
+          onOpenHostUsage={onOpenHostUsage ? handleOpenHostUsage : undefined}
           testID={hostOptionTestID?.(option.id)}
         />
       );
@@ -292,6 +361,8 @@ export function HostPicker({
       addHostTestID,
       hostOptionTestID,
       onOpenHostSettings,
+      onOpenHostUsage,
+      handleOpenHostUsage,
       showActiveConnection,
       handleOpenHostSettings,
     ],
@@ -324,5 +395,20 @@ const styles = StyleSheet.create((theme) => ({
     height: theme.iconSize.sm,
     alignItems: "center",
     justifyContent: "center",
+  },
+  trailingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  usageBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+  },
+  usageBadgeText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
   },
 }));

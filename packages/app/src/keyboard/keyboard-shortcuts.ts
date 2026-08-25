@@ -164,6 +164,8 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
     "new-agent",
     "new-workspace",
     "workspace-jump-index",
+    "workspace-history-next",
+    "workspace-history-prev",
     "workspace-prev",
     "workspace-next",
     "pin-workspace",
@@ -218,6 +220,8 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "workspace-tab-jump-index": "settings.shortcuts.help.jumpToTab",
   "workspace-prev": "settings.shortcuts.help.previousWorkspace",
   "workspace-next": "settings.shortcuts.help.nextWorkspace",
+  "workspace-history-next": "settings.shortcuts.help.nextRecentWorkspace",
+  "workspace-history-prev": "settings.shortcuts.help.previousRecentWorkspace",
   "workspace-tab-prev": "settings.shortcuts.help.previousTab",
   "workspace-tab-next": "settings.shortcuts.help.nextTab",
   "workspace-pane-split-right": "settings.shortcuts.help.splitPaneRight",
@@ -614,6 +618,30 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   },
 
   // --- Workspace relative navigation ---
+  {
+    id: "workspace-navigate-history-ctrl-tab-desktop",
+    action: "workspace.navigate.history",
+    combo: "Ctrl+Tab",
+    when: { desktop: true, commandCenter: false },
+    payload: { type: "delta", delta: 1 },
+    help: {
+      id: "workspace-history-next",
+      section: "workspaces",
+      label: "Next recent workspace",
+    },
+  },
+  {
+    id: "workspace-navigate-history-ctrl-shift-tab-desktop",
+    action: "workspace.navigate.history",
+    combo: "Ctrl+Shift+Tab",
+    when: { desktop: true, commandCenter: false },
+    payload: { type: "delta", delta: -1 },
+    help: {
+      id: "workspace-history-prev",
+      section: "workspaces",
+      label: "Previous recent workspace",
+    },
+  },
   {
     id: "workspace-navigate-relative-cmd-left-mac",
     action: "workspace.navigate.relative",

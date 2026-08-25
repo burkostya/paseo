@@ -12,6 +12,8 @@ import {
 
 import type { WindowState, WindowStateStore } from "../settings/window-state.js";
 import type { DesktopWindowChromeMode } from "./chrome.js";
+import { createSwayCommandRunner, SwayWindowAttentionController } from "./sway-window-attention.js";
+import { WindowAttentionManager } from "./window-attention-manager.js";
 
 const WINDOW_STATE_SAVE_DEBOUNCE_MS = 400;
 const MAC_TRAFFIC_LIGHT_POSITION = { x: 16, y: 14 } as const;
@@ -23,6 +25,31 @@ export function readBadgeCount(input: unknown): number {
   }
 
   return input;
+}
+
+export function readWindowAttentionRequested(input: unknown): boolean | null {
+  return typeof input === "boolean" ? input : null;
+}
+
+let windowAttentionManager: WindowAttentionManager | null = null;
+
+function getWindowAttentionManager(): WindowAttentionManager {
+  if (windowAttentionManager) {
+    return windowAttentionManager;
+  }
+
+  const swayRunner = createSwayCommandRunner();
+  const sway = swayRunner
+    ? new SwayWindowAttentionController({
+        runner: swayRunner,
+        warn: (message, error) => console.warn(message, error),
+      })
+    : null;
+  windowAttentionManager = new WindowAttentionManager({
+    sway,
+    warn: (message, error) => console.warn(message, error),
+  });
+  return windowAttentionManager;
 }
 
 export type WindowTheme = "light" | "dark";
@@ -193,6 +220,18 @@ export function registerWindowManager(input: { mode: DesktopWindowChromeMode }):
     }
   });
 
+  ipcMain.handle("paseo:window:setAttention", (event, active?: unknown) => {
+    const requested = readWindowAttentionRequested(active);
+    if (requested === null) {
+      return;
+    }
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) {
+      return;
+    }
+    getWindowAttentionManager().setRequested(win, requested);
+  });
+
   ipcMain.handle("paseo:window:updateChrome", (event, update?: unknown) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) {
@@ -211,6 +250,30 @@ export function registerWindowManager(input: { mode: DesktopWindowChromeMode }):
     if (input.mode === "native-mac") {
       applyMacWindowControlsUpdate({ win, update: nextUpdate });
     }
+  });
+}
+
+export function setupWindowAttentionEvents(win: BrowserWindow): void {
+  const manager = getWindowAttentionManager();
+  manager.registerWindow(win);
+
+  win.on("focus", () => {
+    manager.handleFocus(win);
+  });
+  win.on("blur", () => {
+    manager.handleBlur(win);
+  });
+  win.on("closed", () => {
+    manager.unregisterWindow(win);
+  });
+
+  win.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
+    if (isMainFrame && !isInPlace) {
+      manager.resetRenderer(win);
+    }
+  });
+  win.webContents.on("render-process-gone", () => {
+    manager.resetRenderer(win);
   });
 }
 

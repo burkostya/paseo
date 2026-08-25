@@ -23,6 +23,7 @@ export interface BrowserShortcutInput {
   control: boolean;
   key: string;
   meta: boolean;
+  phase: "keydown" | "keyup";
   repeat: boolean;
   shift: boolean;
 }
@@ -119,7 +120,8 @@ export function parseBrowserShortcutInput(value: unknown): BrowserShortcutInput 
     typeof value.alt !== "boolean" ||
     typeof value.control !== "boolean" ||
     typeof value.meta !== "boolean" ||
-    typeof value.shift !== "boolean"
+    typeof value.shift !== "boolean" ||
+    (value.phase !== undefined && value.phase !== "keydown" && value.phase !== "keyup")
   ) {
     return null;
   }
@@ -130,6 +132,7 @@ export function parseBrowserShortcutInput(value: unknown): BrowserShortcutInput 
     control: value.control,
     key: value.key,
     meta: value.meta,
+    phase: value.phase === "keyup" ? "keyup" : "keydown",
     repeat: value.repeat === true,
     shift: value.shift,
   };
