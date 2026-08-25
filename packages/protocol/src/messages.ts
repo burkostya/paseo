@@ -80,6 +80,7 @@ import {
   BrowserAutomationExecuteResponseSchema,
 } from "./browser-automation/rpc-schemas.js";
 import { BrowserAutomationHostCapabilitySchema } from "./browser-automation/capabilities.js";
+import { IssueTrackerConfigSchema } from "./issue-trackers.js";
 import {
   PaseoConfigRawSchema,
   PaseoLifecycleCommandRawSchema,
@@ -110,6 +111,7 @@ export {
   type PaseoScriptEntryRaw,
   type ProjectConfigRpcError,
 };
+export { IssueTrackerConfigSchema, type IssueTrackerConfig } from "./issue-trackers.js";
 // ---------------------------------------------------------------------------
 // Mutable daemon config schemas (shared between server store and client)
 // ---------------------------------------------------------------------------
@@ -207,6 +209,7 @@ export const MutableDaemonConfigSchema = z
     skills: z.object({ selection: AgentSkillSelectionSchema.optional() }).strict().optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
+    issueTrackers: z.array(IssueTrackerConfigSchema).optional(),
   })
   .passthrough();
 
@@ -227,6 +230,7 @@ export const MutableDaemonConfigPatchSchema = z
     agentProfiles: z.array(AgentProfileSchema).optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
+    issueTrackers: z.array(IssueTrackerConfigSchema).optional(),
   })
   .partial()
   .passthrough();
@@ -3716,6 +3720,12 @@ export const ServerInfoStatusPayloadSchema = z
         agentProfiles: z.boolean().optional(),
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: z.boolean().optional(),
+        // COMPAT(providerUsageWarnings): added in the v0.1.109 fork, remove after 2027-01-16.
+        providerUsageWarnings: z.boolean().optional(),
+        // COMPAT(issueLinks): added in the v0.1.109 fork, remove after 2027-01-16.
+        issueLinks: z.boolean().optional(),
+        // COMPAT(checkoutDiffBaseSelection): added in the v0.1.109 fork, remove after 2027-01-16.
+        checkoutDiffBaseSelection: z.boolean().optional(),
       })
       .optional(),
   })
@@ -3822,6 +3832,32 @@ export const PluginSettingsChangedStatusPayloadSchema = z.object({
   settingsId: z.string(),
 });
 
+export const ProviderUsageAlertSchema = z.object({
+  providerId: z.string(),
+  displayName: z.string(),
+  windowId: z.string(),
+  windowLabel: z.string(),
+  windowMinutes: z.number(),
+  usedPct: z.number(),
+  thresholdPct: z.number(),
+  resetsAt: z.string().nullable().optional(),
+  observedAt: z.string(),
+});
+
+export const ProviderUsageAlertsChangedStatusPayloadSchema = z
+  .object({
+    status: z.literal("provider.usage.alerts.changed"),
+    alerts: z.array(ProviderUsageAlertSchema),
+    shouldNotify: z.boolean().optional(),
+    notification: z
+      .object({
+        title: z.string(),
+        body: z.string().optional(),
+        data: z.record(z.string(), z.unknown()).optional(),
+      })
+      .optional(),
+  })
+  .passthrough();
 export const KnownStatusPayloadSchema = z.discriminatedUnion("status", [
   AgentCreatedStatusPayloadSchema,
   AgentCreateFailedStatusPayloadSchema,
@@ -3832,6 +3868,7 @@ export const KnownStatusPayloadSchema = z.discriminatedUnion("status", [
   DaemonConfigChangedStatusPayloadSchema,
   PluginCatalogChangedStatusPayloadSchema,
   PluginSettingsChangedStatusPayloadSchema,
+  ProviderUsageAlertsChangedStatusPayloadSchema,
 ]);
 
 export type KnownStatusPayload = z.infer<typeof KnownStatusPayloadSchema>;
@@ -6213,6 +6250,7 @@ export const ProviderUsageWindowSchema = z.object({
   resetsAt: z.string().nullable().optional(),
   runsOutAt: z.string().nullable().optional(),
   shortfallPct: z.number().nullable().optional(),
+  windowMinutes: z.number().nullable().optional(),
   tone: ProviderUsageToneSchema.optional(),
 });
 
@@ -7185,6 +7223,7 @@ export type UsageListReportsResponseMessage = z.infer<typeof UsageListReportsRes
 export type ProviderUsageStatus = z.infer<typeof ProviderUsageStatusSchema>;
 export type ProviderUsage = z.infer<typeof ProviderUsageSchema>;
 export type ProviderUsageWindow = z.infer<typeof ProviderUsageWindowSchema>;
+export type ProviderUsageAlert = z.infer<typeof ProviderUsageAlertSchema>;
 export type ProviderUsageBalance = z.infer<typeof ProviderUsageBalanceSchema>;
 export type ProviderUsageDetail = z.infer<typeof ProviderUsageDetailSchema>;
 export type ProviderUsageListResponseMessage = z.infer<

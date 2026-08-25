@@ -14,6 +14,7 @@ describe("resolveNotificationTarget", () => {
       agentId: "agent-456",
       workspaceId: null,
       terminalId: null,
+      settingsSection: null,
     });
   });
 
@@ -23,12 +24,14 @@ describe("resolveNotificationTarget", () => {
       agentId: null,
       workspaceId: null,
       terminalId: null,
+      settingsSection: null,
     });
     expect(resolveNotificationTarget(undefined)).toEqual({
       serverId: null,
       agentId: null,
       workspaceId: null,
       terminalId: null,
+      settingsSection: null,
     });
   });
 
@@ -44,6 +47,7 @@ describe("resolveNotificationTarget", () => {
       agentId: "agent-1",
       workspaceId: null,
       terminalId: null,
+      settingsSection: null,
     });
   });
 });
@@ -85,6 +89,12 @@ describe("buildNotificationRoute", () => {
 
   it("falls back to host root when only serverId is present", () => {
     expect(buildNotificationRoute({ serverId: "srv-only" })).toBe("/h/srv-only");
+  });
+
+  it("routes provider usage notifications to host usage settings", () => {
+    expect(buildNotificationRoute({ serverId: "srv-1", settingsSection: "usage" })).toBe(
+      "/settings/hosts/srv-1/usage",
+    );
   });
 
   it("falls back to root when no server id is present", () => {
