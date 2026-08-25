@@ -3,7 +3,11 @@ import { getIsElectronRuntimeMac } from "@/constants/layout";
 import { useAggregatedAgents } from "./use-aggregated-agents";
 import { getDesktopHost } from "@/desktop/host";
 import { useWorkspaceStatusesForBadges } from "@/stores/session-store-hooks";
-import { deriveMacDockBadgeCountFromWorkspaceStatuses } from "@/utils/desktop-badge-state";
+import {
+  deriveDesktopWindowAttentionFromWorkspaceStatuses,
+  deriveMacDockBadgeCountFromWorkspaceStatuses,
+} from "@/utils/desktop-badge-state";
+import { desktopWindowAttentionReporter } from "@/utils/desktop-window-attention";
 import { isNative } from "@/constants/platform";
 
 type FaviconStatus = "none" | "running" | "attention";
@@ -124,5 +128,9 @@ export function useFaviconStatus() {
       lastDockBadgeCountRef.current = dockBadgeCount;
       void updateMacDockBadge(dockBadgeCount);
     }
+
+    desktopWindowAttentionReporter.report(
+      deriveDesktopWindowAttentionFromWorkspaceStatuses(workspaceStatuses),
+    );
   }, [agents, colorScheme, workspaceStatuses]);
 }

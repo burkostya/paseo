@@ -16,8 +16,14 @@ import {
 } from "./navigation";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import {
+  createWorkspaceNavigationHistoryStore,
+  WORKSPACE_NAVIGATION_HISTORY_STORAGE_KEY,
+} from "@/stores/workspace-navigation-history";
 import { stripHostWorkspaceRouteEchoSearchFromBrowserUrlAfterCommit } from "@/utils/host-route-browser";
 import { navigateToHostWorkspaceRoute } from "@/navigation/workspace-route-navigation";
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
+import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 
 export type { ActiveWorkspaceSelection } from "@/stores/last-workspace-selection";
 export type { NavigateToWorkspaceInput } from "./navigation";
@@ -31,6 +37,32 @@ const lastWorkspaceSelectionStorage: LastWorkspaceSelectionStorage = {
 const lastWorkspaceSelectionStore = createLastWorkspaceSelectionStore(
   lastWorkspaceSelectionStorage,
 );
+
+const workspaceNavigationHistoryStore = createWorkspaceNavigationHistoryStore({
+  read: () => AsyncStorage.getItem(WORKSPACE_NAVIGATION_HISTORY_STORAGE_KEY),
+  write: (value) => AsyncStorage.setItem(WORKSPACE_NAVIGATION_HISTORY_STORAGE_KEY, value),
+});
+
+function isWorkspaceNavigationTargetAvailable(selection: ActiveWorkspaceSelection): boolean {
+  const hostRuntime = getHostRuntimeStore();
+  if (
+    hostRuntime.isHostRegistryLoaded() &&
+    !hostRuntime.getHosts().some((host) => host.serverId === selection.serverId)
+  ) {
+    return false;
+  }
+
+  const session = useSessionStore.getState().sessions[selection.serverId];
+  if (!session?.hasHydratedWorkspaces) {
+    return true;
+  }
+  return (
+    resolveWorkspaceMapKeyByIdentity({
+      workspaces: session.workspaces,
+      workspaceId: selection.workspaceId,
+    }) !== null
+  );
+}
 
 function navigateDeps(): NavigateToWorkspaceDeps {
   return {
@@ -70,6 +102,26 @@ export function navigateToLastWorkspace(): boolean {
   });
 }
 
+export function navigateWorkspaceHistory(
+  delta: 1 | -1,
+  current: ActiveWorkspaceSelection | null,
+): ActiveWorkspaceSelection | null {
+  const target = workspaceNavigationHistoryStore.advance({
+    current,
+    delta,
+    isAvailable: isWorkspaceNavigationTargetAvailable,
+  });
+  if (!target) {
+    return null;
+  }
+  navigateToWorkspacePure(target, navigateDeps());
+  return target;
+}
+
+export function commitWorkspaceNavigationHistoryCycle(): void {
+  workspaceNavigationHistoryStore.commitCycle();
+}
+
 export function useActiveWorkspaceSelection(): ActiveWorkspaceSelection | null {
   const params = useLocalSearchParams<{
     serverId?: string | string[];
@@ -82,7 +134,9 @@ export function useActiveWorkspaceSelection(): ActiveWorkspaceSelection | null {
     if (!serverId || !workspaceId) {
       return;
     }
-    lastWorkspaceSelectionStore.remember({ serverId, workspaceId });
+    const observedSelection = { serverId, workspaceId };
+    lastWorkspaceSelectionStore.remember(observedSelection);
+    workspaceNavigationHistoryStore.observe(observedSelection);
   }, [serverId, workspaceId]);
   return selection;
 }
@@ -104,3 +158,4 @@ export function useIsLastWorkspaceSelectionHydrated(): boolean {
 }
 
 void hydrateLastWorkspaceSelection();
+void workspaceNavigationHistoryStore.hydrate();
