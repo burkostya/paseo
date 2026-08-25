@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
+  buildDiffBaseSelectionKey,
   clampTreeRailWidth,
   clampSidebarWidth,
   DEFAULT_TREE_RAIL_WIDTH,
@@ -12,6 +13,7 @@ import {
   MIN_SIDEBAR_WIDTH,
   migratePanelState,
   PanelPersistedStateSchema,
+  setDiffBaseRefInState,
   selectIsAgentListOpen,
   selectIsCompactFileExplorerOpen,
   setMobilePanelTarget,
@@ -25,12 +27,14 @@ import { isWeb } from "@/constants/platform";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 export type {
   DesktopSidebarState,
+  DiffBaseSelectionScope,
   MobilePanelView,
   MobilePanelSelection,
   PanelLayoutInput,
   SortOption,
 } from "./state";
 export {
+  buildDiffBaseSelectionKey,
   DEFAULT_TREE_RAIL_WIDTH,
   DEFAULT_SIDEBAR_WIDTH,
   MAX_TREE_RAIL_WIDTH,
@@ -59,6 +63,7 @@ export interface PanelState {
   // folders stay expanded as the diff changes.
   diffCollapsedFoldersByWorkspace: Record<string, string[]>;
   collapsedFilePathsByWorkspace: Record<string, string[]>;
+  diffBaseRefByWorkspace: Record<string, string>;
   sidebarWidth: number;
   explorerSortOption: SortOption;
   explorerShowHiddenFiles: boolean;
@@ -85,6 +90,7 @@ export interface PanelState {
   setExpandedPathsForWorkspace: (workspaceKey: string, paths: ExpandedPathsUpdate) => void;
   setDiffCollapsedFoldersForWorkspace: (workspaceKey: string, dirPaths: string[]) => void;
   setCollapsedFilePathsForWorkspace: (workspaceKey: string, paths: string[]) => void;
+  setDiffBaseRefForWorkspace: (workspaceKey: string, baseRef: string | null) => void;
   setSidebarWidth: (width: number) => void;
   setExplorerSortOption: (option: SortOption) => void;
   toggleExplorerShowHiddenFiles: () => void;
@@ -118,6 +124,7 @@ export const usePanelStore = create<PanelState>()(
       expandedPathsByWorkspace: {},
       diffCollapsedFoldersByWorkspace: {},
       collapsedFilePathsByWorkspace: {},
+      diffBaseRefByWorkspace: {},
       sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
       explorerSortOption: "name",
       explorerShowHiddenFiles: true,
@@ -229,6 +236,14 @@ export const usePanelStore = create<PanelState>()(
             [workspaceKey]: paths,
           },
         })),
+      setDiffBaseRefForWorkspace: (workspaceKey, baseRef) =>
+        set((state) => ({
+          diffBaseRefByWorkspace: setDiffBaseRefInState(
+            state.diffBaseRefByWorkspace,
+            workspaceKey,
+            baseRef,
+          ),
+        })),
       setSidebarWidth: (width) => set({ sidebarWidth: clampSidebarWidth(width) }),
       setExplorerSortOption: (option) => set({ explorerSortOption: option }),
       toggleExplorerShowHiddenFiles: () =>
@@ -246,6 +261,7 @@ export const usePanelStore = create<PanelState>()(
         expandedPathsByWorkspace: state.expandedPathsByWorkspace,
         diffCollapsedFoldersByWorkspace: state.diffCollapsedFoldersByWorkspace,
         collapsedFilePathsByWorkspace: state.collapsedFilePathsByWorkspace,
+        diffBaseRefByWorkspace: state.diffBaseRefByWorkspace,
         sidebarWidth: state.sidebarWidth,
         explorerSortOption: state.explorerSortOption,
         explorerShowHiddenFiles: state.explorerShowHiddenFiles,

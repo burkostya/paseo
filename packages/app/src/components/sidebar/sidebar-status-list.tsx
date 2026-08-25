@@ -809,6 +809,10 @@ function StatusWorkspaceRowInnerContent({
 
   const isDesktop = !isTouchPlatform;
   const serviceSummary = isDesktop ? selectWorkspaceServiceSummary(workspace.scripts) : null;
+  const issueServerDataSet = useMemo(
+    () => ({ issueServerId: workspace.serverId }),
+    [workspace.serverId],
+  );
 
   const accessibilityState = useMemo(() => ({ selected }), [selected]);
   const didLongPressRef = dragInteraction?.didLongPressRef;
@@ -866,6 +870,7 @@ function StatusWorkspaceRowInnerContent({
             {...dragHandleProps?.listeners}
             ref={dragHandleProps?.setActivatorNodeRef as unknown as Ref<View>}
             style={styles.workspaceRowContainer}
+            dataSet={issueServerDataSet}
             {...hoverHandlers}
           >
             <SidebarWorkspaceContextMenu

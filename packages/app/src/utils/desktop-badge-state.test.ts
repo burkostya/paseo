@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  deriveDesktopWindowAttentionFromWorkspaceStatuses,
   deriveMacDockBadgeCountFromWorkspaceStatuses,
   isWorkspaceActionableForDesktopBadge,
 } from "./desktop-badge-state";
@@ -30,5 +31,12 @@ describe("desktop-badge-state", () => {
         "failed",
       ]),
     ).toBe(3);
+  });
+
+  it("derives desktop window attention from the same actionable statuses", () => {
+    expect(deriveDesktopWindowAttentionFromWorkspaceStatuses(["done", "running"])).toBe(false);
+    expect(deriveDesktopWindowAttentionFromWorkspaceStatuses(["done", "attention"])).toBe(true);
+    expect(deriveDesktopWindowAttentionFromWorkspaceStatuses(["needs_input"])).toBe(true);
+    expect(deriveDesktopWindowAttentionFromWorkspaceStatuses(["failed"])).toBe(true);
   });
 });

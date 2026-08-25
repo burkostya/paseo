@@ -123,6 +123,18 @@ then lose the query parameter. Internal navigation does not use the query as a
 handoff. Read matched route params locally; global search params let retained
 workspace screens observe requests for other workspaces.
 
+## Workspace Navigation History
+
+The persisted MRU workspace history is separate from the single remembered
+workspace used for startup restore. Route observations record ordinary visits,
+while a held `Ctrl+Tab` cycle uses a frozen history snapshot. Its intermediate
+route previews must not reorder history; only the selection committed when the
+modifier is released moves to the front.
+
+History entries span registered hosts. A workspace is removed from navigation
+only after its host has hydrated workspaces and confirmed that it is missing;
+offline or not-yet-hydrated hosts remain eligible for later reconnects.
+
 ## Params
 
 Required dynamic params belong to the matched route.

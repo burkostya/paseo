@@ -2452,23 +2452,28 @@ export class AgentManager {
     };
   }
 
-  /**
-   * Try to run a prompt out-of-band — i.e. without allocating a foreground turn
-   * and without canceling any active turn. Returns true when the session
-   * accepted the prompt as a side-effect command (e.g. /goal pause). Events
-   * emitted by the handler flow through dispatchStream so they persist and
-   * broadcast like normal timeline events.
-   */
-  tryRunOutOfBand(agentId: string, prompt: AgentPromptInput, options?: AgentRunOptions): boolean {
+  /** Resolve provider-native commands before a foreground run is allocated. */
+  async resolveCommand(
+    agentId: string,
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions,
+  ): Promise<{ handled: true } | { handled: false; prompt: AgentPromptInput }> {
     const agent = this.requireSessionAgent(agentId);
-    // Providers parse slash commands from the raw text, so a command another agent sent
-    // must reach them without its sender envelope.
+    const resolution = await agent.session.resolveCommand?.(prompt);
+    if (resolution?.kind === "foreground") {
+      return { handled: false, prompt: resolution.prompt };
+    }
+    // Provider side-effect commands parse raw text. Agent-originated prompts keep
+    // their envelope for normal runs, but out-of-band handlers consume its body.
     const agentMessage = typeof prompt === "string" ? parseAgentMessage(prompt) : null;
-    const handler = agent.session.tryHandleOutOfBand?.(
-      agentMessage?.source ? agentMessage.text : prompt,
-    );
+    const handler =
+      resolution?.kind === "handled"
+        ? resolution
+        : (agent.session.tryHandleOutOfBand?.(
+            agentMessage?.source ? agentMessage.text : prompt,
+          ) ?? null);
     if (!handler) {
-      return false;
+      return { handled: false, prompt };
     }
     if (options?.clientMessageId) {
       this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "accepted");
@@ -2501,7 +2506,7 @@ export class AgentManager {
         });
       }
     })();
-    return true;
+    return { handled: true };
   }
 
   async appendTimelineItem(

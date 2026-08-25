@@ -48,6 +48,37 @@ const permissionEvent = (): AgentStreamEventPayload => ({
   },
 });
 
+const planPermissionEvent = (): AgentStreamEventPayload => ({
+  type: "permission_requested",
+  provider: "codex",
+  request: {
+    id: "plan-1",
+    provider: "codex",
+    name: "CodexPlanApproval",
+    kind: "plan",
+    input: { plan: "- Do the work" },
+  },
+});
+
+const planPermissionResolvedEvent = (behavior: "allow" | "deny"): AgentStreamEventPayload => ({
+  type: "permission_resolved",
+  provider: "codex",
+  requestId: "plan-1",
+  resolution:
+    behavior === "allow"
+      ? { behavior: "allow", selectedActionId: "accept" }
+      : { behavior: "deny", selectedActionId: "reject", message: "Denied by user" },
+});
+
+const userMessage = (text: string): AgentStreamEventPayload => ({
+  type: "timeline",
+  provider: "codex",
+  item: {
+    type: "user_message",
+    text,
+  },
+});
+
 const reasoningChunk = (text: string): AgentStreamEventPayload => ({
   type: "timeline",
   provider: "claude",
@@ -198,5 +229,103 @@ describe("applyStreamEvent", () => {
     expect(result.head).toBe(head);
     expect(result.changedTail).toBe(false);
     expect(result.changedHead).toBe(false);
+  });
+
+  it("creates a timeline item for plan permission requests", () => {
+    const result = applyStreamEvent({
+      tail: [],
+      head: [],
+      event: planPermissionEvent(),
+      timestamp: baseTimestamp,
+    });
+
+    expect(result.head).toHaveLength(0);
+    expect(result.tail).toHaveLength(1);
+    expect(result.tail[0]).toMatchObject({
+      kind: "permission_plan",
+      id: "permission_plan_plan-1",
+      request: {
+        id: "plan-1",
+        kind: "plan",
+        input: { plan: "- Do the work" },
+      },
+    });
+  });
+
+  it("keeps a rejected plan permission visible as resolved history", () => {
+    let result = applyStreamEvent({
+      tail: [],
+      head: [],
+      event: planPermissionEvent(),
+      timestamp: baseTimestamp,
+    });
+    result = applyStreamEvent({
+      tail: result.tail,
+      head: result.head,
+      event: planPermissionResolvedEvent("deny"),
+      timestamp: new Date(1),
+    });
+
+    expect(result.tail).toHaveLength(1);
+    const item = result.tail[0];
+    if (!item || item.kind !== "permission_plan") {
+      throw new Error("Expected permission plan item");
+    }
+    expect(item.kind).toBe("permission_plan");
+    expect(item.resolution).toEqual({
+      behavior: "deny",
+      selectedActionId: "reject",
+      message: "Denied by user",
+    });
+  });
+
+  it("keeps an approved plan permission visible as resolved history", () => {
+    let result = applyStreamEvent({
+      tail: [],
+      head: [],
+      event: planPermissionEvent(),
+      timestamp: baseTimestamp,
+    });
+    result = applyStreamEvent({
+      tail: result.tail,
+      head: result.head,
+      event: planPermissionResolvedEvent("allow"),
+      timestamp: new Date(1),
+    });
+
+    expect(result.tail).toHaveLength(1);
+    const item = result.tail[0];
+    if (!item || item.kind !== "permission_plan") {
+      throw new Error("Expected permission plan item");
+    }
+    expect(item.kind).toBe("permission_plan");
+    expect(item.resolution).toEqual({
+      behavior: "allow",
+      selectedActionId: "accept",
+    });
+  });
+
+  it("orders follow-up messages after an unresolved plan permission", () => {
+    let result = applyStreamEvent({
+      tail: [],
+      head: [],
+      event: planPermissionEvent(),
+      timestamp: baseTimestamp,
+    });
+    result = applyStreamEvent({
+      tail: result.tail,
+      head: result.head,
+      event: userMessage("Continue without choosing."),
+      timestamp: new Date(1),
+    });
+    result = applyStreamEvent({
+      tail: result.tail,
+      head: result.head,
+      event: assistantChunk("Working on it."),
+      timestamp: new Date(2),
+    });
+
+    expect(result.tail.map((item) => item.kind)).toEqual(["permission_plan", "user_message"]);
+    expect(result.head.map((item) => item.kind)).toEqual(["assistant_message"]);
   });
 });
