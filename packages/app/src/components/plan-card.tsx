@@ -1,8 +1,10 @@
-import { useMemo, type ReactNode } from "react";
+import { useCallback, useMemo, type ReactNode } from "react";
 import { Text, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
 import Markdown, { type ASTNode } from "react-native-markdown-display";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
+import { CopyButton } from "@/components/copy-button";
+import { copyToClipboard } from "@/utils/copy-to-clipboard";
 import { getMarkdownListMarker } from "@/utils/markdown-list";
 import { createMarkdownParser } from "@/utils/markdown-parser";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
@@ -202,6 +204,8 @@ export function PlanCard({
   );
   const markdownRules = createPlanMarkdownRules();
   const resolvedTitle = title ?? t("agentStream.permission.plan");
+  const getPlanContent = useCallback(() => text, [text]);
+  const handleCopyPlan = useCallback((content: string) => copyToClipboard(content), []);
 
   const containerStyle = useMemo(
     () => [
@@ -225,7 +229,15 @@ export function PlanCard({
 
   return (
     <View testID={testID} style={containerStyle}>
-      <Text style={titleStyle}>{resolvedTitle}</Text>
+      <View style={styles.header}>
+        <Text style={titleStyle}>{resolvedTitle}</Text>
+        <CopyButton
+          testID="plan-copy-button"
+          getContent={getPlanContent}
+          onCopy={handleCopyPlan}
+          accessibilityLabel={t("message.actions.copyPlan")}
+        />
+      </View>
       {description ? <Text style={descriptionStyle}>{description}</Text> : null}
       <Markdown
         style={markdownStyles}
@@ -250,9 +262,16 @@ const styles = StyleSheet.create((theme) => ({
   containerCompact: {
     marginVertical: 0,
   },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing[2],
+  },
   title: {
     fontSize: theme.fontSize.base,
     lineHeight: 22,
+    flexShrink: 1,
   },
   description: {
     fontSize: theme.fontSize.base,

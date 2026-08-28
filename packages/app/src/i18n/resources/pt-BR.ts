@@ -304,6 +304,7 @@ export const ptBR: TranslationResources = {
     actions: {
       copyCode: "Copiar código",
       copyTurn: "Copiar turno",
+      copyPlan: "Copiar plano",
       copyMessage: "Copiar mensagem",
       forkMenu: "Bifurcar mensagem",
       forkInNewTab: "Bifurcar em uma nova aba",

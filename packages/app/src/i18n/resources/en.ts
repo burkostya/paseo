@@ -299,6 +299,7 @@ export const en = {
     actions: {
       copyCode: "Copy code",
       copyTurn: "Copy turn",
+      copyPlan: "Copy plan",
       copyMessage: "Copy message",
       forkMenu: "Fork chat from here",
       forkInNewTab: "Fork in a new tab",

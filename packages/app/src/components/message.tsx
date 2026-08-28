@@ -40,7 +40,6 @@ import {
   Check,
   CheckSquare,
   CircleDot,
-  Copy,
   Plus,
   TriangleAlertIcon,
   Scissors,
@@ -48,7 +47,7 @@ import {
   FileSymlink,
 } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { ICON_SIZE, type Theme } from "@/styles/theme";
+import { type Theme } from "@/styles/theme";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import Animated, {
   Easing,
@@ -85,6 +84,7 @@ import { getDefaultMarkdownClipboardEnvironment } from "@/utils/rich-clipboard-d
 import { setAssistantMarkdownBlockHeight } from "@/utils/assistant-message-height-estimate";
 import { isRenderProfileEnabled } from "@/utils/render-profiler";
 import { getAgentAttachmentPillContent } from "@/attachments/attachment-pill-content";
+import { CopyButton } from "@/components/copy-button";
 import { PlanCard } from "./plan-card";
 import { useToolCallSheet } from "./tool-call-sheet";
 import { ToolCallDetailsContent } from "./tool-call-details";
@@ -1017,12 +1017,6 @@ const turnCopyButtonStylesheet = StyleSheet.create((theme) => ({
     paddingTop: 0,
     marginTop: theme.spacing[2],
   },
-  iconColor: {
-    color: theme.colors.foregroundMuted,
-  },
-  iconHoveredColor: {
-    color: theme.colors.foreground,
-  },
 }));
 
 interface TurnCopyButtonProps {
@@ -1038,64 +1032,19 @@ export const TurnCopyButton = memo(function TurnCopyButton({
   accessibilityLabel,
   copiedAccessibilityLabel,
 }: TurnCopyButtonProps) {
-  const { t } = useTranslation();
-  const [copied, setCopied] = useState(false);
-  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const handleCopy = useCallback(async () => {
-    const content = getContent();
-    if (!content) {
-      return;
-    }
-
-    await writeMarkdownToRichClipboard(content, getDefaultMarkdownClipboardEnvironment());
-    setCopied(true);
-
-    if (copyTimeoutRef.current) {
-      clearTimeout(copyTimeoutRef.current);
-    }
-
-    copyTimeoutRef.current = setTimeout(() => {
-      setCopied(false);
-      copyTimeoutRef.current = null;
-    }, 1500);
-  }, [getContent]);
-
-  useEffect(() => {
-    return () => {
-      if (copyTimeoutRef.current) {
-        clearTimeout(copyTimeoutRef.current);
-      }
-    };
-  }, []);
-
-  const pressableStyle = useMemo(
-    () => [turnCopyButtonStylesheet.container, containerStyle],
-    [containerStyle],
+  const handleCopy = useCallback(
+    (content: string) =>
+      writeMarkdownToRichClipboard(content, getDefaultMarkdownClipboardEnvironment()),
+    [],
   );
-
   return (
-    <Pressable
-      onPress={handleCopy}
-      style={pressableStyle}
-      accessibilityRole="button"
-      accessibilityLabel={
-        copied
-          ? (copiedAccessibilityLabel ?? t("message.actions.copied"))
-          : (accessibilityLabel ?? t("message.actions.copyTurn"))
-      }
-    >
-      {({ hovered }) => {
-        const iconColor = hovered
-          ? turnCopyButtonStylesheet.iconHoveredColor.color
-          : turnCopyButtonStylesheet.iconColor.color;
-        return copied ? (
-          <Check size={ICON_SIZE.sm} color={iconColor} />
-        ) : (
-          <Copy size={ICON_SIZE.sm} color={iconColor} />
-        );
-      }}
-    </Pressable>
+    <CopyButton
+      getContent={getContent}
+      onCopy={handleCopy}
+      containerStyle={[turnCopyButtonStylesheet.container, containerStyle]}
+      accessibilityLabel={accessibilityLabel}
+      copiedAccessibilityLabel={copiedAccessibilityLabel}
+    />
   );
 });
 

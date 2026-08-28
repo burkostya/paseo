@@ -300,6 +300,7 @@ export const zhCN: TranslationResources = {
     actions: {
       copyCode: "复制代码",
       copyTurn: "复制回合",
+      copyPlan: "复制计划",
       copyMessage: "复制消息",
       forkMenu: "分叉消息",
       forkInNewTab: "分叉到新标签页",

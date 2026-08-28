@@ -296,6 +296,7 @@ export const ko: TranslationResources = {
     actions: {
       copyCode: "코드 복사",
       copyTurn: "턴 복사",
+      copyPlan: "계획 복사",
       copyMessage: "메시지 복사",
       forkMenu: "여기에서 채팅 분기",
       forkInNewTab: "새 탭으로 분기",

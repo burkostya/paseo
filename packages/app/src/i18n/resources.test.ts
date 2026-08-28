@@ -403,6 +403,7 @@ describe("translation resources", () => {
   it("includes message utility keys for the Batch 4I migration", () => {
     expect(en.message.actions.copyCode).toBe("Copy code");
     expect(en.message.actions.copyTurn).toBe("Copy turn");
+    expect(en.message.actions.copyPlan).toBe("Copy plan");
     expect(en.message.actions.copyMessage).toBe("Copy message");
     expect(en.message.actions.copied).toBe("Copied");
     expect(en.message.attachments.dismissImage).toBe("Dismiss image");
