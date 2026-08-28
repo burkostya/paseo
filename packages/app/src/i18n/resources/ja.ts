@@ -342,6 +342,7 @@ export const ja: TranslationResources = {
     actions: {
       copyCode: "コードをコピー",
       copyTurn: "ターンをコピー",
+      copyPlan: "プランをコピー",
       copyMessage: "メッセージをコピー",
       forkMenu: "メッセージをフォーク",
       forkInNewTab: "新しいタブにフォーク",
