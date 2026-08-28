@@ -1372,22 +1372,25 @@ export class AgentManager {
     const launchContext = await this.buildLaunchContext(agentId, client, storedConfig.cwd);
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
 
+    this.cancelRunningProviderSubagents(agentId);
+    const closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
+    try {
+      await this.persistSnapshot(closedExisting);
+    } finally {
+      // Some providers, including Codex, allow only one writer per persisted
+      // session. Release the old writer before attempting to resume it.
+      await this.closeReloadedSession(existing.session, agentId);
+    }
+
+    this.assertAcceptingAgentRegistrations();
     const session = handle
       ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
       : await client.createSession(providerLaunchConfig, launchContext);
-    await this.requireExternalMcpSupport(session, storedConfig);
 
     let handedToRegistration = false;
     try {
+      await this.requireExternalMcpSupport(session, storedConfig);
       this.assertAcceptingAgentRegistrations();
-
-      this.cancelRunningProviderSubagents(agentId);
-      const closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
-      try {
-        await this.persistSnapshot(closedExisting);
-      } finally {
-        await this.closeReloadedSession(existing.session, agentId);
-      }
 
       if (rehydrateFromDisk) {
         // Wipe the in-memory timeline so registerSession mints a new epoch and
@@ -1420,8 +1423,9 @@ export class AgentManager {
   }
 
   private async closeReloadedSession(session: AgentSession, agentId: string): Promise<void> {
+    let result: TimeoutResult;
     try {
-      const result = await this.waitWithTimeout({
+      result = await this.waitWithTimeout({
         operation: session.close(),
         timeoutMs: this.rescueTimeouts.reloadSessionCloseMs,
         onLateError: (error) => {
@@ -1431,15 +1435,22 @@ export class AgentManager {
           );
         },
       });
-
-      if (result === "timed_out") {
-        this.logger.warn(
-          { agentId, timeoutMs: this.rescueTimeouts.reloadSessionCloseMs },
-          "Timed out closing previous session during refresh",
-        );
-      }
     } catch (error) {
       this.logger.warn({ err: error, agentId }, "Failed to close previous session during refresh");
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to close previous session during refresh: ${message}`, {
+        cause: error,
+      });
+    }
+
+    if (result === "timed_out") {
+      this.logger.warn(
+        { agentId, timeoutMs: this.rescueTimeouts.reloadSessionCloseMs },
+        "Timed out closing previous session during refresh",
+      );
+      throw new Error(
+        `Timed out closing previous session during refresh after ${this.rescueTimeouts.reloadSessionCloseMs}ms`,
+      );
     }
   }
 

@@ -326,6 +326,7 @@ class HeldReloadCloseClient extends TestAgentClient {
   private readonly closeAllowed = deferred<void>();
   originalSessionClosed = false;
   replacementSessionClosed = false;
+  resumeSessionCalls = 0;
 
   override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
     const signalCloseStarted = () => this.closeStarted.resolve();
@@ -346,6 +347,7 @@ class HeldReloadCloseClient extends TestAgentClient {
     _handle: AgentPersistenceHandle,
     config?: Partial<AgentSessionConfig>,
   ): Promise<AgentSession> {
+    this.resumeSessionCalls += 1;
     const recordReplacementClosed = () => {
       this.replacementSessionClosed = true;
     };
@@ -1619,11 +1621,13 @@ test("reload leaves a closed durable snapshot when shutdown starts during the sw
     expect({
       agents: manager.listAgents(),
       record: await storage.get(agentId),
+      resumeSessionCalls: client.resumeSessionCalls,
       replacementSessionClosed: client.replacementSessionClosed,
     }).toMatchObject({
       agents: [],
       record: { lastStatus: "closed" },
-      replacementSessionClosed: true,
+      resumeSessionCalls: 0,
+      replacementSessionClosed: false,
     });
   } finally {
     client.finishClosing();
@@ -1633,7 +1637,7 @@ test("reload leaves a closed durable snapshot when shutdown starts during the sw
   }
 });
 
-test("reload closes both sessions when the closed snapshot cannot be persisted", async () => {
+test("reload closes the original session without resuming when the closed snapshot cannot be persisted", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-persist-failure-test-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
@@ -1668,11 +1672,13 @@ test("reload closes both sessions when the closed snapshot cannot be persisted",
     expect({
       agents: manager.listAgents(),
       originalSessionClosed: client.originalSessionClosed,
+      resumeSessionCalls: client.resumeSessionCalls,
       replacementSessionClosed: client.replacementSessionClosed,
     }).toEqual({
       agents: [],
       originalSessionClosed: true,
-      replacementSessionClosed: true,
+      resumeSessionCalls: 0,
+      replacementSessionClosed: false,
     });
   } finally {
     client.finishClosing();
@@ -2244,7 +2250,65 @@ test("setAgentMode persists the selected mode across session reload", async () =
   expect(reloaded.currentModeId).toBe("full-access");
 });
 
-test("reloadAgentSession completes when the previous session close hangs", async () => {
+test("reloadAgentSession closes the previous writer before resuming the persisted session", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-exclusive-writer-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const operations: string[] = [];
+  let writerActive = false;
+
+  class ExclusiveWriterSession extends TestAgentSession {
+    override async close(): Promise<void> {
+      operations.push("close");
+      writerActive = false;
+    }
+  }
+
+  class ExclusiveWriterClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      operations.push("create");
+      writerActive = true;
+      return new ExclusiveWriterSession(config);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      operations.push("resume");
+      if (writerActive) {
+        throw new Error("thread already has an active writer");
+      }
+      writerActive = true;
+      return new ExclusiveWriterSession({
+        provider: "codex",
+        cwd: config?.cwd ?? workdir,
+      });
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new ExclusiveWriterClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000302",
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+
+    const reloaded = await manager.reloadAgentSession(snapshot.id);
+
+    expect(reloaded.id).toBe(snapshot.id);
+    expect(operations).toEqual(["create", "close", "resume"]);
+  } finally {
+    await manager.flushForShutdown().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("reloadAgentSession aborts when the previous session close hangs", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-close-timeout-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
@@ -2302,11 +2366,14 @@ test("reloadAgentSession completes when the previous session close hangs", async
       { workspaceId: undefined },
     );
 
-    const reloaded = await manager.reloadAgentSession(snapshot.id);
-
-    expect(reloaded.id).toBe(snapshot.id);
+    await expect(manager.reloadAgentSession(snapshot.id)).rejects.toThrow(
+      "Timed out closing previous session during refresh after 10ms",
+    );
     expect(client.firstSession.closeCalled).toBe(true);
-    expect(client.resumeSessionCalls).toBe(1);
+    expect(client.resumeSessionCalls).toBe(0);
+    expect(manager.getAgent(snapshot.id)).toBeNull();
+    await storage.flush();
+    expect(await storage.get(snapshot.id)).toMatchObject({ lastStatus: "closed" });
   } finally {
     rmSync(workdir, { recursive: true, force: true });
   }
@@ -2770,10 +2837,11 @@ test("resumeAgentFromPersistence closes and rejects a session that cannot honor 
   }
 });
 
-test("reloadAgentSession preserves the live session when its replacement cannot honor external MCP", async () => {
+test("reloadAgentSession leaves a closed snapshot when its replacement cannot honor external MCP", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const original = new CloseRecordingTestAgentSession({ provider: "codex", cwd: workdir });
   const replacement = new CloseRecordingTestAgentSession({ provider: "codex", cwd: workdir });
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
 
   class UnsupportedReloadClient extends TestAgentClient {
     override async createSession(): Promise<AgentSession> {
@@ -2787,7 +2855,7 @@ test("reloadAgentSession preserves the live session when its replacement cannot 
 
   const manager = new AgentManager({
     clients: { codex: new UnsupportedReloadClient() },
-    registry: new AgentStorage(join(workdir, "agents"), logger),
+    registry: storage,
     logger,
   });
 
@@ -2807,9 +2875,10 @@ test("reloadAgentSession preserves the live session when its replacement cannot 
     ).rejects.toThrow("Provider 'codex' does not support MCP servers");
 
     expect(replacement.closed).toBe(true);
-    expect(original.closed).toBe(false);
-    expect(manager.getAgent(created.id)?.session).toBe(original);
-    expect(manager.getAgent(created.id)?.lifecycle).toBe("idle");
+    expect(original.closed).toBe(true);
+    expect(manager.getAgent(created.id)).toBeNull();
+    await storage.flush();
+    expect(await storage.get(created.id)).toMatchObject({ lastStatus: "closed" });
   } finally {
     rmSync(workdir, { recursive: true, force: true });
   }
