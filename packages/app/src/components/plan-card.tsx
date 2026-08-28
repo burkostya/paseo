@@ -11,9 +11,11 @@ import { type ASTNode } from "react-native-markdown-display";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { MarkdownRenderer } from "@/components/markdown/renderer";
+import { CopyButton } from "@/components/copy-button";
 import { ChevronRight } from "lucide-react-native";
 import { isWeb } from "@/constants/platform";
 import type { Theme } from "@/styles/theme";
+import { copyToClipboard } from "@/utils/copy-to-clipboard";
 import { getMarkdownListMarker } from "@/utils/markdown-list";
 import { createMarkdownParser } from "@/utils/markdown-parser";
 
@@ -229,6 +231,8 @@ function PlanCardContent({
     canceled: t("agentStream.permission.canceledPlan"),
   };
   const resolvedTitle = labels[outcome ?? "pending"];
+  const getPlanContent = useCallback(() => text, [text]);
+  const handleCopyPlan = useCallback((content: string) => copyToClipboard(content), []);
   const accessibilityState = useMemo(() => ({ expanded }), [expanded]);
   const webExpandedState = useMemo(
     () => (isWeb ? ({ "aria-expanded": expanded } as const) : null),
@@ -246,19 +250,27 @@ function PlanCardContent({
 
   return (
     <View testID={testID} style={containerStyle}>
-      <Pressable
-        {...webExpandedState}
-        accessibilityRole="button"
-        accessibilityLabel={resolvedTitle}
-        accessibilityState={accessibilityState}
-        onPress={toggleExpanded}
-        style={styles.header}
-      >
-        <View style={chevronStyle}>
-          <ThemedChevron size={16} uniProps={chevronColor} />
-        </View>
-        <Text style={styles.title}>{resolvedTitle}</Text>
-      </Pressable>
+      <View style={styles.header}>
+        <Pressable
+          {...webExpandedState}
+          accessibilityRole="button"
+          accessibilityLabel={resolvedTitle}
+          accessibilityState={accessibilityState}
+          onPress={toggleExpanded}
+          style={styles.headerButton}
+        >
+          <View style={chevronStyle}>
+            <ThemedChevron size={16} uniProps={chevronColor} />
+          </View>
+          <Text style={styles.title}>{resolvedTitle}</Text>
+        </Pressable>
+        <CopyButton
+          testID="plan-copy-button"
+          getContent={getPlanContent}
+          onCopy={handleCopyPlan}
+          accessibilityLabel={t("message.actions.copyPlan")}
+        />
+      </View>
       {expanded ? (
         <View style={styles.body}>
           {description ? <Text style={styles.description}>{description}</Text> : null}
@@ -289,6 +301,13 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     minHeight: 24,
   },
+  headerButton: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    minHeight: 24,
+  },
   chevron: {},
   chevronExpanded: { transform: [{ rotate: "90deg" }] },
   body: { gap: theme.spacing[2] },
@@ -297,6 +316,7 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 1,
     fontSize: theme.fontSize.base,
     lineHeight: 22,
+    flexShrink: 1,
   },
   description: {
     color: theme.colors.foregroundMuted,
