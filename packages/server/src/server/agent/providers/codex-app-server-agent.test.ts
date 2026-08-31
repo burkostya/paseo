@@ -94,6 +94,7 @@ import {
 } from "./codex/test-utils/fake-app-server.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { asInternals as castInternals, createStub } from "../../test-utils/class-mocks.js";
+import { formatSystemNotificationPrompt, isSystemInjectedEnvelope } from "../agent-prompt.js";
 import { buildProviderRegistry } from "../provider-registry.js";
 
 interface CollaborationModeRecord {
@@ -6043,8 +6044,16 @@ describe("Codex app-server provider", () => {
     // The caller (session/agent-manager) is responsible for sending it through streamAgent.
     expect(result).toBeDefined();
     expect(result!.followUpPrompt).toEqual(
-      expect.stringContaining("The user approved the plan. Implement it now."),
+      formatSystemNotificationPrompt(
+        [
+          "The user approved the plan. Implement it now. Do not restate or revise the plan unless blocked.",
+          "Approved plan:",
+          "- Implement the new flow",
+          "Carry out the work, make the necessary code changes, and verify the result.",
+        ].join("\n\n"),
+      ),
     );
+    expect(isSystemInjectedEnvelope(result!.followUpPrompt as string)).toBe(true);
     expect(events.at(-1)).toEqual({
       type: "permission_resolved",
       provider: "codex",
