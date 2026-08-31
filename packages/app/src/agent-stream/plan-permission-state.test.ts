@@ -3,6 +3,7 @@ import type { StreamItem } from "@/types/stream";
 import {
   collectSupersededPlanPermissionRequestIds,
   resolvePlanPermissionResolutionStatus,
+  resolvePlanTimelineResolutionStatus,
 } from "./plan-permission-state";
 
 const timestamp = new Date(0);
@@ -74,6 +75,22 @@ describe("resolvePlanPermissionResolutionStatus", () => {
         message: "Superseded by a later prompt.",
       }),
     ).toBe("skipped");
+  });
+});
+
+describe("resolvePlanTimelineResolutionStatus", () => {
+  it("reads persisted statuses and the legacy Claude superseded action", () => {
+    expect(resolvePlanTimelineResolutionStatus(undefined)).toBeNull();
+    expect(resolvePlanTimelineResolutionStatus({ approved: false })).toBeNull();
+    expect(resolvePlanTimelineResolutionStatus({ planResolution: "approved" })).toBe("approved");
+    expect(resolvePlanTimelineResolutionStatus({ planResolution: "rejected" })).toBe("rejected");
+    expect(resolvePlanTimelineResolutionStatus({ planResolution: "skipped" })).toBe("skipped");
+    expect(resolvePlanTimelineResolutionStatus({ actionId: "superseded" })).toBe("skipped");
+  });
+
+  it("does not trust unknown persisted values", () => {
+    expect(resolvePlanTimelineResolutionStatus({ planResolution: "dismissed" })).toBeNull();
+    expect(resolvePlanTimelineResolutionStatus({ actionId: "reject" })).toBeNull();
   });
 });
 

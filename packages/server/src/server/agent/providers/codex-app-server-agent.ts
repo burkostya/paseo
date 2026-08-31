@@ -4734,7 +4734,11 @@ export class CodexAppServerAgentSession implements AgentSession {
       .map(([requestId]) => requestId);
 
     for (const requestId of requestIds) {
-      this.resolvePlanPermission(requestId, { behavior: "deny", message });
+      this.resolvePlanPermission(requestId, {
+        behavior: "deny",
+        selectedActionId: "superseded",
+        message,
+      });
     }
   }
 
@@ -4742,8 +4746,10 @@ export class CodexAppServerAgentSession implements AgentSession {
     const requestIds = Array.from(this.pendingPermissionHandlers.keys());
     for (const requestId of requestIds) {
       if (!this.pendingPermissionHandlers.has(requestId)) continue;
+      const pendingRequest = this.pendingPermissions.get(requestId);
       await this.respondToPermission(requestId, {
         behavior: "deny",
+        ...(pendingRequest?.kind === "plan" ? { selectedActionId: "superseded" } : {}),
         message: "The user answered with a message instead of approving. Their message follows.",
       });
     }
@@ -4768,7 +4774,10 @@ export class CodexAppServerAgentSession implements AgentSession {
             status: "completed",
             error: null,
             detail: { type: "plan", text: planText },
-            metadata: { approved: false },
+            metadata: {
+              approved: false,
+              planResolution: resolution.selectedActionId === "superseded" ? "skipped" : "rejected",
+            },
           },
         });
       }

@@ -29,7 +29,7 @@ const scenarios = [
 
 test.describe("composer steer supersedes plan approval", () => {
   for (const scenario of scenarios) {
-    test(`${scenario.provider} keeps the rejected plan in the timeline`, async ({
+    test(`${scenario.provider} keeps the skipped plan in the timeline`, async ({
       page,
     }, testInfo) => {
       test.setTimeout(420_000);
@@ -63,16 +63,23 @@ test.describe("composer steer supersedes plan approval", () => {
         const rejectedPlan = page.getByTestId("timeline-plan-card");
         await expect(rejectedPlan).toBeVisible({ timeout: 30_000 });
         await expect(rejectedPlan).toContainText(scenario.planText);
+        await expect(page.getByTestId("permission-plan-resolution")).toContainText("Skipped");
         await expect(
           page.getByTestId("assistant-message").filter({ hasText: scenario.reply }),
         ).toBeVisible({
           timeout: 180_000,
         });
 
-        const rejectedScreenshot = testInfo.outputPath(`${scenario.provider}-rejected-plan.png`);
-        await page.screenshot({ path: rejectedScreenshot });
-        await testInfo.attach(`${scenario.provider} rejected plan`, {
-          path: rejectedScreenshot,
+        await page.reload();
+        await expect(page.getByTestId("timeline-plan-card")).toHaveCount(1, {
+          timeout: 60_000,
+        });
+        await expect(page.getByTestId("permission-plan-resolution")).toContainText("Skipped");
+
+        const skippedScreenshot = testInfo.outputPath(`${scenario.provider}-skipped-plan.png`);
+        await page.screenshot({ path: skippedScreenshot });
+        await testInfo.attach(`${scenario.provider} skipped plan`, {
+          path: skippedScreenshot,
           contentType: "image/png",
         });
       } finally {

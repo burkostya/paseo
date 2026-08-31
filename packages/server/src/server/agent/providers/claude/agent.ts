@@ -2543,6 +2543,7 @@ class ClaudeAgentSession implements AgentSession {
         metadata: {
           approved: false,
           actionId: response.selectedActionId ?? "reject",
+          planResolution: response.selectedActionId === "superseded" ? "skipped" : "rejected",
         },
       });
     }
@@ -2573,6 +2574,7 @@ class ClaudeAgentSession implements AgentSession {
       pending.resolve(
         this.resolveDeniedPermission(pending.request, {
           behavior: "deny",
+          ...(pending.request.kind === "plan" ? { selectedActionId: "superseded" } : {}),
           message: STEER_SUPERSEDED_PERMISSION_MESSAGE,
         }),
       );
@@ -2596,16 +2598,25 @@ class ClaudeAgentSession implements AgentSession {
           ? "bypassPermissions"
           : "acceptEdits";
         await this.setMode(targetMode);
+        const planApproval = mapClaudeCompletedToolCall({
+          name: "plan_approval",
+          callId: pending.request.id,
+          input: pending.request.input ?? null,
+          output: {
+            approved: true,
+            actionId: selectedActionId ?? "implement",
+          },
+        });
         this.pushToolCall(
-          mapClaudeCompletedToolCall({
-            name: "plan_approval",
-            callId: pending.request.id,
-            input: pending.request.input ?? null,
-            output: {
-              approved: true,
-              actionId: selectedActionId ?? "implement",
-            },
-          }),
+          planApproval
+            ? {
+                ...planApproval,
+                metadata: {
+                  ...planApproval.metadata,
+                  planResolution: "approved",
+                },
+              }
+            : null,
         );
       }
       const updatedInput =
@@ -4623,6 +4634,7 @@ class ClaudeAgentSession implements AgentSession {
     if (this.permissionClearingSteerUuids.size > 0) {
       return this.resolveDeniedPermission(request, {
         behavior: "deny",
+        ...(kind === "plan" ? { selectedActionId: "superseded" } : {}),
         message: STEER_SUPERSEDED_PERMISSION_MESSAGE,
       });
     }

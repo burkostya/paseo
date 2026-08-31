@@ -6304,7 +6304,7 @@ describe("Codex denied plan approvals", () => {
     expect(row).toBeDefined();
     expect((row as { item: { detail: unknown; metadata?: unknown } }).item).toMatchObject({
       detail: { type: "plan", text: "Ship the thing" },
-      metadata: { approved: false },
+      metadata: { approved: false, planResolution: "rejected" },
     });
   });
 
@@ -6321,7 +6321,7 @@ describe("Codex denied plan approvals", () => {
     expect(row).toBeDefined();
     expect((row as { item: { detail: unknown; metadata?: unknown } }).item).toMatchObject({
       detail: { type: "plan", text: "Ship the thing" },
-      metadata: { approved: false },
+      metadata: { approved: false, planResolution: "skipped" },
     });
   });
 });

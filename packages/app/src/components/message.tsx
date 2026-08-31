@@ -86,6 +86,7 @@ import { isRenderProfileEnabled } from "@/utils/render-profiler";
 import { getAgentAttachmentPillContent } from "@/attachments/attachment-pill-content";
 import { CopyButton } from "@/components/copy-button";
 import { PlanCard } from "./plan-card";
+import { resolvePlanTimelineResolutionStatus } from "@/agent-stream/plan-permission-state";
 import { useToolCallSheet } from "./tool-call-sheet";
 import { ToolCallDetailsContent } from "./tool-call-details";
 import {
@@ -2232,6 +2233,13 @@ const compactionStylesheet = StyleSheet.create((theme) => ({
   },
 }));
 
+const planResolutionStylesheet = StyleSheet.create((theme) => ({
+  text: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+  },
+}));
+
 export const CompactionMarker = memo(function CompactionMarker({
   status,
   trigger,
@@ -3083,6 +3091,7 @@ export const ToolCall = memo(function ToolCall({
   maxDetailHeight = 400,
 }: ToolCallProps) {
   const { openToolCall } = useToolCallSheet();
+  const { t } = useTranslation();
   const [isExpanded, setIsExpanded] = useState(defaultExpanded ?? false);
 
   const isMobile = useIsCompactFormFactor();
@@ -3197,10 +3206,23 @@ export const ToolCall = memo(function ToolCall({
     maxDetailHeight,
   ]);
 
+  const resolutionStatus = resolvePlanTimelineResolutionStatus(metadata);
+  const resolutionLabel = resolutionStatus ? t(`agentStream.permission.${resolutionStatus}`) : null;
+  const planFooter = useMemo(
+    () =>
+      resolutionLabel ? (
+        <Text testID="permission-plan-resolution" style={planResolutionStylesheet.text}>
+          {resolutionLabel}
+        </Text>
+      ) : undefined,
+    [resolutionLabel],
+  );
+
   if (presentation.isPlan && effectiveDetail?.type === "plan") {
     return (
       <PlanCard
         text={effectiveDetail.text}
+        footer={planFooter}
         testID="timeline-plan-card"
         disableOuterSpacing={disableOuterSpacing}
       />
