@@ -89,6 +89,7 @@ import { createAssistantImageOccurrenceKey } from "@/assistant-image/acquisition
 import { AssistantSelectionCopySurface } from "@/assistant-selection-copy/surface";
 import {
   collectSupersededPlanPermissionRequestIds,
+  projectPlanPermissionItems,
   resolvePlanPermissionResolutionStatus,
 } from "./plan-permission-state";
 import { AssistantFileLinkResolverProvider, createInlinePathOpener } from "@/assistant-file-links";
@@ -522,20 +523,28 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const effectiveStreamHead = useRetainedValue(streamHead, isActive);
     const effectiveTurnPresentation = useRetainedValue(turnPresentation, isActive);
     const isTurnActive = effectiveTurnPresentation.isActive;
+    const projectedPlanPermissions = useMemo(
+      () =>
+        projectPlanPermissionItems({
+          tail: effectiveStreamItems,
+          head: effectiveStreamHead ?? EMPTY_STREAM_HEAD,
+        }),
+      [effectiveStreamHead, effectiveStreamItems],
+    );
     const presentStream = useMemo(() => createStreamPresentation(), []);
     const presentation = useMemo(
       () =>
         presentStream({
-          tail: effectiveStreamItems,
-          head: effectiveStreamHead ?? EMPTY_STREAM_HEAD,
+          tail: projectedPlanPermissions.tail,
+          head: projectedPlanPermissions.head,
           transform: transformTimelineItem,
           level: toolCallDetailLevel,
           isTurnActive,
         }),
       [
         presentStream,
-        effectiveStreamItems,
-        effectiveStreamHead,
+        projectedPlanPermissions.head,
+        projectedPlanPermissions.tail,
         transformTimelineItem,
         toolCallDetailLevel,
         isTurnActive,
@@ -556,25 +565,25 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const progressKey = `${remoteProgressKey ?? "local"}:${historyWindowStart}`;
     const renderedPlanPermissionRequestIds = useMemo(() => {
       const requestIds = new Set<string>();
-      for (const item of effectiveStreamItems) {
+      for (const item of projectedPlanPermissions.tail) {
         if (isPermissionPlanItem(item)) {
           requestIds.add(item.request.id);
         }
       }
-      for (const item of effectiveStreamHead ?? EMPTY_STREAM_HEAD) {
+      for (const item of projectedPlanPermissions.head) {
         if (isPermissionPlanItem(item)) {
           requestIds.add(item.request.id);
         }
       }
       return requestIds;
-    }, [effectiveStreamHead, effectiveStreamItems]);
+    }, [projectedPlanPermissions.head, projectedPlanPermissions.tail]);
     const supersededPlanPermissionRequestIds = useMemo(
       () =>
         collectSupersededPlanPermissionRequestIds({
-          tail: effectiveStreamItems,
-          head: effectiveStreamHead ?? EMPTY_STREAM_HEAD,
+          tail: projectedPlanPermissions.tail,
+          head: projectedPlanPermissions.head,
         }),
-      [effectiveStreamHead, effectiveStreamItems],
+      [projectedPlanPermissions.head, projectedPlanPermissions.tail],
     );
 
     const baseRenderModel = useMemo(() => {
@@ -635,8 +644,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       agentId,
       serverId: resolvedServerId,
       timelineEpoch,
-      tail: effectiveStreamItems,
-      head: effectiveStreamHead,
+      tail: projectedPlanPermissions.tail,
+      head: projectedPlanPermissions.head,
       enabled: supportsChatOutline && chatOutlineEnabled,
       viewportRef,
       onJumpError: handleTimelineHistoryLoadError,
@@ -899,10 +908,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                 item={item}
                 agentId={agentId}
                 client={client}
-                disabledReason={
+                isSuperseded={
                   !item.resolution && supersededPlanPermissionRequestIds.has(item.request.id)
-                    ? t("agentStream.permission.planDisabledAfterMessages")
-                    : undefined
                 }
                 testID={item.resolution ? "timeline-plan-card" : "permission-plan-card"}
               />
@@ -938,7 +945,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         renderToolCallItem,
         resolvedServerId,
         supersededPlanPermissionRequestIds,
-        t,
       ],
     );
 
@@ -1461,13 +1467,13 @@ function PermissionPlanCard({
   permission,
   client,
   resolution,
-  disabledReason,
+  isSuperseded = false,
   testID = "permission-plan-card",
 }: {
   permission: PendingPermission;
   client: DaemonClient | null;
   resolution?: PermissionPlanItem["resolution"];
-  disabledReason?: string;
+  isSuperseded?: boolean;
   testID?: string;
 }) {
   const { t } = useTranslation();
@@ -1543,7 +1549,7 @@ function PermissionPlanCard({
   );
   const handleActionPress = useCallback(
     (action: AgentPermissionAction) => {
-      if (disabledReason) {
+      if (isSuperseded) {
         return;
       }
       setRespondingActionId(action.id);
@@ -1560,7 +1566,7 @@ function PermissionPlanCard({
         message: "Denied by user",
       });
     },
-    [disabledReason, handleResponse],
+    [handleResponse, isSuperseded],
   );
 
   const optionsContainerStyle = useMemo(
@@ -1570,7 +1576,8 @@ function PermissionPlanCard({
     ],
     [isMobile],
   );
-  const resolutionStatus = resolvePlanPermissionResolutionStatus(resolution);
+  const resolutionStatus =
+    resolvePlanPermissionResolutionStatus(resolution) ?? (isSuperseded ? "skipped" : null);
   const resolutionLabel = resolutionStatus ? t(`agentStream.permission.${resolutionStatus}`) : null;
   const footer = useMemo(
     () =>
@@ -1582,11 +1589,13 @@ function PermissionPlanCard({
         <>
           <Text
             testID={
-              disabledReason ? "permission-plan-disabled-reason" : "permission-request-question"
+              isSuperseded ? "permission-plan-disabled-reason" : "permission-request-question"
             }
             style={permissionStyles.question}
           >
-            {disabledReason ?? t("agentStream.permission.question")}
+            {isSuperseded
+              ? t("agentStream.permission.planDisabledAfterMessages")
+              : t("agentStream.permission.question")}
           </Text>
 
           <View style={optionsContainerStyle}>
@@ -1606,7 +1615,7 @@ function PermissionPlanCard({
                   action={action}
                   isRespondingAction={isRespondingAction}
                   isResponding={isResponding}
-                  isDisabled={disabledReason !== undefined}
+                  isDisabled={isSuperseded}
                   isPrimary={isPrimary}
                   Icon={Icon}
                   testID={actionTestID}
@@ -1618,8 +1627,8 @@ function PermissionPlanCard({
         </>
       ),
     [
-      disabledReason,
       handleActionPress,
+      isSuperseded,
       isResponding,
       optionsContainerStyle,
       resolutionLabel,
@@ -1649,13 +1658,13 @@ function TimelinePermissionPlanCard({
   item,
   agentId,
   client,
-  disabledReason,
+  isSuperseded,
   testID,
 }: {
   item: PermissionPlanItem;
   agentId: string;
   client: DaemonClient | null;
-  disabledReason?: string;
+  isSuperseded?: boolean;
   testID: string;
 }) {
   const permission = useMemo<PendingPermission>(
@@ -1667,7 +1676,7 @@ function TimelinePermissionPlanCard({
       permission={permission}
       client={client}
       resolution={item.resolution}
-      disabledReason={disabledReason}
+      isSuperseded={isSuperseded}
       testID={testID}
     />
   );

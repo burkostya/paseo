@@ -83,10 +83,18 @@ import { capAssistantMessageForRender, getUtf8ByteLength } from "./assistant-mes
 import { getTurnDurationLabel } from "./assistant-turn-footer-label";
 import { getCompactionMarkerLabel } from "./message-compaction-label";
 import { PlanCard } from "./plan-card";
+import { resolvePlanTimelineResolutionStatus } from "@/agent-stream/plan-permission-state";
 import { ToolCallDetailsContent } from "./tool-call-details";
 import { useToolCallSheet } from "./tool-call-sheet";
 export type { InlinePathTarget } from "@/assistant-file-links";
 export type { AssistantForkTarget };
+
+const planResolutionStylesheet = StyleSheet.create((theme) => ({
+  text: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+  },
+}));
 
 interface UserMessageProps {
   serverId?: string;
@@ -2249,6 +2257,7 @@ export const ToolCall = memo(function ToolCall({
   maxDetailHeight = 400,
 }: ToolCallProps) {
   const { openToolCall } = useToolCallSheet();
+  const { t } = useTranslation();
   const [isExpanded, setIsExpanded] = useState(defaultExpanded ?? false);
 
   const isMobile = useIsCompactFormFactor();
@@ -2366,11 +2375,24 @@ export const ToolCall = memo(function ToolCall({
     maxDetailHeight,
   ]);
 
+  const resolutionStatus = resolvePlanTimelineResolutionStatus(metadata);
+  const resolutionLabel = resolutionStatus ? t(`agentStream.permission.${resolutionStatus}`) : null;
+  const planFooter = useMemo(
+    () =>
+      resolutionLabel ? (
+        <Text testID="permission-plan-resolution" style={planResolutionStylesheet.text}>
+          {resolutionLabel}
+        </Text>
+      ) : undefined,
+    [resolutionLabel],
+  );
+
   if (presentation.isPlan && effectiveDetail?.type === "plan") {
     return (
       <PlanCard
         text={effectiveDetail.text}
         outcome={presentation.planOutcome}
+        footer={planFooter}
         testID="timeline-plan-card"
         disableOuterSpacing={disableOuterSpacing}
       />
