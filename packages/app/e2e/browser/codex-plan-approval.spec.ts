@@ -1,5 +1,9 @@
 import { expect, test } from "../support/fixtures";
-import { allowPermission, waitForPermissionPrompt } from "../support/helpers/permissions";
+import {
+  allowPermission,
+  denyPermission,
+  waitForPermissionPrompt,
+} from "../support/helpers/permissions";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 
 const EXPECTED_PLAN_MARKDOWN = [
@@ -53,6 +57,31 @@ test.describe("Codex plan approval", () => {
       await expect
         .poll(() => page.evaluate<string>("navigator.clipboard.readText()"))
         .toBe(EXPECTED_PLAN_MARKDOWN);
+    } finally {
+      await session.cleanup();
+    }
+  });
+
+  test("labels an explicitly denied plan as Rejected", async ({ page }) => {
+    test.setTimeout(180_000);
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "codex-plan-rejection-",
+      title: "Codex plan rejection e2e",
+      initialPrompt: "Emit synthetic plan approval.",
+    });
+
+    try {
+      await openAgentRoute(page, session);
+      await waitForPermissionPrompt(page, 120_000);
+      await denyPermission(page);
+
+      await expect(page.getByTestId("permission-plan-card")).toHaveCount(0, {
+        timeout: 30_000,
+      });
+      await expect(page.getByTestId("timeline-plan-card")).toHaveCount(1, {
+        timeout: 30_000,
+      });
+      await expect(page.getByTestId("permission-plan-resolution")).toContainText("Rejected");
     } finally {
       await session.cleanup();
     }

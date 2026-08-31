@@ -981,6 +981,8 @@ describe("ClaudeAgentSession features", () => {
       ): Promise<PermissionResult>;
       translateMessageToEvents(message: SDKMessage): AgentStreamEvent[];
     };
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
 
     try {
       const { turnId } = await session.startTurn("first turn");
@@ -994,6 +996,7 @@ describe("ClaudeAgentSession features", () => {
         { toolUseID: "tool-1" },
       );
       expect(session.getPendingPermissions()).toHaveLength(1);
+      const firstRequestId = session.getPendingPermissions()[0]!.id;
 
       await expect(
         session.steerActiveTurn?.("review this instead", {
@@ -1006,6 +1009,30 @@ describe("ClaudeAgentSession features", () => {
         interrupt: undefined,
         message: expect.stringContaining("message instead of approving"),
       });
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "permission_resolved",
+          requestId: firstRequestId,
+          resolution: expect.objectContaining({
+            behavior: "deny",
+            selectedActionId: "superseded",
+          }),
+        }),
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "timeline",
+          item: expect.objectContaining({
+            type: "tool_call",
+            name: "plan_approval",
+            callId: firstRequestId,
+            metadata: expect.objectContaining({
+              approved: false,
+              planResolution: "skipped",
+            }),
+          }),
+        }),
+      );
 
       const steer = await iterator.next();
       const steerUuid = steer.value?.uuid;
@@ -1034,6 +1061,7 @@ describe("ClaudeAgentSession features", () => {
       await session.respondToPermission(requestId, { behavior: "deny", message: "test cleanup" });
       await expect(laterPermission).resolves.toMatchObject({ behavior: "deny" });
     } finally {
+      unsubscribe();
       await session.close();
     }
   });
@@ -1405,7 +1433,7 @@ describe("normalizeClaudeAskUserQuestionUpdatedInput", () => {
       expect(planRow).toBeDefined();
       const item = (planRow as { item: Extract<AgentTimelineItem, { type: "tool_call" }> }).item;
       expect(item.detail).toEqual({ type: "plan", text: "Ship the thing" });
-      expect(item.metadata).toMatchObject({ approved: false });
+      expect(item.metadata).toMatchObject({ approved: false, planResolution: "rejected" });
     } finally {
       unsubscribe();
       await session.close();

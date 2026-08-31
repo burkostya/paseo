@@ -120,6 +120,7 @@ async function rejectWithFollowUp({ page, scenario, testInfo }: PlanSteer): Prom
   await expect(page.getByTestId("permission-plan-card")).toHaveCount(0, { timeout: 30_000 });
   const rejectedPlan = page.getByTestId("timeline-plan-card");
   await expect(rejectedPlan).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("permission-plan-resolution")).toContainText("Skipped");
   await expectRejectedPlanCollapsed(page);
   await expect(
     page.getByTestId("assistant-message").filter({ hasText: scenario.reply }),
@@ -153,6 +154,7 @@ async function rereadRejectedPlan({ page, scenario, testInfo }: PlanSteer): Prom
 
 async function restoreConversationOrder({ page, scenario }: PlanSteer): Promise<void> {
   await reopenConversation(page, scenario.reply);
+  await expect(page.getByTestId("permission-plan-resolution")).toContainText("Skipped");
   await expectRejectedPlanCollapsed(page);
   expect(await readConversationOrder(page, scenario.steerPrompt, scenario.reply)).toEqual([
     "plan",
