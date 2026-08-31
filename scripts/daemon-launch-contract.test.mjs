@@ -36,6 +36,7 @@ test("every executable daemon entrypoint enters the supervisor", async () => {
     desktopRuntimePaths,
     nixPackage,
     nixModule,
+    traceDaemon,
   ] = await Promise.all([
     readFile(join(repoRoot, "packages/server/package.json"), "utf8"),
     readFile(join(repoRoot, "packages/app/e2e/support/helpers/isolated-host-daemon.ts"), "utf8"),
@@ -46,6 +47,7 @@ test("every executable daemon entrypoint enters the supervisor", async () => {
     readFile(join(repoRoot, "packages/desktop/src/daemon/runtime-paths.ts"), "utf8"),
     readFile(join(repoRoot, "nix/package.nix"), "utf8"),
     readFile(join(repoRoot, "nix/module.nix"), "utf8"),
+    readFile(join(repoRoot, "scripts/trace-daemon.mjs"), "utf8"),
   ]);
 
   const serverPackage = JSON.parse(serverPackageSource);
@@ -79,4 +81,13 @@ test("every executable daemon entrypoint enters the supervisor", async () => {
   assert.doesNotMatch(nixPackage, /--set(-default)?\s+NODE_ENV\b/);
   assert.doesNotMatch(nixModule, /\bNODE_ENV\b\s*=/);
   assert.doesNotMatch(nixModule, /\bPASEO_NODE_ENV\b/);
+
+  assert.match(
+    traceDaemon,
+    /packages\/server\/node_modules\/node-pty\/prebuilds\/\$\{process\.platform\}-\$\{process\.arch\}\/\*\*/,
+  );
+  assert.doesNotMatch(
+    traceDaemon,
+    /`node_modules\/node-pty\/prebuilds\/\$\{process\.platform\}-\$\{process\.arch\}\/\*\*`/,
+  );
 });

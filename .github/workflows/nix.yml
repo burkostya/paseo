@@ -18,6 +18,7 @@ on:
       - "packages/server/**"
       - "packages/relay/**"
       - "packages/cli/**"
+      - "scripts/trace-daemon.mjs"
       - "scripts/build-daemon-web-ui.mjs"
       - "scripts/update-nix.sh"
       - "scripts/fix-lockfile.mjs"
@@ -56,14 +57,21 @@ jobs:
           export PASEO_HOME
           PASEO_HOME="$(mktemp -d)"
           export PASEO_LISTEN=127.0.0.1:6767
+          TERMINAL_CWD="$(mktemp -d)"
+          TERMINAL_ID=""
+          TERMINAL_MARKER="paseo-nix-terminal-smoke"
 
           WRAPPER_LOG="$PASEO_HOME/paseo-server-wrapper.log"
 
           cleanup() {
+            if [[ -n "$TERMINAL_ID" ]]; then
+              ./result/bin/paseo terminal kill "$TERMINAL_ID" --json >/dev/null 2>&1 || true
+            fi
             if [[ -n "${DAEMON_PID:-}" ]] && kill -0 "$DAEMON_PID" 2>/dev/null; then
               kill "$DAEMON_PID"
               wait "$DAEMON_PID" || true
             fi
+            rm -rf "$TERMINAL_CWD"
             rm -rf "$PASEO_HOME"
           }
           trap cleanup EXIT
@@ -78,7 +86,36 @@ jobs:
               echo "$STATUS_JSON"
               curl --fail --silent --show-error http://127.0.0.1:6767/ >"$PASEO_HOME/web-ui.html"
               [[ -s "$PASEO_HOME/web-ui.html" ]]
-              exit 0
+
+              created_terminal="$(./result/bin/paseo terminal create \
+                --cwd "$TERMINAL_CWD" \
+                --name nix-terminal-smoke \
+                --json)"
+              TERMINAL_ID="$(jq -r '.id // empty' <<<"$created_terminal")"
+              [[ -n "$TERMINAL_ID" ]]
+
+              ./result/bin/paseo terminal send-keys \
+                "$TERMINAL_ID" \
+                "echo '$TERMINAL_MARKER'" \
+                Enter \
+                --json
+
+              for attempt in {1..20}; do
+                if capture="$(./result/bin/paseo terminal capture \
+                  "$TERMINAL_ID" \
+                  --scrollback \
+                  --json)" \
+                  && jq -e --arg marker "$TERMINAL_MARKER" \
+                    '.lines | join("\\n") | contains($marker)' \
+                    <<<"$capture" >/dev/null; then
+                  echo "Nix daemon terminal smoke passed"
+                  exit 0
+                fi
+                sleep 1
+              done
+
+              echo "Timed out waiting for terminal smoke marker $TERMINAL_MARKER"
+              exit 1
             fi
 
             if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
