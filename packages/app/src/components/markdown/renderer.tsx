@@ -96,7 +96,11 @@ export function MarkdownRenderer({
 }: MarkdownRendererProps) {
   const issueTrackers = useIssueTrackers();
   const resolvedMarkdownParser = useMemo(
-    () => markdownit ?? createIssueAwareMarkdownParser(issueTrackers),
+    () =>
+      markdownit ??
+      (issueTrackers.length === 0
+        ? defaultMarkdownParser
+        : createIssueAwareMarkdownParser(issueTrackers)),
     [issueTrackers, markdownit],
   );
   const defaultLinkPress = useCallback((url: string) => {

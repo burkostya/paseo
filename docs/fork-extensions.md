@@ -1,11 +1,11 @@
 # Fork extensions
 
-This checkout is based on upstream `v0.6.1` (`3904190836e4d82577849f3ca053c36ef65f9e65`). Fork behavior is kept
+This checkout is based on upstream `v0.7.0` (`c56638ea8c2852d722a87e700abf3c966ded617e`). Fork behavior is kept
 behind narrow, subsystem-owned seams so a future rebase can compare behavior instead of replaying
 historical patches.
 
 Protocol capabilities added by the fork are optional fields in `server_info.features`. Their
-compatibility gates were retained on the `v0.6.1` fork baseline and have a review date of
+compatibility gates were retained on the `v0.7.0` fork baseline and have a review date of
 2027-01-16. Removing a gate does not by itself remove the extension; remove an extension only
 when the supported upstream behavior covers the acceptance criteria below.
 
