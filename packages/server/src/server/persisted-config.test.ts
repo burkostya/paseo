@@ -1,4 +1,14 @@
-import { chmodSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
@@ -730,6 +740,362 @@ describe("loadPersistedConfig", () => {
       expect((config.providers?.openai as Record<string, unknown>)?.voice).toBeUndefined();
       expect(config.providers?.openai?.stt).toBeUndefined();
       expect(config.providers?.openai?.tts).toBeUndefined();
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("merges config fragments and the local override in filename order", () => {
+    const home = createTempHome();
+    const fragments = path.join(home, "conf.d");
+    const configPath = path.join(home, "config.json");
+    const localPath = path.join(home, "config.local.json");
+    try {
+      mkdirSync(fragments);
+      writeFileSync(
+        configPath,
+        `${JSON.stringify(
+          {
+            version: 1,
+            daemon: {
+              mcp: { enabled: false, injectIntoAgents: false },
+              agentProfiles: [{ id: "base", name: "Base", provider: "claude" }],
+            },
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      writeFileSync(
+        path.join(fragments, "20-second.json"),
+        `${JSON.stringify(
+          {
+            daemon: {
+              mcp: { injectIntoAgents: true },
+              agentProfiles: [{ id: "second", name: "Second", provider: "codex" }],
+            },
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      writeFileSync(
+        path.join(fragments, "10-first.json"),
+        `${JSON.stringify(
+          {
+            daemon: { mcp: { enabled: true } },
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      writeFileSync(
+        localPath,
+        `${JSON.stringify(
+          {
+            daemon: {
+              mcp: { injectIntoAgents: null },
+              agentProfiles: [{ id: "local", name: "Local", provider: "pi" }],
+            },
+          },
+          null,
+          2,
+        )}\n`,
+      );
+
+      expect(loadPersistedConfig(home)).toMatchObject({
+        daemon: {
+          mcp: { enabled: true },
+          agentProfiles: [{ id: "local", name: "Local", provider: "pi" }],
+        },
+      });
+      expect(loadPersistedConfig(home).daemon?.mcp?.injectIntoAgents).toBeUndefined();
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("merges partial nested provider overrides across layers", () => {
+    const home = createTempHome();
+    try {
+      mkdirSync(path.join(home, "conf.d"));
+      writeFileSync(
+        path.join(home, "config.json"),
+        JSON.stringify({
+          version: 1,
+          agents: {
+            providers: {
+              review: { extends: "claude", label: "Review" },
+            },
+          },
+        }),
+      );
+      writeFileSync(
+        path.join(home, "conf.d", "20-provider.json"),
+        JSON.stringify({ agents: { providers: { review: { enabled: false } } } }),
+      );
+
+      expect(loadPersistedConfig(home).agents?.providers?.review).toEqual({
+        extends: "claude",
+        label: "Review",
+        enabled: false,
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("applies the legacy allowedHosts alias at its layer priority", () => {
+    const home = createTempHome();
+    try {
+      mkdirSync(path.join(home, "conf.d"));
+      writeFileSync(
+        path.join(home, "config.json"),
+        JSON.stringify({ version: 1, daemon: { hostnames: ["base.example.test"] } }),
+      );
+      writeFileSync(
+        path.join(home, "conf.d", "20-hosts.json"),
+        JSON.stringify({ daemon: { allowedHosts: ["fragment.example.test"] } }),
+      );
+
+      expect(loadPersistedConfig(home).daemon?.hostnames).toEqual(["fragment.example.test"]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("includes symlinked fragment files and does not create a missing base file", () => {
+    const home = createTempHome();
+    const fragments = path.join(home, "conf.d");
+    const source = path.join(home, "agent-profiles.json");
+    try {
+      mkdirSync(fragments);
+      writeFileSync(
+        source,
+        JSON.stringify({
+          daemon: { agentProfiles: [{ id: "linked", name: "Linked", provider: "pi" }] },
+        }),
+      );
+      symlinkSync(source, path.join(fragments, "20-agent-profiles.json"));
+
+      expect(loadPersistedConfig(home).daemon?.agentProfiles).toEqual([
+        { id: "linked", name: "Linked", provider: "pi" },
+      ]);
+      expect(existsSync(path.join(home, "config.json"))).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("saves only the local delta when layered config is enabled", () => {
+    const home = createTempHome();
+    const fragments = path.join(home, "conf.d");
+    try {
+      mkdirSync(fragments);
+      writeFileSync(
+        path.join(home, "config.json"),
+        JSON.stringify({ version: 1, daemon: { listen: "127.0.0.1:6767" } }),
+      );
+      writeFileSync(
+        path.join(fragments, "20-base.json"),
+        JSON.stringify({ daemon: { browserTools: { enabled: false } } }),
+      );
+
+      const desired = loadPersistedConfig(home);
+      desired.daemon = {
+        ...desired.daemon,
+        agentProfiles: [{ id: "local", name: "Local", provider: "codex" }],
+      };
+      const savedPath = savePersistedConfig(home, desired);
+
+      expect(savedPath).toBe(path.join(home, "config.local.json"));
+      expect(JSON.parse(readFileSync(savedPath, "utf-8"))).toEqual({
+        daemon: {
+          agentProfiles: [{ id: "local", name: "Local", provider: "codex" }],
+        },
+      });
+      expect(JSON.parse(readFileSync(path.join(home, "config.json"), "utf-8"))).toEqual({
+        version: 1,
+        daemon: { listen: "127.0.0.1:6767" },
+      });
+      expect(loadPersistedConfig(home).daemon?.agentProfiles).toHaveLength(1);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps local profiles when the Fleet base file changes", () => {
+    const home = createTempHome();
+    const fragments = path.join(home, "conf.d");
+    try {
+      mkdirSync(fragments);
+      writeFileSync(
+        path.join(home, "config.json"),
+        JSON.stringify({ version: 1, daemon: { browserTools: { enabled: false } } }),
+      );
+      const desired = loadPersistedConfig(home);
+      desired.daemon = {
+        ...desired.daemon,
+        agentProfiles: [{ id: "local", name: "Local", provider: "codex" }],
+      };
+      savePersistedConfig(home, desired);
+
+      writeFileSync(
+        path.join(home, "config.json"),
+        JSON.stringify({ version: 1, daemon: { browserTools: { enabled: true } } }),
+      );
+
+      expect(loadPersistedConfig(home).daemon?.browserTools?.enabled).toBe(true);
+      expect(loadPersistedConfig(home).daemon?.agentProfiles).toEqual([
+        { id: "local", name: "Local", provider: "codex" },
+      ]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves unrelated local overrides when saving another setting", () => {
+    const home = createTempHome();
+    const localPath = path.join(home, "config.local.json");
+    try {
+      mkdirSync(path.join(home, "conf.d"));
+      writeFileSync(
+        path.join(home, "config.json"),
+        JSON.stringify({ version: 1, daemon: { browserTools: { enabled: false } } }),
+      );
+      writeFileSync(localPath, JSON.stringify({ daemon: { browserTools: { enabled: true } } }));
+
+      const desired = loadPersistedConfig(home);
+      desired.daemon = {
+        ...desired.daemon,
+        agentProfiles: [{ id: "local", name: "Local", provider: "codex" }],
+      };
+      savePersistedConfig(home, desired);
+
+      expect(JSON.parse(readFileSync(localPath, "utf-8"))).toEqual({
+        daemon: {
+          browserTools: { enabled: true },
+          agentProfiles: [{ id: "local", name: "Local", provider: "codex" }],
+        },
+      });
+      expect(loadPersistedConfig(home).daemon?.browserTools?.enabled).toBe(true);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("uses null tombstones when a local save removes an inherited key", () => {
+    const home = createTempHome();
+    const localPath = path.join(home, "config.local.json");
+    try {
+      mkdirSync(path.join(home, "conf.d"));
+      writeFileSync(
+        path.join(home, "config.json"),
+        JSON.stringify({ version: 1, daemon: { appendSystemPrompt: "Fleet prompt" } }),
+      );
+
+      const desired = loadPersistedConfig(home);
+      desired.daemon = { ...desired.daemon };
+      delete desired.daemon.appendSystemPrompt;
+      savePersistedConfig(home, desired);
+
+      expect(JSON.parse(readFileSync(localPath, "utf-8"))).toEqual({
+        daemon: { appendSystemPrompt: null },
+      });
+      expect(loadPersistedConfig(home).daemon?.appendSystemPrompt).toBeUndefined();
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("resolves a new nested override after a parent tombstone", () => {
+    const home = createTempHome();
+    try {
+      mkdirSync(path.join(home, "conf.d"));
+      writeFileSync(
+        path.join(home, "config.json"),
+        JSON.stringify({ version: 1, daemon: { browserTools: { enabled: false } } }),
+      );
+      writeFileSync(path.join(home, "config.local.json"), JSON.stringify({ daemon: null }));
+
+      const desired = loadPersistedConfig(home);
+      desired.daemon = {
+        agentProfiles: [{ id: "local", name: "Local", provider: "codex" }],
+      };
+      savePersistedConfig(home, desired);
+
+      expect(loadPersistedConfig(home)).toEqual({
+        version: 1,
+        daemon: {
+          agentProfiles: [{ id: "local", name: "Local", provider: "codex" }],
+        },
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("removes an empty local override and returns to lower layers", () => {
+    const home = createTempHome();
+    try {
+      mkdirSync(path.join(home, "conf.d"));
+      writeFileSync(
+        path.join(home, "config.json"),
+        JSON.stringify({
+          version: 1,
+          daemon: { agentProfiles: [{ id: "base", name: "Base", provider: "pi" }] },
+        }),
+      );
+      const desired = loadPersistedConfig(home);
+      desired.daemon = { ...desired.daemon, agentProfiles: [] };
+      savePersistedConfig(home, desired);
+      expect(loadPersistedConfig(home).daemon?.agentProfiles).toEqual([]);
+
+      const inherited = loadPersistedConfig(home);
+      inherited.daemon = {
+        ...inherited.daemon,
+        agentProfiles: [{ id: "base", name: "Base", provider: "pi" }],
+      };
+      savePersistedConfig(home, inherited);
+
+      expect(existsSync(path.join(home, "config.local.json"))).toBe(false);
+      expect(loadPersistedConfig(home).daemon?.agentProfiles).toEqual([
+        { id: "base", name: "Base", provider: "pi" },
+      ]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("reports the fragment path for invalid JSON", () => {
+    const home = createTempHome();
+    try {
+      mkdirSync(path.join(home, "conf.d"));
+      writeFileSync(path.join(home, "conf.d", "20-broken.json"), "{ nope\n");
+
+      expect(() => loadPersistedConfig(home)).toThrow(
+        `Invalid JSON in ${path.join(home, "conf.d", "20-broken.json")}`,
+      );
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("reports the contributing layers for an invalid merged config", () => {
+    const home = createTempHome();
+    const basePath = path.join(home, "config.json");
+    const fragmentPath = path.join(home, "conf.d", "20-invalid.json");
+    try {
+      mkdirSync(path.join(home, "conf.d"));
+      writeFileSync(basePath, JSON.stringify({ version: 1 }));
+      writeFileSync(
+        fragmentPath,
+        JSON.stringify({ daemon: { browserTools: { enabled: "sometimes" } } }),
+      );
+
+      expect(() => loadPersistedConfig(home)).toThrow(
+        `Invalid config after merging ${basePath}, ${fragmentPath}`,
+      );
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

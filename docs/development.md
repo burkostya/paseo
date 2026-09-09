@@ -52,6 +52,11 @@ than downloading a published desktop release.
 - **Paseo-created worktrees** seed `$PASEO_WORKTREE_PATH/.dev/paseo-home` from `$PASEO_SOURCE_CHECKOUT_PATH/.dev/paseo-home` by copying durable JSON metadata. Runtime files like pid files, sockets, and logs are not copied.
 - **This repo's worktree setup** also best-effort seeds `packages/app/ios` and the newest `.dev/ios-build` entry from the source checkout so iOS simulator services can reuse native project and Xcode cache state when it is safe enough to do so.
 
+To keep local experiments when a managed `config.json` is replaced, create `$PASEO_HOME/conf.d`.
+The daemon then reads `config.json`, the JSON fragments in that directory in filename order, and
+`config.local.json`. The app writes its changes to the local file. Run `paseo daemon reload` after
+editing a fragment by hand; see [data-model.md](data-model.md) for merge and deletion rules.
+
 Override knobs:
 
 ```bash
@@ -338,7 +343,7 @@ the daemon-global Git process limits in `$PASEO_HOME/config.json`:
 }
 ```
 
-Reload the daemon with `paseo reload`. Environment-variable overrides still require a restart because
+Reload the daemon with `paseo daemon reload`. Environment-variable overrides still require a restart because
 the launch environment remains authoritative. Lower values reduce machine pressure but make Git-backed workspace state and
 Git RPCs wait longer. See [Git process limits](data-model.md#git-process-limits) for defaults,
 semantics, and environment-variable overrides.
