@@ -22,7 +22,9 @@ export function createDaemonCommand(): Command {
   daemon.addCommand(pairCommand());
 
   addJsonAndDaemonHostOptions(
-    daemon.command("reload").description("Reload config.json without restarting the daemon"),
+    daemon
+      .command("reload")
+      .description("Reload persisted configuration without restarting the daemon"),
   ).action(withOutput(runDaemonReloadCommand));
 
   addJsonOption(daemon.command("status").description("Show local daemon status"))
@@ -72,7 +74,7 @@ export function createDaemonCommand(): Command {
   addJsonOption(
     daemon
       .command("set-password")
-      .description("Prompt for and save a hashed daemon password to config.json"),
+      .description("Prompt for and save a hashed daemon password to the persisted config"),
   )
     .option("--home <path>", "Paseo home directory (default: ~/.paseo)")
     .action(withOutput(runSetPasswordCommand));

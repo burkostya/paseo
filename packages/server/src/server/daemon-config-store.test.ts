@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -164,6 +164,130 @@ describe("DaemonConfigStore", () => {
       },
     ]);
     expect(store.get().agentProfiles).toHaveLength(1);
+  });
+
+  test("patches agent profiles into config.local.json without changing the Fleet config", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    mkdirSync(path.join(paseoHome, "conf.d"));
+    const configPath = path.join(paseoHome, "config.json");
+    writeFileSync(
+      configPath,
+      `${JSON.stringify(
+        {
+          version: 1,
+          daemon: { listen: "127.0.0.1:6767", browserTools: { enabled: false } },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const baseContents = readFileSync(configPath, "utf-8");
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+
+    store.patch({ agentProfiles: [{ id: "local", name: "Local", provider: "codex" }] });
+
+    expect(readFileSync(configPath, "utf-8")).toBe(baseContents);
+    expect(JSON.parse(readFileSync(path.join(paseoHome, "config.local.json"), "utf-8"))).toEqual({
+      daemon: {
+        agentProfiles: [{ id: "local", name: "Local", provider: "codex" }],
+      },
+    });
+    expect(loadPersistedConfig(paseoHome).daemon?.agentProfiles).toHaveLength(1);
+  });
+
+  test("tombstones a provider removed from a lower config layer", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    mkdirSync(path.join(paseoHome, "conf.d"));
+    const configPath = path.join(paseoHome, "config.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        version: 1,
+        agents: {
+          providers: {
+            review: { extends: "acp", label: "Review", command: ["review"] },
+          },
+          metadataGeneration: { providers: [{ provider: "codex" }] },
+        },
+      }),
+    );
+    const persisted = loadPersistedConfig(paseoHome);
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: persisted.agents?.providers ?? {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+
+    store.patch({ removeProviders: ["review"] });
+
+    expect(JSON.parse(readFileSync(path.join(paseoHome, "config.local.json"), "utf-8"))).toEqual({
+      agents: { providers: { review: null } },
+    });
+    expect(loadPersistedConfig(paseoHome).agents?.providers?.review).toBeUndefined();
+    expect(loadPersistedConfig(paseoHome).agents?.metadataGeneration).toEqual({
+      providers: [{ provider: "codex" }],
+    });
+
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        version: 1,
+        agents: {
+          providers: {
+            review: { extends: "acp", label: "Updated Review", command: ["review-v2"] },
+          },
+          metadataGeneration: { providers: [{ provider: "codex" }] },
+        },
+      }),
+    );
+    expect(loadPersistedConfig(paseoHome).agents?.providers?.review).toBeUndefined();
+  });
+
+  test("restores the exact local override when a layered patch fails", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    mkdirSync(path.join(paseoHome, "conf.d"));
+    writeFileSync(path.join(paseoHome, "config.json"), JSON.stringify({ version: 1 }));
+    const localPath = path.join(paseoHome, "config.local.json");
+    const previousLocal = '{\n  "daemon": {\n    "agentProfiles": []\n  }\n}\n';
+    writeFileSync(localPath, previousLocal);
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+      agentProfiles: [],
+    });
+    store.onApply(() => {
+      throw new Error("runtime apply failed");
+    });
+
+    expect(() =>
+      store.patch({
+        agentProfiles: [{ id: "local", name: "Local", provider: "codex" }],
+      }),
+    ).toThrow("runtime apply failed");
+    expect(readFileSync(localPath, "utf-8")).toBe(previousLocal);
   });
 
   test("patch replaces the whole agent profile list rather than merging entries", () => {
@@ -1021,6 +1145,64 @@ describe("DaemonConfigStore reload", () => {
     });
     expect(store.get().browserTools.enabled).toBe(true);
     expect(store.get().git).toEqual({ maxProcessesPerSecond: 12, maxProcessConcurrency: 3 });
+  });
+
+  test("reloads Fleet changes while retaining local profiles", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-reload-"));
+    tempDirs.push(paseoHome);
+    mkdirSync(path.join(paseoHome, "conf.d"));
+    const configPath = path.join(paseoHome, "config.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        version: 1,
+        daemon: {
+          browserTools: { enabled: false },
+          agentProfiles: [{ id: "fleet", name: "Fleet", provider: "pi" }],
+        },
+      }),
+    );
+    writeFileSync(
+      path.join(paseoHome, "config.local.json"),
+      JSON.stringify({
+        daemon: {
+          agentProfiles: [{ id: "local", name: "Local", provider: "codex" }],
+        },
+      }),
+    );
+
+    const persisted = loadPersistedConfig(paseoHome);
+    const relayEnabledFallback = persisted.daemon?.relay?.enabled === undefined;
+    const initialMutable = reloadableConfig(persisted, { relayEnabledFallback });
+    const store = new DaemonConfigStore(paseoHome, initialMutable, undefined, {
+      reloadSource: {
+        resolve: (nextPersisted) => ({
+          mutable: reloadableConfig(nextPersisted, { relayEnabledFallback }),
+          overrideControlledPaths: [],
+        }),
+      },
+    });
+
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        version: 1,
+        daemon: {
+          browserTools: { enabled: true },
+          agentProfiles: [{ id: "fleet-updated", name: "Fleet updated", provider: "pi" }],
+        },
+      }),
+    );
+
+    expect(store.reload()).toEqual({
+      appliedPaths: ["daemon.browserTools.enabled"],
+      restartRequiredPaths: [],
+      overrideControlledPaths: [],
+    });
+    expect(store.get().agentProfiles).toEqual([{ id: "local", name: "Local", provider: "codex" }]);
+    expect(loadPersistedConfig(paseoHome).daemon?.agentProfiles).toEqual([
+      { id: "local", name: "Local", provider: "codex" },
+    ]);
   });
 
   test("applies the global plugin switch in both directions", () => {

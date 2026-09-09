@@ -44,7 +44,10 @@ Store APIs own persistence atomicity and should not make services coordinate raw
 
 ```
 $PASEO_HOME/
-├── config.json                          # Daemon configuration
+├── config.json                          # Base daemon configuration
+├── conf.d/                               # Optional ordered configuration fragments
+│   └── 20-agent-profiles.json
+├── config.local.json                     # Local override written by the app/CLI
 ├── provider-usage-alerts.json           # Active quota alerts and delivered-threshold cursors
 ├── server-id                            # Stable daemon identifier (plain text, "srv_<base64url>")
 ├── daemon-keypair.json                  # E2EE keypair for relay (mode 0600)
@@ -183,13 +186,32 @@ Terminal activity contributes to the workspace status bucket **per `workspaceId`
 
 **Path:** `$PASEO_HOME/config.json`
 
-Single file, validated with `PersistedConfigSchema`.
+Without `$PASEO_HOME/conf.d`, the daemon uses one file, validated with
+`PersistedConfigSchema`, and writes changes back to `config.json`.
+
+Creating `$PASEO_HOME/conf.d` enables layered configuration. The daemon reads the base
+`config.json` when it exists, then the immediate `*.json` files in `conf.d` in lexical filename
+order, and finally `$PASEO_HOME/config.local.json`. A missing base file is allowed in this mode and
+uses the normal defaults without creating a Fleet-managed file. Nested objects merge; arrays,
+including `terminalProfiles` and `agentProfiles`, replace the value from lower layers. A `null` in
+an override removes the inherited key. Fragment and local files must contain JSON objects; the
+merged result is validated before it is applied. Symlinks to regular fragment files are supported;
+directories and other entries are ignored.
+
+Environment variables and daemon launch flags are applied after the persisted layers and remain
+authoritative for the settings they provide.
+
+The app and CLI write only the minimal delta needed to `config.local.json` when layering is enabled.
+The base file and fragment files remain untouched, so a Fleet update can replace `config.json`
+without removing local profiles. Delete a key from the local file to inherit the lower-layer value;
+delete the local file when no local overrides remain. Run `paseo daemon reload` after editing a base
+or fragment file by hand.
 
 `agents.skills.selection` is the daemon host's orchestration-skill preference. Missing means
 `{ mode: "all" }`. Installed state is not persisted; the daemon derives it from its three managed
 skill directories and keeps config plus filesystem convergence behind one serialized owner.
 
-`paseo reload` reads and validates this file once inside the daemon. That snapshot drives resolution,
+`paseo daemon reload` reads and validates these files once inside the daemon. That snapshot drives resolution,
 classification, application, and reload bookkeeping. `DaemonConfigStore` owns applying runtime-safe
 fields and their removal/default semantics; session handlers and the CLI only relay the structured
 result. Normal config patches persist only the requested fields, so launch overrides and resolved
@@ -308,7 +330,7 @@ the number of Git processes that have started but not exited. Every Git command 
 including initial workspace reads, filesystem-triggered refreshes, background checks, and explicit
 requests.
 
-Environment variables override `config.json`:
+Environment variables override the merged persisted configuration:
 
 | Environment variable                 | Setting                  |
 | ------------------------------------ | ------------------------ |
@@ -316,8 +338,8 @@ Environment variables override `config.json`:
 | `PASEO_GIT_MAX_PROCESS_CONCURRENCY`  | `maxProcessConcurrency`  |
 | `PASEO_GIT_CONCURRENCY`              | Legacy concurrency alias |
 
-`PASEO_GIT_MAX_PROCESS_CONCURRENCY` wins when it and the legacy alias are both set. Run `paseo reload`
-after changing `config.json`. Environment changes require a daemon restart; the launch environment
+`PASEO_GIT_MAX_PROCESS_CONCURRENCY` wins when it and the legacy alias are both set. Run `paseo daemon reload`
+after changing a persisted config layer. Environment changes require a daemon restart; the launch environment
 remains authoritative during reload.
 
 ### Issue trackers

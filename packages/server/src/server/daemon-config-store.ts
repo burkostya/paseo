@@ -1,6 +1,9 @@
 import {
+  capturePersistedConfigWriteState,
   loadPersistedConfig,
+  restorePersistedConfigWriteState,
   savePersistedConfig,
+  type PersistedConfigWriteState,
   type PersistedConfig,
 } from "./persisted-config.js";
 import { ProviderOverrideSchema } from "./agent/provider-launch-config.js";
@@ -158,6 +161,30 @@ function omitProvidersFromOverrides(
   }
 
   return Object.keys(nextOverrides).length > 0 ? nextOverrides : undefined;
+}
+
+function resolveProviderOverridesForPatch(
+  persistedAgents: PersistedConfig["agents"],
+  patch: Omit<SupportedMutableConfigPatch, "removeProviders">,
+  removeProviders: readonly string[],
+  preserveEmptyProviders: boolean,
+): Record<string, ProviderOverride> | undefined {
+  const persistedProviderOverrides = omitProvidersFromOverrides(
+    persistedAgents?.providers as Record<string, ProviderOverride> | undefined,
+    removeProviders,
+  );
+  const providerOverrides = applyMutableProviderConfigToOverrides(
+    persistedProviderOverrides,
+    patch.providers,
+  );
+  if (providerOverrides) return providerOverrides;
+  if (preserveEmptyProviders && removeProviders.length > 0 && persistedAgents?.providers) {
+    // Keep an empty provider map so the persisted-config layer writer can
+    // emit a provider-level tombstone instead of masking the whole `agents`
+    // object and future Fleet-managed siblings.
+    return {};
+  }
+  return undefined;
 }
 
 function getValueAtPath(config: MutableDaemonConfig, path: string): unknown {
@@ -378,10 +405,7 @@ export class DaemonConfigStore {
       return this.current;
     }
 
-    const { previous: persistedBeforePatch, knownNext } = this.persistConfig(
-      configPatch,
-      removedProviders,
-    );
+    const { knownNext, writeState } = this.persistConfig(configPatch, removedProviders);
     if (!configChanged) {
       this.lastKnownPersisted = knownNext;
       return this.current;
@@ -391,7 +415,7 @@ export class DaemonConfigStore {
       this.applyReplacement(next, { removedProviders });
       this.lastKnownPersisted = knownNext;
     } catch (error) {
-      savePersistedConfig(this.paseoHome, persistedBeforePatch, this.logger);
+      restorePersistedConfigWriteState(writeState);
       throw error;
     }
 
@@ -556,7 +580,8 @@ export class DaemonConfigStore {
   private persistConfig(
     patch: Omit<SupportedMutableConfigPatch, "removeProviders">,
     removeProviders: readonly string[],
-  ): { previous: PersistedConfig; knownNext: PersistedConfig } {
+  ): { knownNext: PersistedConfig; writeState: PersistedConfigWriteState } {
+    const writeState = capturePersistedConfigWriteState(this.paseoHome);
     const persisted = loadPersistedConfig(this.paseoHome, this.logger);
     const merge = (source: PersistedConfig) =>
       mergeMutablePatchIntoPersistedConfig({
@@ -564,11 +589,17 @@ export class DaemonConfigStore {
         patch,
         removeProviders,
         persistRelayEnabled: this.relayEnabledMutable,
+        preserveEmptyProviders: writeState.layered,
       });
     const nextPersisted = merge(persisted);
     const knownNext = merge(this.lastKnownPersisted);
-    savePersistedConfig(this.paseoHome, nextPersisted, this.logger);
-    return { previous: persisted, knownNext };
+    try {
+      savePersistedConfig(this.paseoHome, nextPersisted, this.logger);
+    } catch (error) {
+      restorePersistedConfigWriteState(writeState);
+      throw error;
+    }
+    return { knownNext, writeState };
   }
 }
 
@@ -577,10 +608,16 @@ function mergeMutablePatchIntoPersistedConfig(params: {
   patch: Omit<SupportedMutableConfigPatch, "removeProviders">;
   removeProviders: readonly string[];
   persistRelayEnabled: boolean;
+  preserveEmptyProviders?: boolean;
 }): PersistedConfig {
-  const { persisted, patch, removeProviders, persistRelayEnabled } = params;
+  const { persisted, patch, removeProviders, persistRelayEnabled, preserveEmptyProviders } = params;
   const daemon = mergeMutableDaemonPatch(persisted.daemon, patch, persistRelayEnabled);
-  const agents = mergeMutableAgentPatch(persisted.agents, patch, removeProviders);
+  const agents = mergeMutableAgentPatch(
+    persisted.agents,
+    patch,
+    removeProviders,
+    preserveEmptyProviders,
+  );
   return {
     ...persisted,
     ...(patch.pluginsEnabled !== undefined ? { pluginsEnabled: patch.pluginsEnabled } : {}),
@@ -594,6 +631,7 @@ function mergeMutableAgentPatch(
   persistedAgents: PersistedConfig["agents"],
   patch: Omit<SupportedMutableConfigPatch, "removeProviders">,
   removeProviders: readonly string[],
+  preserveEmptyProviders = false,
 ): PersistedConfig["agents"] {
   if (
     patch.providers === undefined &&
@@ -605,13 +643,11 @@ function mergeMutableAgentPatch(
   }
 
   const next = { ...persistedAgents } as Record<string, unknown>;
-  const persistedProviderOverrides = omitProvidersFromOverrides(
-    persistedAgents?.providers as Record<string, ProviderOverride> | undefined,
+  const providerOverrides = resolveProviderOverridesForPatch(
+    persistedAgents,
+    patch,
     removeProviders,
-  );
-  const providerOverrides = applyMutableProviderConfigToOverrides(
-    persistedProviderOverrides,
-    patch.providers,
+    preserveEmptyProviders,
   );
   if (providerOverrides) next["providers"] = providerOverrides;
   else delete next["providers"];

@@ -1,8 +1,8 @@
 # Custom Provider Configuration
 
-Paseo supports configuring custom agent providers through `config.json` (located at `$PASEO_HOME/config.json`, typically `~/.paseo/config.json`). You can extend built-in providers with different API backends, add ACP-compatible agents, set custom binaries, disable providers, and create multiple profiles for the same underlying provider.
+Paseo supports configuring custom agent providers through the persisted configuration (the base file is `$PASEO_HOME/config.json`, typically `~/.paseo/config.json`). You can extend built-in providers with different API backends, add ACP-compatible agents, set custom binaries, disable providers, and create multiple profiles for the same underlying provider. For a Fleet-managed base file, put local experiments in `$PASEO_HOME/conf.d/*.json` or `config.local.json`; see [data-model.md](data-model.md) for the layer order.
 
-Provider definitions live under `agents.providers` in config.json:
+Provider definitions live under `agents.providers` in the persisted configuration:
 
 ```json
 {
