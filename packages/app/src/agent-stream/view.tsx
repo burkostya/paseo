@@ -91,6 +91,7 @@ import { createAssistantImageOccurrenceKey } from "@/assistant-image/acquisition
 import { AssistantSelectionCopySurface } from "@/assistant-selection-copy/surface";
 import {
   collectSupersededPlanPermissionRequestIds,
+  projectPlanPermissionItems,
   resolvePlanPermissionResolutionStatus,
 } from "./plan-permission-state";
 import {
@@ -552,25 +553,33 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const effectiveStreamHead = useRetainedValue(streamHead, isActive);
     const effectiveTurnPresentation = useRetainedValue(turnPresentation, isActive);
     const isTurnActive = effectiveTurnPresentation.isActive;
+    const projectedPlanPermissions = useMemo(
+      () =>
+        projectPlanPermissionItems({
+          tail: effectiveStreamItems,
+          head: effectiveStreamHead ?? EMPTY_STREAM_HEAD,
+        }),
+      [effectiveStreamHead, effectiveStreamItems],
+    );
     // Keep retained history outside the 48ms live-head flush path.
     const preparedToolCallHistory = useMemo(
-      () => prepareToolCallHistory(toolCallDetailLevel, effectiveStreamItems),
-      [effectiveStreamItems, toolCallDetailLevel],
+      () => prepareToolCallHistory(toolCallDetailLevel, projectedPlanPermissions.tail),
+      [projectedPlanPermissions.tail, toolCallDetailLevel],
     );
     const projectedToolCalls = useMemo(
       () =>
         projectToolCallDetailLevel({
           level: toolCallDetailLevel,
-          tail: effectiveStreamItems,
-          head: effectiveStreamHead ?? EMPTY_STREAM_HEAD,
+          tail: projectedPlanPermissions.tail,
+          head: projectedPlanPermissions.head,
           preparedHistory: preparedToolCallHistory,
           isTurnActive,
         }),
       [
-        effectiveStreamHead,
-        effectiveStreamItems,
         isTurnActive,
         preparedToolCallHistory,
+        projectedPlanPermissions.head,
+        projectedPlanPermissions.tail,
         toolCallDetailLevel,
       ],
     );
@@ -589,25 +598,25 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const progressKey = `${remoteProgressKey ?? "local"}:${historyWindowStart}`;
     const renderedPlanPermissionRequestIds = useMemo(() => {
       const requestIds = new Set<string>();
-      for (const item of effectiveStreamItems) {
+      for (const item of projectedPlanPermissions.tail) {
         if (isPermissionPlanItem(item)) {
           requestIds.add(item.request.id);
         }
       }
-      for (const item of effectiveStreamHead ?? EMPTY_STREAM_HEAD) {
+      for (const item of projectedPlanPermissions.head) {
         if (isPermissionPlanItem(item)) {
           requestIds.add(item.request.id);
         }
       }
       return requestIds;
-    }, [effectiveStreamHead, effectiveStreamItems]);
+    }, [projectedPlanPermissions.head, projectedPlanPermissions.tail]);
     const supersededPlanPermissionRequestIds = useMemo(
       () =>
         collectSupersededPlanPermissionRequestIds({
-          tail: effectiveStreamItems,
-          head: effectiveStreamHead ?? EMPTY_STREAM_HEAD,
+          tail: projectedPlanPermissions.tail,
+          head: projectedPlanPermissions.head,
         }),
-      [effectiveStreamHead, effectiveStreamItems],
+      [projectedPlanPermissions.head, projectedPlanPermissions.tail],
     );
 
     const baseRenderModel = useMemo(() => {
@@ -659,8 +668,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       agentId,
       serverId: resolvedServerId,
       timelineEpoch,
-      tail: effectiveStreamItems,
-      head: effectiveStreamHead,
+      tail: projectedPlanPermissions.tail,
+      head: projectedPlanPermissions.head,
       enabled: supportsChatOutline && chatOutlineEnabled,
       viewportRef,
       onJumpError: handleTimelineHistoryLoadError,
