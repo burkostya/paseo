@@ -2,9 +2,9 @@ import { expect, test } from "../support/fixtures";
 import {
   applyProfileFromPicker,
   closeModelPicker,
-  expectComposerDoesNotName,
   expectAgentProfilesEmptyPrompt,
   expectProfileEditTooltip,
+  expectProfileRowSelected,
   expectComposerMode,
   expectCreateProfileFromModelRow,
   expectComposerModel,
@@ -53,7 +53,7 @@ test.describe("Agent profiles in the model picker", () => {
     }
   });
 
-  test("applying a pinned profile materializes it into the composer and is then forgotten", async ({
+  test("applying a pinned profile materializes it and keeps its identity in the composer", async ({
     page,
   }) => {
     const seed = await seedAgentProfiles([PROFILE]);
@@ -99,8 +99,8 @@ test.describe("Agent profiles in the model picker", () => {
         });
       });
 
-      await test.step("the composer names the model, never the profile", async () => {
-        await expectComposerDoesNotName(page, PROFILE.name);
+      await test.step("the composer keeps the profile name visible", async () => {
+        await expectComposerModel(page, `${PROFILE.name} · One minute stream`);
       });
 
       await test.step("reopening returns directly to the provider models", async () => {
@@ -110,6 +110,7 @@ test.describe("Agent profiles in the model picker", () => {
           name: PROFILE.name,
           summary: PROFILE_SUMMARY,
         });
+        await expectProfileRowSelected(page, PROFILE.name);
         await expectModelRowSelected(page, { provider: "mock", modelId: "one-minute-stream" });
         await closeModelPicker(page);
       });

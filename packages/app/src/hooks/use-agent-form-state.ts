@@ -51,6 +51,7 @@ export interface UseAgentFormStateOptions {
 
 export interface UseAgentFormStateResult {
   selectedServerId: string | null;
+  selectedAgentProfileId: string | null;
   selectedProvider: AgentProvider | null;
   selectedMode: string;
   setModeFromUser: (modeId: string) => void;
@@ -58,6 +59,7 @@ export interface UseAgentFormStateResult {
   setModelFromUser: (modelId: string) => void;
   selectedThinkingOptionId: string;
   setThinkingOptionFromUser: (thinkingOptionId: string) => void;
+  clearAgentProfileFromUser: () => void;
   workingDir: string;
   providerDefinitions: AgentProviderDefinition[];
   providerDefinitionMap: Map<AgentProvider, AgentProviderDefinition>;
@@ -173,7 +175,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
   );
 
   const [{ form: formState, userModified, resolution }, dispatch] = useReducer(resolveAgentForm, {
-    form: { provider: null, modeId: "", model: "", thinkingOptionId: "" },
+    form: { agentProfileId: null, provider: null, modeId: "", model: "", thinkingOptionId: "" },
     userModified: INITIAL_USER_MODIFIED,
     resolution: INITIAL_AGENT_FORM_RESOLUTION,
   });
@@ -328,6 +330,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
       const providerPrefs = preferenceOverlayRef.current.current().providerPreferences?.[provider];
       const action = {
         type: "APPLY_PROFILE_FROM_USER" as const,
+        profileId: profile.agentProfileId,
         provider,
         modelId: profile.modelId,
         modeId: profile.modeId,
@@ -438,6 +441,10 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
     [formState, updateCurrentPreferences],
   );
 
+  const clearAgentProfileFromUser = useCallback(() => {
+    dispatch({ type: "CLEAR_AGENT_PROFILE_FROM_USER" });
+  }, []);
+
   const refreshProviderModels = useCallback(
     (provider?: AgentProvider) => {
       void refreshSnapshot(provider ? [provider] : undefined);
@@ -478,6 +485,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
   return useMemo(
     () => ({
       selectedServerId: serverId,
+      selectedAgentProfileId: formState.agentProfileId,
       selectedProvider: formState.provider,
       selectedMode: formState.modeId,
       setModeFromUser,
@@ -485,6 +493,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
       setModelFromUser,
       selectedThinkingOptionId: formState.thinkingOptionId,
       setThinkingOptionFromUser,
+      clearAgentProfileFromUser,
       workingDir,
       providerDefinitions,
       providerDefinitionMap,
@@ -509,6 +518,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
     }),
     [
       serverId,
+      formState.agentProfileId,
       formState.provider,
       formState.modeId,
       formState.model,
@@ -517,6 +527,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
       setModeFromUser,
       setModelFromUser,
       setThinkingOptionFromUser,
+      clearAgentProfileFromUser,
       providerDefinitions,
       providerDefinitionMap,
       agentDefinition,

@@ -107,6 +107,7 @@ interface ChatAgentStateShape {
   serverId: string | null;
   id: string | null;
   provider?: Agent["provider"];
+  agentProfileId?: Agent["agentProfileId"];
   status: Agent["status"] | null;
   cwd: string | null;
   workspaceId?: string;
@@ -166,6 +167,7 @@ function selectChatAgentState(
     serverId: agent.serverId,
     id: agent.id,
     provider: agent.provider,
+    agentProfileId: agent.agentProfileId ?? null,
     status: agent.status,
     cwd: agent.cwd,
     workspaceId: agent.workspaceId,
@@ -193,6 +195,7 @@ function buildChatAgentFromState(
     serverId: state.serverId,
     id: state.id,
     provider: state.provider,
+    agentProfileId: state.agentProfileId,
     status: state.status,
     cwd: state.cwd,
     workspaceId: state.workspaceId,
@@ -626,6 +629,7 @@ function AgentPanelBody({
           serverId: agentState.serverId,
           id: agentState.id,
           provider: agentState.provider,
+          agentProfileId: agentState.agentProfileId,
           status: agentState.status,
           cwd: agentState.cwd,
           workspaceId: agentState.workspaceId,

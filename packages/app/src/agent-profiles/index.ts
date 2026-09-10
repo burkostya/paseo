@@ -8,16 +8,21 @@
  * rules, the icon registry, the row and modal chrome) is internal; import from
  * `@/agent-profiles`, never a path inside it.
  *
- * `useAgentProfilePicker` deliberately hands the picker a flat row view model
- * and one `applyProfile(id)` callback rather than the profiles themselves: what
- * a profile contains, and how it reaches a live agent versus a draft, stays in
- * here.
+ * `useAgentProfilePicker` deliberately hands the picker a flat row view model,
+ * the selected identity, and one `applyProfile(id)` callback rather than the
+ * profiles themselves: what a profile contains, and how it reaches a live
+ * agent versus a draft, stays in here.
  */
 export type { AgentProfile } from "@getpaseo/protocol/messages";
 export type { MaterializedAgentProfile } from "./internal/materialize-profile";
 export type { AgentProfileSeed } from "./internal/profile-form-model";
 export { useAgentProfileEditor, type AgentProfileEditorControls } from "./agent-profile-editor";
 export { useAgentProfiles } from "./internal/use-agent-profiles";
+export { useAgentProfileIdentity } from "./internal/identity";
+export {
+  resolveAgentProfileIdentity,
+  type AgentProfileIdentity,
+} from "./internal/resolve-identity";
 export {
   useAgentProfilePicker,
   type AgentProfileApplyTarget,
