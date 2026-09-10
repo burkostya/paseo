@@ -19,6 +19,12 @@ import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useSessionStore } from "@/stores/session-store";
 import { Archive, ChevronRight } from "lucide-react-native";
 import { getProviderIcon } from "@/components/provider-icons";
+import {
+  AgentProfileGlyph,
+  resolveAgentProfileIdentity,
+  type AgentProfileIdentity,
+  useAgentProfiles,
+} from "@/agent-profiles";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { HighlightedText } from "@/components/ui/highlighted-text";
@@ -110,6 +116,25 @@ function SessionBadge({
   return <StatusBadge label={label} variant={variant} leading={icon} />;
 }
 
+function SessionRowProfileIdentity({
+  profile,
+  size,
+  testID,
+}: {
+  profile: AgentProfileIdentity | null;
+  size: number;
+  testID: string;
+}) {
+  if (!profile) return null;
+  return (
+    <View style={styles.profileIdentity} testID={testID}>
+      <AgentProfileGlyph icon={profile.icon} color={profile.color} size={size} />
+      <Text numberOfLines={1} style={styles.profileIdentityText}>
+        {profile.name}
+      </Text>
+    </View>
+  );
+}
 function SessionRowBadges({
   agent,
   archivedIcon,
@@ -188,6 +213,8 @@ function SessionRow({
   const branch = agent.projectPlacement?.checkout.currentBranch ?? "";
   const workspaceName = agent.projectPlacement?.workspaceName ?? "";
   const ProviderIcon = getProviderIcon(agent.provider, agent.serverId);
+  const { profiles } = useAgentProfiles(agent.serverId);
+  const selectedProfile = resolveAgentProfileIdentity(profiles, agent.agentProfileId);
   const pendingPermissionCount = agent.pendingPermissionCount ?? 0;
   const ranges = useMemo(
     () => ({
@@ -267,6 +294,12 @@ function SessionRow({
         {isMobile ? agentTitle : null}
         {isMobile ? (
           <View style={styles.rowMetaRow}>
+            <SessionRowProfileIdentity
+              profile={selectedProfile}
+              size={theme.iconSize.sm}
+              testID={`agent-row-profile-${agent.serverId}-${agent.id}`}
+            />
+            {selectedProfile ? <Text style={styles.sessionMetaSeparator}>·</Text> : null}
             <HighlightedText
               text={projectName}
               ranges={ranges.project}
@@ -315,6 +348,11 @@ function SessionRow({
             style={styles.columnMeta}
             numberOfLines={1}
             testID={`agent-row-branch-${agent.serverId}-${agent.id}`}
+          />
+          <SessionRowProfileIdentity
+            profile={selectedProfile}
+            size={theme.iconSize.sm}
+            testID={`agent-row-profile-${agent.serverId}-${agent.id}`}
           />
           <Text style={styles.columnMetaFixed} numberOfLines={1}>
             {timeAgo}
@@ -606,6 +644,20 @@ const styles = StyleSheet.create((theme) => ({
   },
   providerIconWrap: {
     flexShrink: 0,
+  },
+  profileIdentity: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  profileIdentityText: {
+    flexShrink: 1,
+    minWidth: 0,
+    maxWidth: 160,
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
   },
   workspaceTitleText: {
     flexShrink: { xs: 1, md: 0 },

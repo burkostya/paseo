@@ -218,9 +218,16 @@ export function WorkspaceTabOptionRow({
     () => [styles.optionRow, active && styles.optionRowActive],
     [active],
   );
+  const accessibilityState = useMemo(() => ({ selected }), [selected]);
   return (
     <View style={optionRowStyle}>
-      <Pressable onPress={onPress} style={pressableStyle}>
+      <Pressable
+        onPress={onPress}
+        style={pressableStyle}
+        accessibilityRole="button"
+        accessibilityLabel={presentation.tooltip}
+        accessibilityState={accessibilityState}
+      >
         {(state) => {
           const optionActive = isOptionActive(state);
           return (

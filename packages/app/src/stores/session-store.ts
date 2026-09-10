@@ -73,6 +73,7 @@ export interface Agent {
   serverId: string;
   id: string;
   provider: AgentProvider;
+  agentProfileId?: string | null;
   status: AgentLifecycleStatus;
   turn: TurnLiveness;
   createdAt: Date;
@@ -1866,6 +1867,7 @@ export const useSessionStore = create<SessionStore>()(
             lastActivityAt,
             cwd: agent.cwd,
             provider: agent.provider,
+            agentProfileId: agent.agentProfileId ?? null,
             pendingPermissionCount: agent.pendingPermissions.length,
             requiresAttention: agent.requiresAttention ?? false,
             attentionReason: agent.attentionReason ?? null,

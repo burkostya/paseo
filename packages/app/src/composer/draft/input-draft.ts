@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import equal from "fast-deep-equal";
 import type { UserComposerAttachment } from "@/attachments/types";
 import type { TextReplacement } from "@/composer/types";
 import type { DraftAgentControlsProps } from "@/composer/agent-controls";
@@ -287,6 +288,18 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     [applyProfileFeatureValues, formState],
   );
 
+  const clearAgentProfileFromUser = formState.clearAgentProfileFromUser;
+  const setDraftFeatureValueFromUser = useCallback(
+    (featureId: string, value: unknown) => {
+      const currentValue = draftFeatures.find((feature) => feature.id === featureId)?.value;
+      if (!equal(currentValue, value)) {
+        clearAgentProfileFromUser();
+      }
+      setDraftFeatureValue(featureId, value);
+    },
+    [clearAgentProfileFromUser, draftFeatures, setDraftFeatureValue],
+  );
+
   const commandDraftConfig = useMemo(
     () =>
       composerOptions
@@ -322,7 +335,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       agentControls: buildDraftAgentControls({
         formState,
         features: draftFeatures,
-        onSetFeature: setDraftFeatureValue,
+        onSetFeature: setDraftFeatureValueFromUser,
         onApplyAgentProfile: applyDraftAgentProfile,
       }),
       commandDraftConfig,
@@ -336,7 +349,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     draftFeatureValues,
     applyDraftAgentProfile,
     formState,
-    setDraftFeatureValue,
+    setDraftFeatureValueFromUser,
     workingDir,
   ]);
 

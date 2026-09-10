@@ -27,6 +27,7 @@ describe("materializeAgentProfile", () => {
         }),
       ),
     ).toEqual({
+      agentProfileId: "ui-work",
       provider: "claude",
       modelId: "claude-opus-5",
       modeId: "plan",
@@ -37,6 +38,7 @@ describe("materializeAgentProfile", () => {
 
   it("treats omitted and blank fields the same", () => {
     expect(materializeAgentProfile(profile({ model: "   ", modeId: "" }))).toEqual({
+      agentProfileId: "ui-work",
       provider: "claude",
       modelId: "",
       modeId: "",
@@ -66,6 +68,7 @@ describe("toAgentConfigApply", () => {
         ),
       ),
     ).toEqual({
+      agentProfileId: "ui-work",
       modelId: "claude-opus-5",
       modeId: "plan",
       thinkingOptionId: "think-hard",
@@ -75,6 +78,7 @@ describe("toAgentConfigApply", () => {
 
   it("omits what the profile leaves alone rather than clearing it", () => {
     expect(toAgentConfigApply(materializeAgentProfile(profile({ modeId: "plan" })))).toEqual({
+      agentProfileId: "ui-work",
       modeId: "plan",
     });
   });

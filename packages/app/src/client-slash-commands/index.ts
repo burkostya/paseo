@@ -73,6 +73,7 @@ export function buildDraftAgentSetup(agent: Agent): WorkspaceDraftTabSetup {
   return {
     provider: agent.provider,
     cwd: agent.cwd,
+    agentProfileId: agent.agentProfileId ?? null,
     modeId: agent.currentModeId ?? agent.runtimeInfo?.modeId ?? null,
     model: agent.model ?? agent.runtimeInfo?.model ?? null,
     thinkingOptionId: agent.thinkingOptionId ?? agent.runtimeInfo?.thinkingOptionId ?? null,

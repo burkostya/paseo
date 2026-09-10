@@ -12,6 +12,8 @@ import { AgentOwnerSchema, daemonExecutionKey, type DaemonAgentOwner } from "./a
 
 const SERIALIZABLE_CONFIG_SCHEMA = z
   .object({
+    // COMPAT(agentProfileIdentity): added in v0.3.3, remove after 2027-02-12 once old daemons are unsupported.
+    agentProfileId: z.string().nullable().optional(),
     modeId: z.string().nullable().optional(),
     model: z.string().nullable().optional(),
     thinkingOptionId: z.string().nullable().optional(),
@@ -79,6 +81,7 @@ const STORED_AGENT_SCHEMA = z.object({
 
 export type SerializableAgentConfig = Pick<
   AgentSessionConfig,
+  | "agentProfileId"
   | "modeId"
   | "model"
   | "thinkingOptionId"

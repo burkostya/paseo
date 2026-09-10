@@ -408,6 +408,12 @@ export async function expectProfileVisibleForProvider(
   await expect(row.getByText(input.summary, { exact: true })).toBeVisible();
 }
 
+export async function expectProfileRowSelected(page: Page, name: string): Promise<void> {
+  await expect(profilePickerRow(page, name)).toHaveAttribute("aria-selected", "true", {
+    timeout: 30_000,
+  });
+}
+
 export async function expectProfileEditIsPencilOnly(page: Page): Promise<void> {
   const viewport = pickerViewport(page);
   await expect(
@@ -454,13 +460,9 @@ export async function applyProfileFromPicker(page: Page, name: string): Promise<
   await expect(pickerViewport(page)).toHaveCount(0, { timeout: 30_000 });
 }
 
-/**
- * Applying a profile materializes it and forgets it: nothing in the root view
- * claims selection. Model rows do carry `aria-selected`, so a count of zero here
- * is the absence of a checkmark, not the absence of the attribute everywhere.
- */
+/** A picker with no bound profile has no selected rows. */
 export async function expectNothingSelectedInPickerRoot(page: Page): Promise<void> {
-  await expect(pickerViewport(page).locator("[aria-selected]")).toHaveCount(0);
+  await expect(pickerViewport(page).locator('[aria-selected="true"]')).toHaveCount(0);
 }
 
 export async function expectAgentProfilesEditShortcut(page: Page): Promise<void> {
@@ -564,11 +566,4 @@ export async function expectComposerMode(page: Page, modeLabel: string): Promise
   await expect(
     page.getByRole("button", { name: `Select agent mode (${modeLabel})`, exact: true }).first(),
   ).toBeVisible({ timeout: 30_000 });
-}
-
-/** The composer never shows the profile's name — a profile is not a selection. */
-export async function expectComposerDoesNotName(page: Page, profileName: string): Promise<void> {
-  await expect(
-    page.locator('[data-testid="message-input-root"]:visible').getByText(profileName),
-  ).toHaveCount(0);
 }

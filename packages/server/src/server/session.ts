@@ -1005,6 +1005,7 @@ export class Session {
           agentManager.setAgentFeature(agentId, featureId, value),
         setThinking: (agentId, thinkingOptionId) =>
           agentManager.setAgentThinkingOption(agentId, thinkingOptionId),
+        applyBundle: (agentId, config) => agentManager.applyAgentConfig(agentId, config),
       },
       logger: this.sessionLogger,
     });
