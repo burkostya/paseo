@@ -2663,6 +2663,7 @@ export const fr: TranslationResources = {
         sectionTitle: "Profils d’agent",
         unavailable: "Connectez-vous à cet hôte pour gérer les profils d’agent",
         unsupported: "Le daemon de cet hôte ne prend pas encore en charge les profils d’agent",
+        identityUnsupported: "Mettez à jour cet hôte pour afficher le profil d’agent sélectionné.",
         emptyState:
           "Aucun profil pour le moment. Ajoutez-en un pour démarrer des agents avec un fournisseur et un modèle enregistrés.",
         addProfileTitle: "Ajouter un profil d’agent",

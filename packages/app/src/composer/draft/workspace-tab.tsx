@@ -61,6 +61,7 @@ const DRAFT_CAPABILITIES: AgentCapabilityFlags = {
 
 interface AutoSubmitConfig {
   provider: string;
+  agentProfileId: string | null;
   modeId: string | null;
   model: string | null;
   thinkingOptionId: string | null;
@@ -70,6 +71,7 @@ interface AutoSubmitConfig {
 function resolveAutoSubmitConfig(
   pending: {
     provider: string;
+    agentProfileId?: string | null;
     modeId?: string | null;
     model?: string | null;
     thinkingOptionId?: string | null;
@@ -79,6 +81,7 @@ function resolveAutoSubmitConfig(
   if (!pending) return null;
   return {
     provider: pending.provider,
+    agentProfileId: pending.agentProfileId ?? null,
     modeId: pending.modeId ?? null,
     model: pending.model ?? null,
     thinkingOptionId: pending.thinkingOptionId ?? null,
@@ -130,6 +133,13 @@ function resolveDraftModeId(input: {
   return null;
 }
 
+function resolveDraftAgentProfileId(
+  autoSubmitConfig: AutoSubmitConfig | null,
+  selectedAgentProfileId: string | null,
+): string | null {
+  return autoSubmitConfig ? autoSubmitConfig.agentProfileId : selectedAgentProfileId;
+}
+
 async function submitDraftCreateRequest(input: {
   draftId: string;
   attempt: { clientMessageId: string };
@@ -143,6 +153,7 @@ async function submitDraftCreateRequest(input: {
   autoSubmitConfig: AutoSubmitConfig | null;
   composerState: {
     selectedProvider: string | null;
+    selectedAgentProfileId: string | null;
     selectedMode: string;
     modeOptions: readonly { id: string }[];
     effectiveModelId: string | null;
@@ -183,6 +194,10 @@ async function submitDraftCreateRequest(input: {
   const config = buildWorkspaceDraftAgentConfig({
     provider,
     cwd,
+    agentProfileId: resolveDraftAgentProfileId(
+      autoSubmitConfig,
+      composerState.selectedAgentProfileId,
+    ),
     ...modeIdOverride,
     model: autoSubmitConfig?.model ?? (composerState.effectiveModelId || undefined),
     thinkingOptionId:
@@ -217,6 +232,7 @@ function buildDraftAgentSnapshot(input: {
   workspaceDirectory: string | null;
   autoSubmitConfig: AutoSubmitConfig | null;
   composerState: {
+    selectedAgentProfileId: string | null;
     effectiveModelId: string | null;
     effectiveThinkingOptionId: string | null;
     modeOptions: readonly { id: string }[];
@@ -261,6 +277,9 @@ function buildDraftAgentSnapshot(input: {
     cwd: workspaceDirectory,
     model,
     features: composerState.agentControls.features,
+    agentProfileId: autoSubmitConfig
+      ? autoSubmitConfig.agentProfileId
+      : composerState.selectedAgentProfileId,
     thinkingOptionId,
     parentAgentId: null,
     labels: {},
@@ -276,6 +295,7 @@ function buildDraftInitialValues(input: {
     modeId: input.initialSetup.modeId,
     model: input.initialSetup.model,
     thinkingOptionId: input.initialSetup.thinkingOptionId,
+    agentProfileId: input.initialSetup.agentProfileId ?? null,
   };
 }
 
