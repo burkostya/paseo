@@ -114,16 +114,17 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 
 ### Nested: SerializableConfig
 
-| Field              | Type                       | Description                  |
-| ------------------ | -------------------------- | ---------------------------- |
-| `title`            | `string?`                  | Configured title             |
-| `modeId`           | `string?`                  | Configured mode              |
-| `model`            | `string?`                  | Configured model             |
-| `thinkingOptionId` | `string?`                  | Thinking/reasoning level     |
-| `featureValues`    | `Record<string, unknown>?` | Feature preference overrides |
-| `extra`            | `Record<string, any>?`     | Provider-specific config     |
-| `systemPrompt`     | `string?`                  | Custom system prompt         |
-| `mcpServers`       | `Record<string, any>?`     | MCP server configurations    |
+| Field              | Type                       | Description                                                                            |
+| ------------------ | -------------------------- | -------------------------------------------------------------------------------------- |
+| `agentProfileId`   | `string?`                  | Host-wide agent profile bound to this session; manual config changes clear the binding |
+| `title`            | `string?`                  | Configured title                                                                       |
+| `modeId`           | `string?`                  | Configured mode                                                                        |
+| `model`            | `string?`                  | Configured model                                                                       |
+| `thinkingOptionId` | `string?`                  | Thinking/reasoning level                                                               |
+| `featureValues`    | `Record<string, unknown>?` | Feature preference overrides                                                           |
+| `extra`            | `Record<string, any>?`     | Provider-specific config                                                               |
+| `systemPrompt`     | `string?`                  | Custom system prompt                                                                   |
+| `mcpServers`       | `Record<string, any>?`     | MCP server configurations                                                              |
 
 ### Nested: RuntimeInfo
 
@@ -301,12 +302,14 @@ and remove. List order is the display order.
 
 Absent and empty mean different things for terminal profiles — omitting the key falls back to
 `DEFAULT_TERMINAL_PROFILES`, while `[]` means the user removed them all. Agent profiles have no
-defaults, so both mean none.
+defaults, so both mean none. An agent record stores the selected profile ID in its serializable
+config; the app uses that ID to keep the profile identity visible across chat, lists, and reloads.
 
 `PersistedConfigSchema` parses strictly, so a daemon that predates a field drops it on write
-rather than storing something it cannot describe. That is why the client gates the agent profiles
-UI on `server_info.features.agentProfiles` instead of letting a save appear to succeed against an
-older daemon.
+rather than storing something it cannot describe. The client gates profile management on
+`server_info.features.agentProfiles` and `agentConfigApply`; profile identity surfaces additionally
+require `agentProfileIdentity`, so an older daemon can still apply profiles without claiming to
+persist their selection.
 
 ### Git process limits
 

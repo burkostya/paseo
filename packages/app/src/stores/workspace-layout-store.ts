@@ -179,6 +179,7 @@ const MAX_TREE_DEPTH = 5;
 const WorkspaceDraftTabSetupStorageSchema = z.strictObject({
   provider: z.string(),
   cwd: z.string(),
+  agentProfileId: z.string().nullable().optional(),
   modeId: z.string().nullable(),
   model: z.string().nullable(),
   thinkingOptionId: z.string().nullable(),

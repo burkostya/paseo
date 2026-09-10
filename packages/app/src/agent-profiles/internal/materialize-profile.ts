@@ -7,6 +7,7 @@ import type { AgentConfigApply, AgentProfile } from "@getpaseo/protocol/messages
  * every consumer would otherwise re-derive the same trim-and-drop rules.
  */
 export interface MaterializedAgentProfile {
+  agentProfileId: string;
   provider: string;
   /** Empty when the profile names no model, meaning "leave the model alone". */
   modelId: string;
@@ -21,6 +22,7 @@ function trimmed(value: string | undefined): string {
 
 export function materializeAgentProfile(profile: AgentProfile): MaterializedAgentProfile {
   return {
+    agentProfileId: profile.id,
     provider: trimmed(profile.provider),
     modelId: trimmed(profile.model),
     modeId: trimmed(profile.modeId),
@@ -49,6 +51,7 @@ export function reconcileMaterializedProfileMode(
  */
 export function toAgentConfigApply(profile: MaterializedAgentProfile): AgentConfigApply {
   return {
+    agentProfileId: profile.agentProfileId,
     ...(profile.modelId ? { modelId: profile.modelId } : {}),
     ...(profile.modeId ? { modeId: profile.modeId } : {}),
     ...(profile.thinkingOptionId ? { thinkingOptionId: profile.thinkingOptionId } : {}),

@@ -183,6 +183,8 @@ export type PaseoProviderFeatureValues = Record<string, unknown>;
 export interface PaseoAgentConfig {
   /** Provider and model in `provider/model` format. */
   provider: string;
+  /** Paseo-owned identity of the host-wide agent profile used at launch. */
+  agentProfileId?: PaseoAgentSessionConfig["agentProfileId"];
   modeId?: PaseoAgentSessionConfig["modeId"];
   thinkingOptionId?: PaseoAgentSessionConfig["thinkingOptionId"];
   featureValues?: PaseoProviderFeatureValues;

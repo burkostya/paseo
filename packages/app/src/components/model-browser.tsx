@@ -64,6 +64,8 @@ const DESKTOP_PROVIDER_VIEW_MAX_HEIGHT = 400;
 const DESKTOP_PROVIDER_VIEW_BASE_HEIGHT = 80;
 const DESKTOP_MODEL_ROW_HEIGHT = 40;
 
+function noop() {}
+
 const ThemedAlertTriangle = withUnistyles(AlertTriangle);
 const ThemedCheck = withUnistyles(Check);
 const ThemedChevronRight = withUnistyles(ChevronRight);
@@ -524,6 +526,7 @@ function ModelBrowserRow({
   tone = "default",
   labelMuted = false,
   spacing = "model",
+  disabled = false,
   onPress,
   testID,
 }: {
@@ -537,6 +540,7 @@ function ModelBrowserRow({
   /** For rows that offer an action rather than name a thing you can pick. */
   labelMuted?: boolean;
   spacing?: "model" | "provider";
+  disabled?: boolean;
   onPress: () => void;
   testID?: string;
 }) {
@@ -547,8 +551,9 @@ function ModelBrowserRow({
       Boolean(hovered) &&
         (tone === "elevated" ? styles.browserRowHoveredElevated : styles.browserRowHovered),
       pressed && (tone === "default" ? styles.browserRowPressed : styles.browserRowPressedElevated),
+      disabled && styles.browserRowDisabled,
     ],
-    [spacing, tone],
+    [disabled, spacing, tone],
   );
   const contentStyle = useMemo(
     () => [styles.browserRowText, description && styles.browserRowTextInline],
@@ -558,10 +563,9 @@ function ModelBrowserRow({
 
   return (
     <ModelBrowserPressable
-      onPress={onPress}
+      onPress={disabled ? noop : onPress}
       style={pressableStyle}
-      // A profile row is an action, not a selection, so it carries no selection
-      // state at all — only rows that draw the checkmark claim one.
+      // Profile rows are actions that also identify the currently applied bundle.
       accessibilitySelected={selectionIndicator ? selected : undefined}
       testID={testID}
     >
@@ -846,39 +850,61 @@ function SelectableModelRow({
 
 function AgentProfilePickerRowView({
   row,
+  selected,
+  pending,
+  disabled,
   onApply,
 }: {
   row: AgentProfilePickerRowModel;
+  selected: boolean;
+  pending: boolean;
+  disabled: boolean;
   onApply: (profileId: string) => void;
 }) {
-  const handlePress = useCallback(() => onApply(row.id), [onApply, row.id]);
+  const handlePress = useCallback(() => {
+    if (!disabled) onApply(row.id);
+  }, [disabled, onApply, row.id]);
   const leadingSlot = useMemo(
     () => <AgentProfileGlyph icon={row.icon} color={row.color} size={ICON_SIZE.sm} />,
     [row.color, row.icon],
+  );
+  const pendingSlot = useMemo(
+    () =>
+      pending ? (
+        <ThemedLoadingSpinner size={ICON_SIZE.sm} uniProps={foregroundMutedMapping} />
+      ) : undefined,
+    [pending],
   );
   return (
     <ModelBrowserRow
       label={row.name}
       description={row.summary}
       tone="elevated"
+      selected={selected}
+      selectionIndicator
+      disabled={disabled}
       onPress={handlePress}
       leadingSlot={leadingSlot}
+      trailingSlot={pendingSlot}
       testID={`model-profile-row-${row.id}`}
     />
   );
 }
 
 /**
- * Pinned above the provider list. Rows are actions, not selections: applying a
- * profile writes its values into the composer and nothing stays bound to it, so
- * there is no checkmark and no active row to show.
+ * Pinned above the provider list. Applying a profile writes its values into the
+ * composer and records its identity, so the active row carries a checkmark.
  */
 function AgentProfilesPickerSection({
   rows,
+  selectedProfileId,
+  pendingProfileId,
   onApplyProfile,
   onEditProfiles,
 }: {
   rows: AgentProfilePickerRowModel[];
+  selectedProfileId: string | null;
+  pendingProfileId: string | null;
   onApplyProfile?: (profileId: string) => void;
   onEditProfiles?: () => void;
 }) {
@@ -898,7 +924,14 @@ function AgentProfilesPickerSection({
         ) : null}
       </View>
       {rows.map((row) => (
-        <AgentProfilePickerRowView key={row.id} row={row} onApply={handleApply} />
+        <AgentProfilePickerRowView
+          key={row.id}
+          row={row}
+          selected={row.id === selectedProfileId}
+          pending={row.id === pendingProfileId}
+          disabled={pendingProfileId !== null}
+          onApply={handleApply}
+        />
       ))}
     </View>
   );
@@ -927,10 +960,14 @@ function CreateAgentProfileRow({ onPress }: { onPress: () => void }) {
 
 function AgentProfilesPickerContent({
   rows,
+  selectedProfileId,
+  pendingProfileId,
   onApplyProfile,
   onEditProfiles,
 }: {
   rows: AgentProfilePickerRowModel[];
+  selectedProfileId: string | null;
+  pendingProfileId: string | null;
   onApplyProfile?: (profileId: string) => void;
   onEditProfiles?: () => void;
 }) {
@@ -940,6 +977,8 @@ function AgentProfilesPickerContent({
   return (
     <AgentProfilesPickerSection
       rows={rows}
+      selectedProfileId={selectedProfileId}
+      pendingProfileId={pendingProfileId}
       onApplyProfile={onApplyProfile}
       onEditProfiles={onEditProfiles}
     />
@@ -1277,6 +1316,8 @@ function ProviderModelBrowserContent({
       normalizedQuery.length === 0 && showProfilesSection && profiles ? (
         <AgentProfilesPickerContent
           rows={providerProfileRows}
+          selectedProfileId={profiles.selectedProfileId}
+          pendingProfileId={profiles.pendingProfileId}
           onApplyProfile={onApplyProfile}
           onEditProfiles={onEditProfiles}
         />
@@ -1433,6 +1474,8 @@ function ModelBrowserContent({
       {showProfilesSection && profiles ? (
         <AgentProfilesPickerContent
           rows={profiles.rows}
+          selectedProfileId={profiles.selectedProfileId}
+          pendingProfileId={profiles.pendingProfileId}
           onApplyProfile={onApplyProfile}
           onEditProfiles={onEditProfiles}
         />
@@ -1565,6 +1608,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   browserRowPressedElevated: {
     backgroundColor: theme.colors.surface2,
+  },
+  browserRowDisabled: {
+    opacity: 0.55,
   },
   browserRowContent: {
     flex: 1,

@@ -2469,6 +2469,7 @@ export const ptBR: TranslationResources = {
         sectionTitle: "Perfis de agente",
         unavailable: "Conecte-se a este host para gerenciar perfis de agente",
         unsupported: "Este host executa um daemon que ainda não é compatível com perfis de agente",
+        identityUnsupported: "Atualize este host para mostrar o perfil de agente selecionado.",
         emptyState:
           "Nenhum perfil ainda. Adicione um para iniciar agentes a partir de um provedor e modelo salvos.",
         addProfileTitle: "Adicionar perfil de agente",

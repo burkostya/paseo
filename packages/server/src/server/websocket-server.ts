@@ -1818,6 +1818,8 @@ export class VoiceAssistantWebSocketServer {
         agentProfiles: true,
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: true,
+        // COMPAT(agentProfileIdentity): added in v0.3.3, remove gate after 2027-02-12.
+        agentProfileIdentity: true,
         // COMPAT(providerUsageWarnings): added in the v0.1.109 fork, remove after 2027-01-16.
         providerUsageWarnings: true,
         // COMPAT(issueLinks): added in the v0.1.109 fork, remove after 2027-01-16.

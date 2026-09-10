@@ -2484,6 +2484,7 @@ export const es: TranslationResources = {
         sectionTitle: "Perfiles de agente",
         unavailable: "Conéctese a este host para administrar perfiles de agente",
         unsupported: "Este host ejecuta un daemon que aún no admite perfiles de agente",
+        identityUnsupported: "Actualice este host para mostrar el perfil de agente seleccionado.",
         emptyState:
           "Aún no hay perfiles. Agregue uno para iniciar agentes con un proveedor y un modelo guardados.",
         addProfileTitle: "Agregar perfil de agente",

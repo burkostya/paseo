@@ -2396,6 +2396,7 @@ export const ko: TranslationResources = {
         sectionTitle: "에이전트 프로필",
         unavailable: "에이전트 프로필을 관리하려면 이 호스트에 연결하세요",
         unsupported: "이 호스트에서 실행 중인 데몬은 아직 에이전트 프로필을 지원하지 않습니다",
+        identityUnsupported: "선택한 에이전트 프로필을 표시하려면 호스트를 업데이트하세요.",
         emptyState:
           "아직 프로필이 없습니다. 저장된 프로바이더와 모델로 에이전트를 시작하려면 하나 추가하세요.",
         addProfileTitle: "에이전트 프로필 추가",

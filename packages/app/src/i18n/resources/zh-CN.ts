@@ -2404,6 +2404,7 @@ export const zhCN: TranslationResources = {
         sectionTitle: "Agent 配置",
         unavailable: "连接到这个 Host 以管理 Agent 配置",
         unsupported: "此 Host 运行的 Daemon 尚不支持 Agent 配置",
+        identityUnsupported: "更新此 Host 以显示选中的 Agent 配置。",
         emptyState: "还没有配置。添加一个以便使用保存的 Provider 和 Model 启动 Agent。",
         addProfileTitle: "添加 Agent 配置",
         newProfile: "新建配置",

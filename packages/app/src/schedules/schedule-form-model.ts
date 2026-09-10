@@ -712,6 +712,7 @@ function buildInitialState(snapshot: ScheduleFormSnapshot): ScheduleFormState {
 function toFormState(state: ScheduleFormState): FormState {
   return {
     serverId: state.selectedServerId,
+    agentProfileId: null,
     provider: state.selectedProvider,
     modeId: state.selectedMode,
     model: state.selectedModel,

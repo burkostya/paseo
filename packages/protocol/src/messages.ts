@@ -474,6 +474,8 @@ const ToolPolicySchema = z
 const AgentSessionConfigSchema = z.object({
   provider: AgentProviderSchema,
   cwd: z.string(),
+  // COMPAT(agentProfileIdentity): added in v0.3.3, remove after 2027-02-12 once old daemons are unsupported.
+  agentProfileId: z.string().nullable().optional(),
   modeId: z.string().optional(),
   model: z.string().optional(),
   thinkingOptionId: z.string().optional(),
@@ -835,6 +837,8 @@ export const AgentSnapshotPayloadSchema = z.object({
   id: z.string(),
   provider: AgentProviderSchema,
   cwd: z.string(),
+  // COMPAT(agentProfileIdentity): added in v0.3.3, remove after 2027-02-12 once old daemons are unsupported.
+  agentProfileId: z.string().nullable().optional(),
   workspaceId: z.string().optional(),
   model: z.string().nullable(),
   features: z.array(AgentFeatureSchema).optional(),
@@ -869,6 +873,8 @@ export const AgentListItemPayloadSchema = z.object({
   shortId: z.string(),
   title: z.string().nullable(),
   provider: AgentProviderSchema,
+  // COMPAT(agentProfileIdentity): added in v0.3.3, remove after 2027-02-12 once old daemons are unsupported.
+  agentProfileId: z.string().nullable().optional(),
   model: z.string().nullable(),
   thinkingOptionId: z.string().nullable().optional(),
   effectiveThinkingOptionId: z.string().nullable().optional(),
@@ -1875,6 +1881,8 @@ export const SetAgentFeatureResponseMessageSchema = z.object({
  * clears them, matching the single-field RPCs above.
  */
 export const AgentConfigApplySchema = z.object({
+  // COMPAT(agentProfileIdentity): added in v0.3.3, remove after 2027-02-12 once old daemons are unsupported.
+  agentProfileId: z.string().nullable().optional(),
   modelId: z.string().nullable().optional(),
   modeId: z.string().optional(),
   thinkingOptionId: z.string().nullable().optional(),
@@ -3501,6 +3509,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentProfiles: z.boolean().optional(),
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: z.boolean().optional(),
+        // COMPAT(agentProfileIdentity): added in v0.3.3, remove gate after 2027-02-12.
+        agentProfileIdentity: z.boolean().optional(),
         // COMPAT(providerUsageWarnings): added in the v0.1.109 fork, remove after 2027-01-16.
         providerUsageWarnings: z.boolean().optional(),
         // COMPAT(issueLinks): added in the v0.1.109 fork, remove after 2027-01-16.

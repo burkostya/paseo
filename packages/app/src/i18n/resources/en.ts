@@ -2533,6 +2533,7 @@ export const en = {
         sectionTitle: "Agent profiles",
         unavailable: "Connect to this host to manage agent profiles",
         unsupported: "This host runs a daemon that does not support agent profiles yet",
+        identityUnsupported: "Update this host to show the selected agent profile.",
         emptyState: "No profiles yet. Add one to start agents from a saved provider and model.",
         addProfileTitle: "Add agent profile",
         newProfile: "New profile",

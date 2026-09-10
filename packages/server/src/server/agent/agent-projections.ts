@@ -113,6 +113,7 @@ export function toAgentPayload(
     provider: agent.provider,
     cwd: agent.cwd,
     ...(agent.workspaceId ? { workspaceId: agent.workspaceId } : {}),
+    agentProfileId: agent.config.agentProfileId ?? null,
     model: agent.config.model ?? null,
     thinkingOptionId,
     effectiveThinkingOptionId,
@@ -222,6 +223,7 @@ export function buildStoredAgentPayload(
     provider: record.provider,
     cwd: record.cwd,
     ...(record.workspaceId ? { workspaceId: record.workspaceId } : {}),
+    agentProfileId: record.config?.agentProfileId ?? null,
     model: record.config?.model ?? null,
     thinkingOptionId: record.config?.thinkingOptionId ?? null,
     effectiveThinkingOptionId: resolveEffectiveThinkingOptionId({
@@ -254,6 +256,7 @@ export function toAgentListItemPayload(agent: AgentSnapshotPayload): AgentListIt
     shortId: agent.id.slice(0, 7),
     title: agent.title,
     provider: agent.provider,
+    agentProfileId: agent.agentProfileId ?? null,
     model: agent.runtimeInfo?.model ?? agent.model,
     thinkingOptionId: agent.thinkingOptionId,
     effectiveThinkingOptionId: agent.effectiveThinkingOptionId,
@@ -306,6 +309,9 @@ export function resolveStoredAgentPayloadUpdatedAt(record: StoredAgentRecord): s
 
 function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentConfig | null {
   const serializable: SerializableAgentConfig = {};
+  if (config.agentProfileId) {
+    serializable.agentProfileId = config.agentProfileId;
+  }
   if (config.modeId) {
     serializable.modeId = config.modeId;
   }

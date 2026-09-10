@@ -91,6 +91,7 @@ function makeState(
   return {
     form: {
       serverId: null,
+      agentProfileId: null,
       provider: null,
       modeId: "",
       model: "",
@@ -583,6 +584,7 @@ describe("resolveFormState", () => {
       null,
       {
         serverId: false,
+        agentProfileId: false,
         provider: true,
         modeId: true,
         model: true,
@@ -966,6 +968,14 @@ describe("resolveAgentForm", () => {
       expect(next.form.serverId).toBe("host-1");
       expect(next.userModified.serverId).toBe(false);
     });
+
+    it("clears a selected profile when the synchronized server changes", () => {
+      const state = makeState({ serverId: "host-1", agentProfileId: "profile-1" });
+      const next = resolveAgentForm(state, { type: "SET_SERVER_ID", value: "host-2" });
+
+      expect(next.form.agentProfileId).toBeNull();
+      expect(next.userModified.agentProfileId).toBe(true);
+    });
   });
 
   describe("SET_SERVER_ID_FROM_USER", () => {
@@ -975,6 +985,26 @@ describe("resolveAgentForm", () => {
 
       expect(next.form.serverId).toBe("host-2");
       expect(next.userModified.serverId).toBe(true);
+    });
+
+    it("keeps the selected profile when the server value is unchanged", () => {
+      const state = makeState({ serverId: "host-1", agentProfileId: "profile-1" });
+      const next = resolveAgentForm(state, {
+        type: "SET_SERVER_ID_FROM_USER",
+        value: "host-1",
+      });
+
+      expect(next.form.agentProfileId).toBe("profile-1");
+    });
+
+    it("clears the selected profile when the server changes", () => {
+      const state = makeState({ serverId: "host-1", agentProfileId: "profile-1" });
+      const next = resolveAgentForm(state, {
+        type: "SET_SERVER_ID_FROM_USER",
+        value: "host-2",
+      });
+
+      expect(next.form.agentProfileId).toBeNull();
     });
   });
 
@@ -1053,6 +1083,7 @@ describe("resolveAgentForm", () => {
     it("drops a stale saved mode for a modeless profile provider", () => {
       const next = resolveAgentForm(makeState({ provider: "codex", modeId: "full-access" }), {
         type: "APPLY_PROFILE_FROM_USER",
+        profileId: "profile-pi",
         provider: "pi",
         modelId: "anthropic/sonnet",
         modeId: "",
@@ -1072,6 +1103,7 @@ describe("resolveAgentForm", () => {
     it("restores thinking for the selected model when the profile omits it", () => {
       const next = resolveAgentForm(makeState(), {
         type: "APPLY_PROFILE_FROM_USER",
+        profileId: "profile-codex",
         provider: "codex",
         modelId: "gpt-5.3-codex",
         modeId: "full-access",

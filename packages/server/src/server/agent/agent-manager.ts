@@ -13,7 +13,9 @@ import {
   PARENT_AGENT_ID_LABEL,
 } from "@getpaseo/protocol/agent-labels";
 import type { Logger } from "pino";
+import equal from "fast-deep-equal";
 import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types";
+import type { AgentConfigApply } from "@getpaseo/protocol/messages";
 import { z } from "zod";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 
@@ -108,6 +110,25 @@ function submittedPromptText(prompt: AgentPromptInput): string {
     .trim();
 }
 
+function resolveKnownConfigValue(
+  runtimeValue: string | null | undefined,
+  configValue: string | undefined,
+): string | null | undefined {
+  return runtimeValue !== undefined ? runtimeValue : configValue;
+}
+
+function providerConfigValueChanged(
+  runtimeValue: string | null | undefined,
+  configValue: string | undefined,
+  nextValue: string | null | undefined,
+): boolean {
+  return (
+    nextValue !== undefined &&
+    (runtimeValue !== undefined || configValue !== undefined) &&
+    resolveKnownConfigValue(runtimeValue, configValue) !== nextValue
+  );
+}
+
 export class AgentManagerShuttingDownError extends Error {
   constructor() {
     super("Agent manager is shutting down");
@@ -156,6 +177,9 @@ function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
   };
   if (!record.config) {
     return config;
+  }
+  if (record.config.agentProfileId != null) {
+    config.agentProfileId = record.config.agentProfileId;
   }
   if (record.config.modeId != null) config.modeId = record.config.modeId;
   if (record.config.model != null) config.model = record.config.model;
@@ -679,6 +703,7 @@ export class AgentManager {
   private readonly sessionEventTails = new Map<string, Promise<void>>();
   private readonly steerEventBarriers = new Map<string, SteerEventBarrier>();
   private readonly foregroundMutationTails = new Map<string, Promise<void>>();
+  private readonly agentConfigMutationTails = new Map<string, Promise<void>>();
   private readonly runs = new AgentRunState();
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly idFactory: () => string;
@@ -1711,7 +1736,16 @@ export class AgentManager {
   }
 
   async setAgentMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null> {
+    return this.runAgentConfigMutation(agentId, () => this.setAgentModeUnlocked(agentId, modeId));
+  }
+
+  private async setAgentModeUnlocked(
+    agentId: string,
+    modeId: string,
+  ): Promise<AgentProviderNotice | null> {
     const agent = this.requireSessionAgent(agentId);
+    const previousModeId =
+      agent.currentModeId ?? agent.runtimeInfo?.modeId ?? agent.config.modeId ?? null;
     const notice = (await agent.session.setMode(modeId)) ?? null;
     await this.drainSessionEvents(agentId);
     const currentMode = (await agent.session.getCurrentMode()) ?? modeId;
@@ -1721,15 +1755,24 @@ export class AgentManager {
     if (agent.runtimeInfo) {
       agent.runtimeInfo = { ...agent.runtimeInfo, modeId: currentMode };
     }
+    if (previousModeId !== (currentMode ?? null)) {
+      this.clearAgentProfile(agent);
+    }
     this.touchUpdatedAt(agent);
     this.emitState(agent);
     return notice;
   }
 
   async setAgentModel(agentId: string, modelId: string | null): Promise<void> {
+    return this.runAgentConfigMutation(agentId, () => this.setAgentModelUnlocked(agentId, modelId));
+  }
+
+  private async setAgentModelUnlocked(agentId: string, modelId: string | null): Promise<void> {
     const agent = this.requireSessionAgent(agentId);
     const normalizedModelId =
       typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
+    const previousModelId =
+      resolveKnownConfigValue(agent.runtimeInfo?.model, agent.config.model) ?? null;
 
     if (agent.session.setModel) {
       await agent.session.setModel(normalizedModelId);
@@ -1740,6 +1783,9 @@ export class AgentManager {
     if (agent.runtimeInfo) {
       agent.runtimeInfo = { ...agent.runtimeInfo, model: normalizedModelId };
     }
+    if (previousModelId !== normalizedModelId) {
+      this.clearAgentProfile(agent);
+    }
     this.touchUpdatedAt(agent);
     this.emitState(agent);
   }
@@ -1748,11 +1794,23 @@ export class AgentManager {
     agentId: string,
     thinkingOptionId: string | null,
   ): Promise<AgentProviderNotice | null> {
+    return this.runAgentConfigMutation(agentId, () =>
+      this.setAgentThinkingOptionUnlocked(agentId, thinkingOptionId),
+    );
+  }
+
+  private async setAgentThinkingOptionUnlocked(
+    agentId: string,
+    thinkingOptionId: string | null,
+  ): Promise<AgentProviderNotice | null> {
     const agent = this.requireSessionAgent(agentId);
     const normalizedThinkingOptionId =
       typeof thinkingOptionId === "string" && thinkingOptionId.trim().length > 0
         ? thinkingOptionId
         : null;
+    const previousThinkingOptionId =
+      resolveKnownConfigValue(agent.runtimeInfo?.thinkingOptionId, agent.config.thinkingOptionId) ??
+      null;
 
     let notice: AgentProviderNotice | null = null;
     if (agent.session.setThinkingOption) {
@@ -1767,23 +1825,112 @@ export class AgentManager {
         thinkingOptionId: normalizedThinkingOptionId,
       };
     }
+    if (previousThinkingOptionId !== normalizedThinkingOptionId) {
+      this.clearAgentProfile(agent);
+    }
     this.touchUpdatedAt(agent);
     this.emitState(agent);
     return notice;
   }
 
   async setAgentFeature(agentId: string, featureId: string, value: unknown): Promise<void> {
+    return this.runAgentConfigMutation(agentId, () =>
+      this.setAgentFeatureUnlocked(agentId, featureId, value),
+    );
+  }
+
+  private async setAgentFeatureUnlocked(
+    agentId: string,
+    featureId: string,
+    value: unknown,
+  ): Promise<void> {
     const agent = this.requireAgent(agentId);
 
     if (!agent.session.setFeature) {
       throw new Error("Agent session does not support setting features");
     }
 
+    const previousFeatureValues = agent.config.featureValues ?? {};
+    const hasConfiguredValue = Object.prototype.hasOwnProperty.call(
+      previousFeatureValues,
+      featureId,
+    );
+    const knownFeature = agent.features?.find((feature) => feature.id === featureId);
+    const previousValue = hasConfiguredValue
+      ? previousFeatureValues[featureId]
+      : knownFeature?.value;
     await agent.session.setFeature(featureId, value);
     await this.drainSessionEvents(agentId);
     agent.config.featureValues = { ...agent.config.featureValues, [featureId]: value };
+    if (!hasConfiguredValue && !knownFeature) {
+      this.clearAgentProfile(agent);
+    } else if (!equal(previousValue, value)) {
+      this.clearAgentProfile(agent);
+    }
     this.touchUpdatedAt(agent);
     this.emitState(agent);
+  }
+
+  /** Apply a profile bundle while serializing it with individual config edits. */
+  async applyAgentConfig(
+    agentId: string,
+    config: AgentConfigApply,
+  ): Promise<AgentProviderNotice | null> {
+    return this.runAgentConfigMutation(agentId, async () => {
+      let notice: AgentProviderNotice | null = null;
+      if (config.modelId !== undefined) {
+        await this.setAgentModelUnlocked(agentId, config.modelId);
+      }
+      if (config.modeId !== undefined) {
+        const modeNotice = await this.setAgentModeUnlocked(agentId, config.modeId);
+        notice ??= modeNotice;
+      }
+      if (config.thinkingOptionId !== undefined) {
+        const thinkingNotice = await this.setAgentThinkingOptionUnlocked(
+          agentId,
+          config.thinkingOptionId,
+        );
+        notice ??= thinkingNotice;
+      }
+      for (const [featureId, value] of Object.entries(config.featureValues ?? {})) {
+        await this.setAgentFeatureUnlocked(agentId, featureId, value);
+      }
+      if (config.agentProfileId !== undefined) {
+        const agent = this.requireAgent(agentId);
+        const nextProfileId =
+          typeof config.agentProfileId === "string" && config.agentProfileId.trim().length > 0
+            ? config.agentProfileId.trim()
+            : null;
+        if ((agent.config.agentProfileId ?? null) !== nextProfileId) {
+          agent.config.agentProfileId = nextProfileId;
+          this.touchUpdatedAt(agent);
+          this.emitState(agent);
+        }
+      }
+      return notice;
+    });
+  }
+
+  private clearAgentProfile(agent: ManagedAgent): void {
+    if (agent.config.agentProfileId == null) {
+      return;
+    }
+    agent.config.agentProfileId = undefined;
+  }
+
+  private runAgentConfigMutation<T>(agentId: string, mutation: () => Promise<T>): Promise<T> {
+    const previous = this.agentConfigMutationTails.get(agentId) ?? Promise.resolve();
+    const run = previous.catch(() => undefined).then(mutation);
+    const tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.agentConfigMutationTails.set(agentId, tail);
+    return run.finally(() => {
+      if (this.agentConfigMutationTails.get(agentId) === tail) {
+        this.agentConfigMutationTails.delete(agentId);
+      }
+    });
   }
 
   async setTitle(agentId: string, title: string): Promise<void> {
@@ -3633,6 +3780,22 @@ export class AgentManager {
   ): Promise<void> {
     try {
       const newInfo = await agent.session.getRuntimeInfo();
+      const runtimeConfigChanged =
+        agent.runtimeInfo !== undefined &&
+        (providerConfigValueChanged(agent.runtimeInfo.model, agent.config.model, newInfo.model) ||
+          providerConfigValueChanged(
+            agent.runtimeInfo.modeId,
+            agent.config.modeId,
+            newInfo.modeId,
+          ) ||
+          providerConfigValueChanged(
+            agent.runtimeInfo.thinkingOptionId,
+            agent.config.thinkingOptionId,
+            newInfo.thinkingOptionId,
+          ));
+      if (runtimeConfigChanged) {
+        this.clearAgentProfile(agent);
+      }
       const changed =
         newInfo.model !== agent.runtimeInfo?.model ||
         newInfo.thinkingOptionId !== agent.runtimeInfo?.thinkingOptionId ||
@@ -3972,36 +4135,13 @@ export class AgentManager {
         this.emitState(agent);
         return undefined;
       case "mode_changed":
-        agent.currentModeId = event.currentModeId;
-        agent.availableModes = event.availableModes;
-        if (agent.runtimeInfo) {
-          agent.runtimeInfo = { ...agent.runtimeInfo, modeId: event.currentModeId };
-        }
-        flags.shouldDispatchEvent = false;
-        this.emitState(agent);
+        this.handleModeChangedEvent(agent, event, flags);
         return undefined;
       case "model_changed":
-        agent.runtimeInfo = event.runtimeInfo;
-        if (!agent.persistence && event.runtimeInfo.sessionId) {
-          agent.persistence = attachPersistenceCwd(
-            { provider: agent.provider, sessionId: event.runtimeInfo.sessionId },
-            agent.cwd,
-          );
-        }
-        agent.currentModeId = event.runtimeInfo.modeId ?? agent.currentModeId;
-        flags.shouldDispatchEvent = false;
-        this.emitState(agent);
+        this.handleModelChangedEvent(agent, event, flags);
         return undefined;
       case "thinking_option_changed":
-        agent.config.thinkingOptionId = event.thinkingOptionId ?? undefined;
-        if (agent.runtimeInfo) {
-          agent.runtimeInfo = {
-            ...agent.runtimeInfo,
-            thinkingOptionId: event.thinkingOptionId,
-          };
-        }
-        flags.shouldDispatchEvent = false;
-        this.emitState(agent);
+        this.handleThinkingOptionChangedEvent(agent, event, flags);
         return undefined;
       case "timeline":
         return this.onStreamTimelineEvent({ agent, event, options, flags });
@@ -4045,6 +4185,107 @@ export class AgentManager {
       default:
         return undefined;
     }
+  }
+
+  private providerModeEventChanged(agent: ActiveManagedAgent, nextModeId: string | null): boolean {
+    const previousModeId =
+      agent.currentModeId ?? agent.runtimeInfo?.modeId ?? agent.config.modeId ?? null;
+    const hadKnownMode =
+      agent.currentModeId !== null ||
+      agent.runtimeInfo?.modeId !== undefined ||
+      agent.config.modeId !== undefined;
+    return hadKnownMode && previousModeId !== nextModeId;
+  }
+
+  private handleModeChangedEvent(
+    agent: ActiveManagedAgent,
+    event: Extract<AgentStreamEvent, { type: "mode_changed" }>,
+    flags: StreamEventFlags,
+  ): void {
+    if (this.providerModeEventChanged(agent, event.currentModeId)) {
+      this.clearAgentProfile(agent);
+    }
+    agent.currentModeId = event.currentModeId;
+    agent.availableModes = event.availableModes;
+    if (agent.runtimeInfo) {
+      agent.runtimeInfo = { ...agent.runtimeInfo, modeId: event.currentModeId };
+    }
+    flags.shouldDispatchEvent = false;
+    this.emitState(agent);
+  }
+
+  private handleModelChangedEvent(
+    agent: ActiveManagedAgent,
+    event: Extract<AgentStreamEvent, { type: "model_changed" }>,
+    flags: StreamEventFlags,
+  ): void {
+    if (this.providerModelEventChanged(agent, event.runtimeInfo)) {
+      this.clearAgentProfile(agent);
+    }
+    agent.runtimeInfo = event.runtimeInfo;
+    if (!agent.persistence && event.runtimeInfo.sessionId) {
+      agent.persistence = attachPersistenceCwd(
+        { provider: agent.provider, sessionId: event.runtimeInfo.sessionId },
+        agent.cwd,
+      );
+    }
+    agent.currentModeId = event.runtimeInfo.modeId ?? agent.currentModeId;
+    flags.shouldDispatchEvent = false;
+    this.emitState(agent);
+  }
+
+  private handleThinkingOptionChangedEvent(
+    agent: ActiveManagedAgent,
+    event: Extract<AgentStreamEvent, { type: "thinking_option_changed" }>,
+    flags: StreamEventFlags,
+  ): void {
+    if (this.providerThinkingEventChanged(agent, event.thinkingOptionId)) {
+      this.clearAgentProfile(agent);
+    }
+    agent.config.thinkingOptionId = event.thinkingOptionId ?? undefined;
+    if (agent.runtimeInfo) {
+      agent.runtimeInfo = {
+        ...agent.runtimeInfo,
+        thinkingOptionId: event.thinkingOptionId,
+      };
+    }
+    flags.shouldDispatchEvent = false;
+    this.emitState(agent);
+  }
+
+  private providerModelEventChanged(
+    agent: ActiveManagedAgent,
+    nextRuntimeInfo: AgentRuntimeInfo,
+  ): boolean {
+    const previousRuntimeInfo = agent.runtimeInfo;
+    return (
+      providerConfigValueChanged(
+        previousRuntimeInfo?.model,
+        agent.config.model,
+        nextRuntimeInfo.model,
+      ) ||
+      providerConfigValueChanged(
+        previousRuntimeInfo?.modeId,
+        agent.config.modeId,
+        nextRuntimeInfo.modeId,
+      ) ||
+      providerConfigValueChanged(
+        previousRuntimeInfo?.thinkingOptionId,
+        agent.config.thinkingOptionId,
+        nextRuntimeInfo.thinkingOptionId,
+      )
+    );
+  }
+
+  private providerThinkingEventChanged(
+    agent: ActiveManagedAgent,
+    nextThinkingOptionId: string | null,
+  ): boolean {
+    return providerConfigValueChanged(
+      agent.runtimeInfo?.thinkingOptionId,
+      agent.config.thinkingOptionId,
+      nextThinkingOptionId,
+    );
   }
 
   private onStreamThreadStarted(agent: ActiveManagedAgent): void {

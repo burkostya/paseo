@@ -1,9 +1,20 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import {
+  Pressable,
+  Text,
+  View,
+  type PressableStateCallbackType,
+  type StyleProp,
+  type ViewStyle,
+} from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
-import type { AgentProfilePicker, AgentProfileSeed } from "@/agent-profiles";
+import {
+  AgentProfileGlyph,
+  type AgentProfilePicker,
+  type AgentProfileSeed,
+} from "@/agent-profiles";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Combobox, type ComboboxOption, type ComboboxProps } from "@/components/ui/combobox";
@@ -65,6 +76,102 @@ interface CombinedModelSelectorProps {
   };
 }
 
+function formatProfileTriggerLabel(
+  profiles: AgentProfilePicker | null,
+  modelLabel: string,
+): string {
+  const profile = profiles?.selectedProfile;
+  return profile ? `${profile.name} · ${modelLabel}` : modelLabel;
+}
+
+function CombinedModelSelectorTrigger({
+  anchorRef,
+  disabled,
+  isOpen,
+  onPress,
+  profileTriggerLabel,
+  profiles,
+  renderTrigger,
+  selectedProvider,
+  toolbar,
+  triggerStyle,
+}: {
+  anchorRef: RefObject<View | null>;
+  disabled: boolean;
+  isOpen: boolean;
+  onPress: () => void;
+  profileTriggerLabel: string;
+  profiles: AgentProfilePicker | null;
+  renderTrigger: CombinedModelSelectorProps["renderTrigger"];
+  selectedProvider: string;
+  toolbar: CombinedModelSelectorProps["toolbar"];
+  triggerStyle: (state: PressableStateCallbackType & { hovered?: boolean }) => StyleProp<ViewStyle>;
+}) {
+  const { t } = useTranslation();
+  const accessibilityLabel = t("modelSelector.selectedModel", {
+    model: profileTriggerLabel,
+  });
+
+  if (renderTrigger) {
+    return (
+      <Pressable
+        ref={anchorRef}
+        collapsable={false}
+        disabled={disabled}
+        onPress={onPress}
+        style={triggerStyle}
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel}
+        testID="combined-model-selector"
+      >
+        {({ pressed, hovered }: PressableStateCallbackType & { hovered?: boolean }) =>
+          renderTrigger({
+            selectedModelLabel: profileTriggerLabel,
+            onPress,
+            disabled,
+            isOpen,
+            hovered: Boolean(hovered),
+            pressed,
+          })
+        }
+      </Pressable>
+    );
+  }
+
+  return (
+    <ComboboxTrigger
+      ref={anchorRef}
+      collapsable={false}
+      disabled={disabled}
+      onPress={onPress}
+      style={triggerStyle}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      testID="combined-model-selector"
+      chevron={toolbar?.showCaret === false ? null : undefined}
+    >
+      {selectedProvider.trim().length > 0 ? (
+        <View style={toolbar?.glyphSize === 20 ? styles.toolbarGlyph20 : styles.toolbarGlyph16}>
+          <ModelProviderGlyph
+            provider={selectedProvider}
+            size={toolbar?.glyphSize ?? ICON_SIZE.md}
+          />
+        </View>
+      ) : null}
+      {profiles?.selectedProfile ? (
+        <AgentProfileGlyph
+          icon={profiles.selectedProfile.icon}
+          color={profiles.selectedProfile.color}
+          size={toolbar?.glyphSize ?? ICON_SIZE.md}
+        />
+      ) : null}
+      <Text style={styles.triggerText} numberOfLines={1} ellipsizeMode="tail">
+        {profileTriggerLabel}
+      </Text>
+    </ComboboxTrigger>
+  );
+}
+
 export function CombinedModelSelector({
   providers,
   selectedProvider,
@@ -103,6 +210,7 @@ export function CombinedModelSelector({
     serverId,
   });
   const { prepareToOpen, reset } = browser;
+  const profileTriggerLabel = formatProfileTriggerLabel(profiles, browser.triggerLabel);
 
   const handleOpenChange = useCallback(
     (open: boolean) => {
@@ -213,57 +321,18 @@ export function CombinedModelSelector({
 
   return (
     <>
-      {renderTrigger ? (
-        <Pressable
-          ref={anchorRef}
-          collapsable={false}
-          disabled={disabled}
-          onPress={handleTriggerPress}
-          style={triggerStyle}
-          accessibilityRole="button"
-          accessibilityLabel={t("modelSelector.selectedModel", {
-            model: browser.selectedModelLabel,
-          })}
-          testID="combined-model-selector"
-        >
-          {({ pressed, hovered }: PressableStateCallbackType & { hovered?: boolean }) =>
-            renderTrigger({
-              selectedModelLabel: browser.triggerLabel,
-              onPress: handleTriggerPress,
-              disabled,
-              isOpen,
-              hovered: Boolean(hovered),
-              pressed,
-            })
-          }
-        </Pressable>
-      ) : (
-        <ComboboxTrigger
-          ref={anchorRef}
-          collapsable={false}
-          disabled={disabled}
-          onPress={handleTriggerPress}
-          style={triggerStyle}
-          accessibilityRole="button"
-          accessibilityLabel={t("modelSelector.selectedModel", {
-            model: browser.selectedModelLabel,
-          })}
-          testID="combined-model-selector"
-          chevron={toolbar?.showCaret === false ? null : undefined}
-        >
-          {selectedProvider.trim().length > 0 ? (
-            <View style={toolbar?.glyphSize === 20 ? styles.toolbarGlyph20 : styles.toolbarGlyph16}>
-              <ModelProviderGlyph
-                provider={selectedProvider}
-                size={toolbar?.glyphSize ?? ICON_SIZE.md}
-              />
-            </View>
-          ) : null}
-          <Text style={styles.triggerText} numberOfLines={1} ellipsizeMode="tail">
-            {browser.triggerLabel}
-          </Text>
-        </ComboboxTrigger>
-      )}
+      <CombinedModelSelectorTrigger
+        anchorRef={anchorRef}
+        disabled={disabled}
+        isOpen={isOpen}
+        onPress={handleTriggerPress}
+        profileTriggerLabel={profileTriggerLabel}
+        profiles={profiles}
+        renderTrigger={renderTrigger}
+        selectedProvider={selectedProvider}
+        toolbar={toolbar}
+        triggerStyle={triggerStyle}
+      />
       <Combobox
         options={EMPTY_COMBOBOX_OPTIONS}
         value=""

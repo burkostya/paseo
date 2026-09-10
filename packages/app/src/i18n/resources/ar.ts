@@ -2431,6 +2431,7 @@ export const ar: TranslationResources = {
         sectionTitle: "ملفات تعريف الوكيل",
         unavailable: "اتصل بهذا المضيف لإدارة ملفات تعريف الوكيل",
         unsupported: "يشغّل هذا المضيف نسخة Daemon لا تدعم ملفات تعريف الوكيل بعد",
+        identityUnsupported: "حدّث هذا المضيف لإظهار ملف تعريف الوكيل المحدد.",
         emptyState: "لا توجد ملفات تعريف بعد. أضف واحدًا لبدء الوكلاء من مزود ونموذج محفوظين.",
         addProfileTitle: "إضافة ملف تعريف وكيل",
         newProfile: "ملف تعريف جديد",

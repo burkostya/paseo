@@ -13,6 +13,7 @@ import { findModelByReference } from "./model-catalog";
 
 export interface FormInitialValues {
   serverId?: string | null;
+  agentProfileId?: string | null;
   provider?: AgentProvider;
   modeId?: string | null;
   model?: string | null;
@@ -22,6 +23,7 @@ export interface FormInitialValues {
 
 export interface FormState {
   serverId: string | null;
+  agentProfileId: string | null;
   provider: AgentProvider | null;
   modeId: string;
   model: string;
@@ -31,6 +33,7 @@ export interface FormState {
 
 export interface UserModifiedFields {
   serverId: boolean;
+  agentProfileId: boolean;
   provider: boolean;
   modeId: boolean;
   model: boolean;
@@ -50,6 +53,7 @@ export interface AgentFormReducerState {
 
 export const INITIAL_USER_MODIFIED: UserModifiedFields = {
   serverId: false,
+  agentProfileId: false,
   provider: false,
   modeId: false,
   model: false,
@@ -89,6 +93,7 @@ export type AgentFormAction =
     }
   | {
       type: "APPLY_PROFILE_FROM_USER";
+      profileId: string;
       provider: AgentProvider;
       modelId: string;
       modeId: string;
@@ -106,6 +111,7 @@ export type AgentFormAction =
     }
   | { type: "CLEAR_PROVIDER_SELECTION_FROM_USER" }
   | { type: "SET_THINKING_OPTION_FROM_USER"; thinkingOptionId: string }
+  | { type: "CLEAR_AGENT_PROFILE_FROM_USER" }
   | { type: "SET_WORKING_DIR"; value: string }
   | { type: "SET_WORKING_DIR_FROM_USER"; value: string }
   | { type: "AUTO_SELECT_SERVER"; candidateServerId: string }
@@ -113,6 +119,21 @@ export type AgentFormAction =
 
 type CompleteResolutionAction = Extract<AgentFormAction, { type: "COMPLETE_RESOLUTION" }>;
 type ApplyProfileAction = Extract<AgentFormAction, { type: "APPLY_PROFILE_FROM_USER" }>;
+type UserModifiedAgentFormAction = Extract<
+  AgentFormAction,
+  {
+    type:
+      | "SET_SERVER_ID_FROM_USER"
+      | "SET_PROVIDER_AND_MODEL_FROM_USER"
+      | "APPLY_PROFILE_FROM_USER"
+      | "SET_MODE_FROM_USER"
+      | "SET_MODEL_FROM_USER"
+      | "CLEAR_PROVIDER_SELECTION_FROM_USER"
+      | "SET_THINKING_OPTION_FROM_USER"
+      | "CLEAR_AGENT_PROFILE_FROM_USER"
+      | "SET_WORKING_DIR_FROM_USER";
+  }
+>;
 
 export function normalizeSelectedModelId(modelId: string | null | undefined): string {
   return typeof modelId === "string" ? modelId.trim() : "";
@@ -241,6 +262,7 @@ export function combineInitialValues(
 export function hasFormStateChanged(prev: FormState, next: FormState): boolean {
   return (
     prev.serverId !== next.serverId ||
+    prev.agentProfileId !== next.agentProfileId ||
     prev.provider !== next.provider ||
     prev.modeId !== next.modeId ||
     prev.model !== next.model ||
@@ -455,6 +477,10 @@ export function resolveFormState(
     result.workingDir = initialValues.workingDir;
   }
 
+  if (!userModified.agentProfileId && initialValues?.agentProfileId !== undefined) {
+    result.agentProfileId = initialValues.agentProfileId ?? null;
+  }
+
   return result;
 }
 
@@ -556,6 +582,18 @@ function pickNextThinkingOptionForTarget(input: {
   });
 }
 
+function hasAgentProfileSelectionChanged(
+  previous: Pick<FormState, "provider" | "model" | "modeId" | "thinkingOptionId">,
+  next: Pick<FormState, "provider" | "model" | "modeId" | "thinkingOptionId">,
+): boolean {
+  return (
+    previous.provider !== next.provider ||
+    previous.model !== next.model ||
+    previous.modeId !== next.modeId ||
+    previous.thinkingOptionId !== next.thinkingOptionId
+  );
+}
+
 function completeResolution(
   state: AgentFormReducerState,
   action: CompleteResolutionAction,
@@ -600,6 +638,7 @@ function applyProfile(state: AgentFormReducerState, action: ApplyProfileAction) 
     ...state,
     form: {
       ...state.form,
+      agentProfileId: action.profileId,
       provider: action.provider,
       model: nextModelId,
       modeId: nextModeId,
@@ -607,6 +646,7 @@ function applyProfile(state: AgentFormReducerState, action: ApplyProfileAction) 
     },
     userModified: {
       ...state.userModified,
+      agentProfileId: true,
       provider: true,
       model: true,
       modeId: true,
@@ -615,29 +655,24 @@ function applyProfile(state: AgentFormReducerState, action: ApplyProfileAction) 
   };
 }
 
-export function resolveAgentForm(
+function resolveUserModifiedAgentFormAction(
   state: AgentFormReducerState,
-  action: AgentFormAction,
+  action: UserModifiedAgentFormAction,
 ): AgentFormReducerState {
   switch (action.type) {
-    case "REQUEST_RESOLUTION":
-      return {
-        ...state,
-        userModified: INITIAL_USER_MODIFIED,
-        resolution: PENDING_AGENT_FORM_RESOLUTION,
-      };
-
-    case "COMPLETE_RESOLUTION":
-      return completeResolution(state, action);
-
-    case "SET_SERVER_ID":
-      return { ...state, form: { ...state.form, serverId: action.value } };
-
     case "SET_SERVER_ID_FROM_USER":
       return {
         ...state,
-        form: { ...state.form, serverId: action.value },
-        userModified: { ...state.userModified, serverId: true },
+        form: {
+          ...state.form,
+          serverId: action.value,
+          ...(state.form.serverId !== action.value ? { agentProfileId: null } : {}),
+        },
+        userModified: {
+          ...state.userModified,
+          ...(state.form.serverId !== action.value ? { agentProfileId: true } : {}),
+          serverId: true,
+        },
       };
 
     case "SET_PROVIDER_AND_MODEL_FROM_USER": {
@@ -658,6 +693,12 @@ export function resolveAgentForm(
         providerDef: action.providerDef,
         providerPrefs: action.providerPrefs,
       });
+      const selectionChanged = hasAgentProfileSelectionChanged(state.form, {
+        provider: action.provider,
+        model: nextModelId,
+        modeId: nextModeId,
+        thinkingOptionId: nextThinkingOptionId,
+      });
       return {
         ...state,
         form: {
@@ -666,20 +707,29 @@ export function resolveAgentForm(
           model: nextModelId,
           modeId: nextModeId,
           thinkingOptionId: nextThinkingOptionId,
+          ...(selectionChanged ? { agentProfileId: null } : {}),
         },
-        userModified: { ...state.userModified, provider: true, model: true },
+        userModified: {
+          ...state.userModified,
+          agentProfileId: true,
+          provider: true,
+          model: true,
+        },
       };
     }
 
-    case "APPLY_PROFILE_FROM_USER": {
+    case "APPLY_PROFILE_FROM_USER":
       return applyProfile(state, action);
-    }
 
     case "SET_MODE_FROM_USER":
       return {
         ...state,
-        form: { ...state.form, modeId: action.modeId },
-        userModified: { ...state.userModified, modeId: true },
+        form: {
+          ...state.form,
+          modeId: action.modeId,
+          ...(state.form.modeId !== action.modeId ? { agentProfileId: null } : {}),
+        },
+        userModified: { ...state.userModified, agentProfileId: true, modeId: true },
       };
 
     case "SET_MODEL_FROM_USER": {
@@ -693,14 +743,17 @@ export function resolveAgentForm(
         currentThinkingOptionId: state.form.thinkingOptionId,
         isSameProvider: true,
       });
+      const selectionChanged =
+        state.form.model !== nextModelId || state.form.thinkingOptionId !== nextThinkingOptionId;
       return {
         ...state,
         form: {
           ...state.form,
           model: nextModelId,
           thinkingOptionId: nextThinkingOptionId,
+          ...(selectionChanged ? { agentProfileId: null } : {}),
         },
-        userModified: { ...state.userModified, model: true },
+        userModified: { ...state.userModified, agentProfileId: true, model: true },
       };
     }
 
@@ -713,9 +766,11 @@ export function resolveAgentForm(
           model: "",
           modeId: "",
           thinkingOptionId: "",
+          agentProfileId: null,
         },
         userModified: {
           ...state.userModified,
+          agentProfileId: true,
           provider: true,
           model: true,
           modeId: true,
@@ -726,12 +781,22 @@ export function resolveAgentForm(
     case "SET_THINKING_OPTION_FROM_USER":
       return {
         ...state,
-        form: { ...state.form, thinkingOptionId: action.thinkingOptionId },
-        userModified: { ...state.userModified, thinkingOptionId: true },
+        form: {
+          ...state.form,
+          thinkingOptionId: action.thinkingOptionId,
+          ...(state.form.thinkingOptionId !== action.thinkingOptionId
+            ? { agentProfileId: null }
+            : {}),
+        },
+        userModified: { ...state.userModified, agentProfileId: true, thinkingOptionId: true },
       };
 
-    case "SET_WORKING_DIR":
-      return { ...state, form: { ...state.form, workingDir: action.value } };
+    case "CLEAR_AGENT_PROFILE_FROM_USER":
+      return {
+        ...state,
+        form: { ...state.form, agentProfileId: null },
+        userModified: { ...state.userModified, agentProfileId: true },
+      };
 
     case "SET_WORKING_DIR_FROM_USER":
       return {
@@ -739,6 +804,40 @@ export function resolveAgentForm(
         form: { ...state.form, workingDir: action.value },
         userModified: { ...state.userModified, workingDir: true },
       };
+  }
+}
+
+export function resolveAgentForm(
+  state: AgentFormReducerState,
+  action: AgentFormAction,
+): AgentFormReducerState {
+  switch (action.type) {
+    case "REQUEST_RESOLUTION":
+      return {
+        ...state,
+        userModified: INITIAL_USER_MODIFIED,
+        resolution: PENDING_AGENT_FORM_RESOLUTION,
+      };
+
+    case "COMPLETE_RESOLUTION":
+      return completeResolution(state, action);
+
+    case "SET_SERVER_ID":
+      return {
+        ...state,
+        form: {
+          ...state.form,
+          serverId: action.value,
+          ...(state.form.serverId !== action.value ? { agentProfileId: null } : {}),
+        },
+        userModified: {
+          ...state.userModified,
+          ...(state.form.serverId !== action.value ? { agentProfileId: true } : {}),
+        },
+      };
+
+    case "SET_WORKING_DIR":
+      return { ...state, form: { ...state.form, workingDir: action.value } };
 
     case "AUTO_SELECT_SERVER":
       if (state.form.serverId) return state;
@@ -751,6 +850,6 @@ export function resolveAgentForm(
         resolution: INITIAL_AGENT_FORM_RESOLUTION,
       };
     default:
-      throw new Error("unreachable");
+      return resolveUserModifiedAgentFormAction(state, action);
   }
 }

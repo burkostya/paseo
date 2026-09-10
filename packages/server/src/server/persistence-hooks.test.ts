@@ -31,6 +31,7 @@ describe("persistence hooks", () => {
     const record = createRecord({
       title: "Voice agent (current)",
       config: {
+        agentProfileId: "review",
         modeId: "default",
         model: "gpt-5.4-mini",
         thinkingOptionId: "minimal",
@@ -54,6 +55,7 @@ describe("persistence hooks", () => {
 
     expect(buildConfigOverrides(record)).toMatchObject({
       cwd: "/tmp/project",
+      agentProfileId: "review",
       modeId: "default",
       model: "gpt-5.4-mini",
       thinkingOptionId: "minimal",
@@ -72,6 +74,20 @@ describe("persistence hooks", () => {
           args: ["/tmp/bridge.mjs", "--socket", "/tmp/agent.sock"],
         },
       },
+    });
+  });
+
+  test("buildSessionConfig preserves an agent profile identity", () => {
+    const record = createRecord({
+      config: {
+        agentProfileId: "review",
+      },
+    });
+
+    expect(buildSessionConfig(record)).toMatchObject({
+      provider: "claude",
+      cwd: "/tmp/project",
+      agentProfileId: "review",
     });
   });
 

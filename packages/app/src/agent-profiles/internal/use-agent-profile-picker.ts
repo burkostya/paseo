@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { mergeCreateAgentSelectionPreferences } from "@/create-agent-preferences/preferences";
 import { useFormPreferences } from "@/hooks/use-form-preferences";
@@ -41,6 +41,9 @@ export interface AgentProfilePickerRow {
 
 export interface AgentProfilePicker {
   rows: AgentProfilePickerRow[];
+  selectedProfileId: string | null;
+  selectedProfile: AgentProfilePickerRow | null;
+  pendingProfileId: string | null;
   applyProfile: (profileId: string) => void;
 }
 
@@ -53,6 +56,8 @@ export interface UseAgentProfilePickerInput {
    * the draft form ignores a provider the host does not offer.
    */
   availableProviders: readonly string[];
+  /** The profile currently bound to a draft. Live agents derive this from their snapshot. */
+  selectedProfileId?: string | null;
   target: AgentProfileApplyTarget;
 }
 
@@ -65,16 +70,31 @@ export interface UseAgentProfilePickerInput {
 export function useAgentProfilePicker(
   input: UseAgentProfilePickerInput,
 ): AgentProfilePicker | null {
-  const { serverId, availableProviders, target } = input;
+  const { serverId, availableProviders, selectedProfileId: draftSelectedProfileId, target } = input;
   const { t } = useTranslation();
-  const { profiles, isSupported } = useAgentProfiles(serverId);
+  const { profiles, isSupported, identitySupported } = useAgentProfiles(serverId);
   // Profiles are host config, so their labels read from the host-wide catalog
   // rather than a workspace's. That is also the key the settings section uses,
   // so every composer on a host shares one query instead of adding its own.
   const { entries } = useProvidersSnapshot(serverId, { cwd: null });
   const { updatePreferences } = useFormPreferences();
   const client = useSessionStore((state) => state.sessions[serverId ?? ""]?.client ?? null);
+  const liveSelectedProfileId = useSessionStore((state) => {
+    if (target.kind !== "agent") return null;
+    const session = state.sessions[serverId ?? ""];
+    return (
+      session?.agents?.get(target.agentId)?.agentProfileId ??
+      session?.agentDetails?.get(target.agentId)?.agentProfileId ??
+      null
+    );
+  });
   const toast = useToast();
+  const [pendingProfileId, setPendingProfileId] = useState<string | null>(null);
+  const targetKey = target.kind === "agent" ? `agent:${serverId ?? ""}:${target.agentId}` : "draft";
+
+  useEffect(() => {
+    setPendingProfileId(null);
+  }, [targetKey]);
 
   const applicableProfiles = useMemo(() => {
     if (!isSupported || !profiles) {
@@ -107,6 +127,14 @@ export function useAgentProfilePicker(
       })),
     [applicableProfiles, entries, formatFeatureCount],
   );
+  let selectedId: string | null = null;
+  if (identitySupported) {
+    selectedId = target.kind === "agent" ? liveSelectedProfileId : (draftSelectedProfileId ?? null);
+  }
+  const selectedProfile = useMemo(
+    () => rows.find((row) => row.id === selectedId) ?? null,
+    [rows, selectedId],
+  );
 
   const persistSelection = useCallback(
     (resolved: MaterializedAgentProfile) => {
@@ -130,6 +158,9 @@ export function useAgentProfilePicker(
 
   const applyProfile = useCallback(
     (profileId: string) => {
+      if (pendingProfileId !== null) {
+        return;
+      }
       const profile = applicableProfiles.find((entry) => entry.id === profileId);
       if (!profile) {
         return;
@@ -138,6 +169,11 @@ export function useAgentProfilePicker(
 
       if (target.kind === "draft") {
         target.controls.applyProfile(resolved);
+        if (!identitySupported) {
+          toast.show(t("settings.host.agentProfiles.identityUnsupported"), {
+            variant: "warning",
+          });
+        }
         return;
       }
 
@@ -149,19 +185,53 @@ export function useAgentProfilePicker(
       if (!client) {
         return;
       }
+      const config = toAgentConfigApply(reconciled);
+      if (!identitySupported) {
+        delete config.agentProfileId;
+      }
+      setPendingProfileId(profileId);
       void client
-        .applyAgentConfig(target.agentId, toAgentConfigApply(reconciled))
-        .then((notice) => showProviderNoticeToast(toast, notice))
+        .applyAgentConfig(target.agentId, config)
+        .then((notice) => {
+          showProviderNoticeToast(toast, notice);
+          if (!identitySupported) {
+            toast.show(t("settings.host.agentProfiles.identityUnsupported"), {
+              variant: "warning",
+            });
+          }
+          return undefined;
+        })
         .catch((error) => {
           console.warn("[useAgentProfilePicker] applyAgentConfig failed", error);
           toast.error(toErrorMessage(error));
+        })
+        .finally(() => {
+          setPendingProfileId((current) => (current === profileId ? null : current));
         });
     },
-    [applicableProfiles, client, persistSelection, target, toast],
+    [
+      applicableProfiles,
+      client,
+      identitySupported,
+      pendingProfileId,
+      persistSelection,
+      t,
+      target,
+      toast,
+    ],
   );
 
   return useMemo(
-    () => (isSupported && profiles !== null ? { rows, applyProfile } : null),
-    [applyProfile, isSupported, profiles, rows],
+    () =>
+      isSupported && profiles !== null
+        ? {
+            rows,
+            selectedProfileId: selectedId,
+            selectedProfile,
+            pendingProfileId,
+            applyProfile,
+          }
+        : null,
+    [applyProfile, isSupported, pendingProfileId, profiles, rows, selectedId, selectedProfile],
   );
 }

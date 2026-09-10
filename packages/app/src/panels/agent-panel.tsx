@@ -34,6 +34,7 @@ import {
 import { getActiveMessageSubmissions } from "@/composer/submission/model";
 import { RewindComposerRestoreProvider } from "@/components/rewind/composer-restore";
 import { getProviderIcon } from "@/components/provider-icons";
+import { AgentProfileGlyph, resolveAgentProfileIdentity, useAgentProfiles } from "@/agent-profiles";
 import {
   ToastViewport,
   useToastHost,
@@ -65,7 +66,7 @@ import {
   type ReconnectToastState,
 } from "@/panels/reconnect-toast-state";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
-import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
+import { definePanel, type PanelDescriptor, type PanelIconProps } from "@/panels/panel-registry";
 import { RenderProfile } from "@/utils/render-profiler";
 import { useHasPluginComposerPills } from "@/plugins";
 import { buildDraftPanelDescriptor } from "@/panels/draft-panel-descriptor";
@@ -112,6 +113,7 @@ interface ChatAgentStateShape {
   serverId: string | null;
   id: string | null;
   provider?: Agent["provider"];
+  agentProfileId?: Agent["agentProfileId"];
   status: Agent["status"] | null;
   cwd: string | null;
   workspaceId?: string;
@@ -175,6 +177,7 @@ function selectChatAgentState(
     serverId: agent.serverId,
     id: agent.id,
     provider: agent.provider,
+    agentProfileId: agent.agentProfileId ?? null,
     status: agent.status,
     cwd: agent.cwd,
     workspaceId: agent.workspaceId,
@@ -202,6 +205,7 @@ function buildChatAgentFromState(
     serverId: state.serverId,
     id: state.id,
     provider: state.provider,
+    agentProfileId: state.agentProfileId,
     status: state.status,
     cwd: state.cwd,
     workspaceId: state.workspaceId,
@@ -351,6 +355,7 @@ function useAgentPanelDescriptor(
         session?.agents?.get(target.agentId) ?? session?.agentDetails?.get(target.agentId) ?? null;
       return {
         provider: agent?.provider ?? "codex",
+        agentProfileId: agent?.agentProfileId,
         title: agent?.title ?? null,
         status: agent?.status ?? null,
         pendingPermissionCount: agent?.pendingPermissions.length ?? 0,
@@ -360,14 +365,31 @@ function useAgentPanelDescriptor(
       };
     }),
   );
+  const { profiles } = useAgentProfiles(context.serverId);
   const provider = descriptorState.provider;
+  const profile = useMemo(
+    () => resolveAgentProfileIdentity(profiles, descriptorState.agentProfileId),
+    [descriptorState.agentProfileId, profiles],
+  );
   const label = resolveWorkspaceAgentTabLabel(descriptorState.title);
-  const icon = getProviderIcon(provider);
+  const providerIcon = getProviderIcon(provider);
+  const hasProfile = profile !== null;
+  const profileIcon = profile?.icon;
+  const profileColor = profile?.color;
+  const icon = useMemo(() => {
+    if (!hasProfile) return providerIcon;
+    return function AgentProfilePanelIcon({ size }: PanelIconProps) {
+      return <AgentProfileGlyph icon={profileIcon} color={profileColor} size={size} />;
+    };
+  }, [hasProfile, profileColor, profileIcon, providerIcon]);
+  const profileSubtitle = profile ? `${profile.name} · ` : "";
 
   return {
     label: label ?? "",
-    subtitle: `${formatProviderLabel(provider)} agent`,
-    tooltip: label ?? `${formatProviderLabel(provider)} agent`,
+    subtitle: `${profileSubtitle}${formatProviderLabel(provider)} agent`,
+    tooltip: label
+      ? `${label} · ${profile?.name ?? formatProviderLabel(provider)}`
+      : `${profileSubtitle}${formatProviderLabel(provider)} agent`,
     titleState: label ? "ready" : "loading",
     icon,
     statusBucket: descriptorState.status
@@ -734,6 +756,7 @@ function AgentPanelBody({
           serverId: agentState.serverId,
           id: agentState.id,
           provider: agentState.provider,
+          agentProfileId: agentState.agentProfileId,
           status: agentState.status,
           cwd: agentState.cwd,
           workspaceId: agentState.workspaceId,

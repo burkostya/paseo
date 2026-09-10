@@ -2491,6 +2491,7 @@ export const fr: TranslationResources = {
         unavailable: "Connectez-vous à cet hôte pour gérer les profils d'agent",
         unsupported:
           "Cet hôte exécute un daemon qui ne prend pas encore en charge les profils d'agent",
+        identityUnsupported: "Mettez à jour cet hôte pour afficher le profil d'agent sélectionné.",
         emptyState:
           "Aucun profil pour le moment. Ajoutez-en un pour démarrer des agents à partir d'un fournisseur et d'un modèle enregistrés.",
         addProfileTitle: "Ajouter un profil d'agent",

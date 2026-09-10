@@ -53,6 +53,7 @@ export interface UseAgentFormStateOptions {
 
 export interface UseAgentFormStateResult {
   selectedServerId: string | null;
+  selectedAgentProfileId: string | null;
   setSelectedServerId: (value: string | null) => void;
   setSelectedServerIdFromUser: (value: string | null) => void;
   selectedProvider: AgentProvider | null;
@@ -62,6 +63,7 @@ export interface UseAgentFormStateResult {
   setModelFromUser: (modelId: string) => void;
   selectedThinkingOptionId: string;
   setThinkingOptionFromUser: (thinkingOptionId: string) => void;
+  clearAgentProfileFromUser: () => void;
   workingDir: string;
   setWorkingDir: (value: string) => void;
   setWorkingDirFromUser: (value: string) => void;
@@ -123,6 +125,7 @@ function buildResolutionIntentKey(initialValues: FormInitialValues | undefined):
   // provider/model/mode resolution after the form has settled.
   return [
     resolutionIntentKeyPart(initialValues.serverId),
+    resolutionIntentKeyPart(initialValues.agentProfileId),
     resolutionIntentKeyPart(initialValues.provider),
     resolutionIntentKeyPart(initialValues.modeId),
     resolutionIntentKeyPart(initialValues.model),
@@ -245,6 +248,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     (serverId) => ({
       form: {
         serverId,
+        agentProfileId: null,
         provider: null,
         modeId: "",
         model: "",
@@ -469,6 +473,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       const providerPrefs = preferenceOverlayRef.current.current().providerPreferences?.[provider];
       const action = {
         type: "APPLY_PROFILE_FROM_USER" as const,
+        profileId: profile.agentProfileId,
         provider,
         modelId: profile.modelId,
         modeId: profile.modeId,
@@ -579,6 +584,10 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     [formState, updateCurrentPreferences],
   );
 
+  const clearAgentProfileFromUser = useCallback(() => {
+    dispatch({ type: "CLEAR_AGENT_PROFILE_FROM_USER" });
+  }, []);
+
   const setWorkingDir = useCallback((value: string) => {
     dispatch({ type: "SET_WORKING_DIR", value });
   }, []);
@@ -631,6 +640,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
   return useMemo(
     () => ({
       selectedServerId: formState.serverId,
+      selectedAgentProfileId: formState.agentProfileId,
       setSelectedServerId,
       setSelectedServerIdFromUser,
       selectedProvider: formState.provider,
@@ -640,6 +650,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       setModelFromUser,
       selectedThinkingOptionId: formState.thinkingOptionId,
       setThinkingOptionFromUser,
+      clearAgentProfileFromUser,
       workingDir: formState.workingDir,
       setWorkingDir,
       setWorkingDirFromUser,
@@ -666,6 +677,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     }),
     [
       formState.serverId,
+      formState.agentProfileId,
       formState.provider,
       formState.modeId,
       formState.model,
@@ -676,6 +688,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       setModeFromUser,
       setModelFromUser,
       setThinkingOptionFromUser,
+      clearAgentProfileFromUser,
       setWorkingDir,
       setWorkingDirFromUser,
       providerDefinitions,

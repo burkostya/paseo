@@ -2452,6 +2452,8 @@ export const ja: TranslationResources = {
         sectionTitle: "エージェントプロファイル",
         unavailable: "エージェントプロファイルを管理するにはこのホストに接続してください",
         unsupported: "このホストで動作するデーモンはまだエージェントプロファイルに対応していません",
+        identityUnsupported:
+          "選択したエージェントプロファイルを表示するにはホストを更新してください。",
         emptyState:
           "プロファイルがまだありません。保存したプロバイダーとモデルでエージェントを起動するために追加してください。",
         addProfileTitle: "エージェントプロファイルを追加",

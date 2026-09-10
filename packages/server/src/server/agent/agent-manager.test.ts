@@ -4210,6 +4210,65 @@ test("persists live mode, model, and thinking changes without an external snapsh
   expect(persisted?.runtimeInfo?.model).toBe("gpt-5.4");
 });
 
+test("persists an agent profile identity and clears it after a manual config change", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-profile-identity-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000135",
+  });
+
+  const snapshot = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      agentProfileId: "review",
+      model: "gpt-5.2-codex",
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+  expect(toAgentPayload(snapshot).agentProfileId).toBe("review");
+
+  await manager.setAgentModel(snapshot.id, "gpt-5.4");
+  await manager.flush();
+
+  expect(manager.getAgent(snapshot.id)?.config.agentProfileId).toBeUndefined();
+  expect(toAgentPayload(manager.getAgent(snapshot.id)!)).toMatchObject({
+    agentProfileId: null,
+    model: "gpt-5.4",
+  });
+  expect((await storage.get(snapshot.id))?.config?.agentProfileId).toBeUndefined();
+});
+
+test("applies a profile identity after the bundle's manual config mutations", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-profile-apply-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000136",
+  });
+
+  const snapshot = await manager.createAgent(
+    { provider: "codex", cwd: workdir, model: "gpt-5.2-codex", agentProfileId: "old" },
+    undefined,
+    { workspaceId: undefined },
+  );
+
+  await manager.applyAgentConfig(snapshot.id, {
+    modelId: "gpt-5.4",
+    agentProfileId: "review",
+  });
+  await manager.flush();
+
+  expect(manager.getAgent(snapshot.id)?.config.agentProfileId).toBe("review");
+  expect((await storage.get(snapshot.id))?.config?.agentProfileId).toBe("review");
+});
+
 test("later explicit config mutations win over events emitted by earlier mutations", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-config-mutation-order-"));
   class ConfigMutationSession extends TestAgentSession {
@@ -4336,6 +4395,54 @@ test("session config drift events update state through the stream channel", asyn
     thinkingOptionId: "high",
   });
   expect(streams.map((event) => event.type)).toEqual([]);
+});
+
+test("clears profile identity on changed provider config events but keeps it for duplicates", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-profile-drift-events-"));
+  let capturedSession: TestAgentSession | null = null;
+  class ConfigEventClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      capturedSession = new TestAgentSession(config);
+      return capturedSession;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new ConfigEventClient() },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000137",
+  });
+  const snapshot = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      modeId: "plan",
+      model: "gpt-5.2-codex",
+      thinkingOptionId: "low",
+      agentProfileId: "review",
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+
+  capturedSession?.pushEvent({
+    type: "mode_changed",
+    provider: "codex",
+    currentModeId: "build",
+    availableModes: [],
+  });
+  await manager.flush();
+  expect(manager.getAgent(snapshot.id)?.config.agentProfileId).toBeUndefined();
+
+  await manager.applyAgentConfig(snapshot.id, { agentProfileId: "review" });
+  capturedSession?.pushEvent({
+    type: "mode_changed",
+    provider: "codex",
+    currentModeId: "build",
+    availableModes: [],
+  });
+  await manager.flush();
+  expect(manager.getAgent(snapshot.id)?.config.agentProfileId).toBe("review");
 });
 
 test("setLabels merges and persists labels", async () => {

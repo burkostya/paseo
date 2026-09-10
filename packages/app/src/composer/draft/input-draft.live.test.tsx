@@ -34,6 +34,7 @@ vi.mock("@/attachments/service", () => ({
 vi.mock("@/hooks/use-agent-form-state", () => ({
   useAgentFormState: () => ({
     selectedServerId: "host-1",
+    selectedAgentProfileId: null,
     setSelectedServerId: () => undefined,
     setSelectedServerIdFromUser: () => undefined,
     selectedProvider: "codex",
@@ -44,6 +45,7 @@ vi.mock("@/hooks/use-agent-form-state", () => ({
     setModelFromUser: () => undefined,
     selectedThinkingOptionId: "",
     setThinkingOptionFromUser: () => undefined,
+    clearAgentProfileFromUser: () => undefined,
     workingDir: "/repo",
     setWorkingDir: () => undefined,
     setWorkingDirFromUser: () => undefined,
