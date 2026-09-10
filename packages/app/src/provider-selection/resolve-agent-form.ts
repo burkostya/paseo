@@ -12,6 +12,7 @@ import {
 import { findModelByReference } from "./model-catalog";
 
 export interface FormInitialValues {
+  agentProfileId?: string | null;
   provider?: AgentProvider;
   modeId?: string | null;
   model?: string | null;
@@ -19,6 +20,7 @@ export interface FormInitialValues {
 }
 
 export interface FormState {
+  agentProfileId: string | null;
   provider: AgentProvider | null;
   modeId: string;
   model: string;
@@ -26,6 +28,7 @@ export interface FormState {
 }
 
 export interface UserModifiedFields {
+  agentProfileId: boolean;
   provider: boolean;
   modeId: boolean;
   model: boolean;
@@ -48,6 +51,7 @@ export interface AgentFormReducerState {
 }
 
 export const INITIAL_USER_MODIFIED: UserModifiedFields = {
+  agentProfileId: false,
   provider: false,
   modeId: false,
   model: false,
@@ -98,6 +102,7 @@ export type AgentFormAction =
     }
   | {
       type: "APPLY_PROFILE_FROM_USER";
+      profileId: string;
       provider: AgentProvider;
       modelId: string;
       modeId: string;
@@ -115,6 +120,7 @@ export type AgentFormAction =
     }
   | { type: "CLEAR_PROVIDER_SELECTION_FROM_USER" }
   | { type: "SET_THINKING_OPTION_FROM_USER"; thinkingOptionId: string }
+  | { type: "CLEAR_AGENT_PROFILE_FROM_USER" }
   | { type: "RESET" };
 
 type CompleteResolutionAction = Extract<AgentFormAction, { type: "COMPLETE_RESOLUTION" }>;
@@ -224,6 +230,7 @@ export function mergeSelectedComposerPreferences(args: {
 
 export function hasFormStateChanged(prev: FormState, next: FormState): boolean {
   return (
+    prev.agentProfileId !== next.agentProfileId ||
     prev.provider !== next.provider ||
     prev.modeId !== next.modeId ||
     prev.model !== next.model ||
@@ -416,6 +423,10 @@ export function resolveFormState(
     });
   }
 
+  if (!userModified.agentProfileId && initialValues?.agentProfileId !== undefined) {
+    result.agentProfileId = initialValues.agentProfileId ?? null;
+  }
+
   return result;
 }
 
@@ -517,6 +528,18 @@ function pickNextThinkingOptionForTarget(input: {
   });
 }
 
+function hasAgentProfileSelectionChanged(
+  previous: Pick<FormState, "provider" | "model" | "modeId" | "thinkingOptionId">,
+  next: Pick<FormState, "provider" | "model" | "modeId" | "thinkingOptionId">,
+): boolean {
+  return (
+    previous.provider !== next.provider ||
+    previous.model !== next.model ||
+    previous.modeId !== next.modeId ||
+    previous.thinkingOptionId !== next.thinkingOptionId
+  );
+}
+
 function completeResolution(
   state: AgentFormReducerState,
   action: CompleteResolutionAction,
@@ -561,6 +584,7 @@ function applyProfile(state: AgentFormReducerState, action: ApplyProfileAction) 
     ...state,
     form: {
       ...state.form,
+      agentProfileId: action.profileId,
       provider: action.provider,
       model: nextModelId,
       modeId: nextModeId,
@@ -568,6 +592,7 @@ function applyProfile(state: AgentFormReducerState, action: ApplyProfileAction) 
     },
     userModified: {
       ...state.userModified,
+      agentProfileId: true,
       provider: true,
       model: true,
       modeId: true,
@@ -578,6 +603,7 @@ function applyProfile(state: AgentFormReducerState, action: ApplyProfileAction) 
 
 function sameInitialValues(left: FormInitialValues = {}, right: FormInitialValues = {}): boolean {
   return (
+    left.agentProfileId === right.agentProfileId &&
     left.provider === right.provider &&
     left.model === right.model &&
     left.modeId === right.modeId &&
@@ -643,6 +669,12 @@ export function resolveAgentForm(
         providerDef: action.providerDef,
         providerPrefs: action.providerPrefs,
       });
+      const selectionChanged = hasAgentProfileSelectionChanged(state.form, {
+        provider: action.provider,
+        model: nextModelId,
+        modeId: nextModeId,
+        thinkingOptionId: nextThinkingOptionId,
+      });
       return {
         ...state,
         form: {
@@ -651,8 +683,14 @@ export function resolveAgentForm(
           model: nextModelId,
           modeId: nextModeId,
           thinkingOptionId: nextThinkingOptionId,
+          ...(selectionChanged ? { agentProfileId: null } : {}),
         },
-        userModified: { ...state.userModified, provider: true, model: true },
+        userModified: {
+          ...state.userModified,
+          agentProfileId: true,
+          provider: true,
+          model: true,
+        },
       };
     }
 
@@ -663,8 +701,12 @@ export function resolveAgentForm(
     case "SET_MODE_FROM_USER":
       return {
         ...state,
-        form: { ...state.form, modeId: action.modeId },
-        userModified: { ...state.userModified, modeId: true },
+        form: {
+          ...state.form,
+          modeId: action.modeId,
+          ...(state.form.modeId !== action.modeId ? { agentProfileId: null } : {}),
+        },
+        userModified: { ...state.userModified, agentProfileId: true, modeId: true },
       };
 
     case "SET_MODEL_FROM_USER": {
@@ -678,14 +720,17 @@ export function resolveAgentForm(
         currentThinkingOptionId: state.form.thinkingOptionId,
         isSameProvider: true,
       });
+      const selectionChanged =
+        state.form.model !== nextModelId || state.form.thinkingOptionId !== nextThinkingOptionId;
       return {
         ...state,
         form: {
           ...state.form,
           model: nextModelId,
           thinkingOptionId: nextThinkingOptionId,
+          ...(selectionChanged ? { agentProfileId: null } : {}),
         },
-        userModified: { ...state.userModified, model: true },
+        userModified: { ...state.userModified, agentProfileId: true, model: true },
       };
     }
 
@@ -698,9 +743,11 @@ export function resolveAgentForm(
           model: "",
           modeId: "",
           thinkingOptionId: "",
+          agentProfileId: null,
         },
         userModified: {
           ...state.userModified,
+          agentProfileId: true,
           provider: true,
           model: true,
           modeId: true,
@@ -711,8 +758,21 @@ export function resolveAgentForm(
     case "SET_THINKING_OPTION_FROM_USER":
       return {
         ...state,
-        form: { ...state.form, thinkingOptionId: action.thinkingOptionId },
-        userModified: { ...state.userModified, thinkingOptionId: true },
+        form: {
+          ...state.form,
+          thinkingOptionId: action.thinkingOptionId,
+          ...(state.form.thinkingOptionId !== action.thinkingOptionId
+            ? { agentProfileId: null }
+            : {}),
+        },
+        userModified: { ...state.userModified, agentProfileId: true, thinkingOptionId: true },
+      };
+
+    case "CLEAR_AGENT_PROFILE_FROM_USER":
+      return {
+        ...state,
+        form: { ...state.form, agentProfileId: null },
+        userModified: { ...state.userModified, agentProfileId: true },
       };
 
     case "RESET":

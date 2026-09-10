@@ -789,6 +789,7 @@ type NewWorkspaceComposerState = NonNullable<
 interface WorkspaceDraftSubmissionConfig {
   cwd: string;
   provider: AgentProvider;
+  agentProfileId: string | null;
   modeId: string | null;
   model: string | null;
   thinkingOptionId: string | null;
@@ -892,6 +893,7 @@ function buildWorkspaceDraftSetupFromComposer(input: {
   return {
     provider: input.provider,
     cwd: input.cwd,
+    agentProfileId: input.composerState.selectedAgentProfileId,
     modeId: input.composerState.selectedMode || null,
     model: input.composerState.effectiveModelId || null,
     thinkingOptionId: input.composerState.effectiveThinkingOptionId || null,
@@ -925,6 +927,7 @@ function buildComposerInitialValues(input: {
   if (input.initialSetup) {
     return {
       provider: input.initialSetup.provider,
+      agentProfileId: input.initialSetup.agentProfileId ?? null,
       modeId: input.initialSetup.modeId,
       model: input.initialSetup.model,
       thinkingOptionId: input.initialSetup.thinkingOptionId,
@@ -1085,6 +1088,7 @@ function resolveWorkspaceDraftSubmissionConfig(input: {
     return {
       cwd: initialSetup.cwd,
       provider: initialSetup.provider,
+      agentProfileId: initialSetup.agentProfileId ?? null,
       modeId: initialSetup.modeId,
       model: initialSetup.model,
       thinkingOptionId: initialSetup.thinkingOptionId,
@@ -1095,6 +1099,7 @@ function resolveWorkspaceDraftSubmissionConfig(input: {
   return {
     cwd: workspaceDirectory,
     provider,
+    agentProfileId: composerState.selectedAgentProfileId,
     modeId: composerState.selectedMode || null,
     model: composerState.effectiveModelId || null,
     thinkingOptionId: composerState.effectiveThinkingOptionId || null,
@@ -1151,6 +1156,7 @@ function submitWorkspaceDraft(input: SubmitDraftInput): SubmitOutcome {
     attachments,
     cwd: submission.cwd,
     provider: submission.provider,
+    agentProfileId: submission.agentProfileId,
     clientMessageId,
     timestamp,
     ...(submission.modeId ? { modeId: submission.modeId } : {}),

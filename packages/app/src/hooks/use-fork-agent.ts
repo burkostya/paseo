@@ -31,6 +31,7 @@ import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/workspace-tab
 export type ForkAgentSource = Pick<
   AgentScreenAgent,
   | "provider"
+  | "agentProfileId"
   | "cwd"
   | "currentModeId"
   | "model"
@@ -103,6 +104,7 @@ function buildForkDraftSetup(agent: ForkAgentSource): WorkspaceDraftTabSetup | u
   return {
     provider: agent.provider,
     cwd: agent.cwd,
+    agentProfileId: agent.agentProfileId ?? null,
     modeId: agent.currentModeId ?? agent.runtimeInfo?.modeId ?? null,
     model: agent.model ?? agent.runtimeInfo?.model ?? null,
     thinkingOptionId: agent.thinkingOptionId ?? agent.runtimeInfo?.thinkingOptionId ?? null,

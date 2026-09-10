@@ -33,6 +33,8 @@ export interface AgentConfigOperations {
     agentId: string,
     thinkingOptionId: string | null,
   ): Promise<AgentProviderNotice | null>;
+  /** Optional manager-owned bundle path, which serializes all steps per agent. */
+  applyBundle?: (agentId: string, config: AgentConfigApply) => Promise<AgentProviderNotice | null>;
 }
 
 export interface AgentConfigSessionOptions {
@@ -145,7 +147,8 @@ export class AgentConfigSession {
       logLabel: "agent.config.apply.request",
       logFields: { agentId, requestId, config },
       failureText: "Failed to apply agent config",
-      run: () => this.applyBundle(agentId, config),
+      run: () =>
+        this.operations.applyBundle?.(agentId, config) ?? this.applyBundle(agentId, config),
       emitResponse: (payload) => this.host.emit({ type: "agent.config.apply.response", payload }),
     });
   }
