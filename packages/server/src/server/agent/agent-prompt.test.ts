@@ -285,6 +285,7 @@ test("sendPromptToAgent forwards the client message id as run options", async ()
     "resolveCommand",
     vi.fn(async (_agentId: string, prompt: string) => ({ handled: false, prompt })),
   );
+  Reflect.set(agentManager, "waitForAgentClose", async () => undefined);
   Reflect.set(agentManager, "hasInFlightRun", vi.fn().mockReturnValue(false));
   Reflect.set(agentManager, "streamAgent", streamAgentSpy);
 
@@ -321,6 +322,7 @@ test("resolves a foreground command before replacing the active run", async () =
     calls.push("resolve");
     return { handled: false, prompt: "rewritten prompt" };
   });
+  Reflect.set(agentManager, "waitForAgentClose", async () => undefined);
   Reflect.set(agentManager, "hasInFlightRun", () => {
     calls.push("check-running");
     return true;
@@ -350,6 +352,7 @@ test("does not allocate a provider turn for a handled command", async () => {
   const agentManager: AgentManager = Object.create(AgentManager.prototype);
   Reflect.set(agentManager, "getAgent", () => ({ id: "agent-1", provider: "codex" }));
   Reflect.set(agentManager, "resolveCommand", async () => ({ handled: true }));
+  Reflect.set(agentManager, "waitForAgentClose", async () => undefined);
   Reflect.set(agentManager, "hasInFlightRun", () => true);
   Reflect.set(agentManager, "replaceAgentRun", replacementSpy);
   Reflect.set(agentManager, "streamAgent", streamSpy);

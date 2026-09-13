@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   FolderPlus,
   GitBranch,
+  Import,
   Server,
   Settings,
   X,

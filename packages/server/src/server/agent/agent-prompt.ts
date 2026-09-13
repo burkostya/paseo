@@ -173,6 +173,7 @@ async function startAgentRunInner(
           providerSessionId: snapshot?.persistence?.sessionId ?? undefined,
         },
         "agent.session.iterator.drained",
+      );
     } catch (error) {
       logger.trace(
         {
