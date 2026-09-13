@@ -93,6 +93,7 @@ function CombinedModelSelectorTrigger({
   profiles,
   renderTrigger,
   selectedProvider,
+  serverId,
   toolbar,
   triggerStyle,
 }: {
@@ -104,6 +105,7 @@ function CombinedModelSelectorTrigger({
   profiles: AgentProfilePicker | null;
   renderTrigger: CombinedModelSelectorProps["renderTrigger"];
   selectedProvider: string;
+  serverId: string | null;
   toolbar: CombinedModelSelectorProps["toolbar"];
   triggerStyle: (state: PressableStateCallbackType & { hovered?: boolean }) => StyleProp<ViewStyle>;
 }) {
@@ -331,6 +333,7 @@ export function CombinedModelSelector({
         profiles={profiles}
         renderTrigger={renderTrigger}
         selectedProvider={selectedProvider}
+        serverId={serverId}
         toolbar={toolbar}
         triggerStyle={triggerStyle}
       />
