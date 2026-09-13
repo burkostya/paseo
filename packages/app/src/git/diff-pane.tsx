@@ -1779,16 +1779,6 @@ export function ChangesSurface({
     () => computeCommittedDiffDescription(branchLabel, effectiveBaseRefLabel),
     [branchLabel, effectiveBaseRefLabel],
   );
-  const emptyMessage = computeEmptyMessage(
-    preferences.hideWhitespace,
-    diffMode,
-    effectiveBaseRefLabel,
-    {
-      hiddenWhitespace: t("workspace.git.diff.emptyHiddenWhitespace"),
-      uncommitted: t("workspace.git.diff.emptyUncommitted"),
-      againstBase: (label) => t("workspace.git.diff.emptyAgainstBase", { baseRef: label }),
-    },
-  );
   const emptyMessage = t("diffViewer.empty");
   const emptyAction = computeChangesEmptyAction({
     hideWhitespace: preferences.hideWhitespace,
