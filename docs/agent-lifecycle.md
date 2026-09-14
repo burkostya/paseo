@@ -132,6 +132,18 @@ including legacy records whose native archive failed. The retained history sessi
 the read results. Interactive resume remains responsible for repairing a provider session archived
 outside Paseo while its Paseo agent is active.
 
+Archiving a workspace with children archives the complete workspace subtree, including each child's
+agents, terminals, and setup runtime. Restoring the parent restores every archived descendant in
+parent-before-child order; a descendant that cannot be recovered keeps the restore operation
+failed so the user can address the reported directory or repository problem.
+
+History navigation preserves the selected agent as an explicit recovery target. If both that agent
+and its workspace are archived, the workspace recovery action restores the workspace and unarchives
+the selected agent as one user action. Other archived agents in the restored workspace remain
+recoverable from History. Opening one pins its tab and renders the archived-agent callout. A
+provider session can be archived outside Paseo while its Paseo agent remains active. Interactive
+resume repairs that drift through the provider's native unarchive hook; history resume does not.
+
 Provider session connection owns every process it spawns until the session is registered with
 `AgentManager`. If initialization, persisted-session resume, or initial history hydration fails,
 `connect()` must dispose that process before rethrowing; the manager cannot clean up a session it never

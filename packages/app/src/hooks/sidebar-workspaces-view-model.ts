@@ -21,6 +21,8 @@ export interface SidebarWorkspacePlacement {
   workspaceKey: string;
   serverId: string;
   workspaceId: string;
+  /** Host-local project identity; optional for legacy structural fixtures. */
+  projectId?: string;
   projectViewKey: string;
   projectName: string;
   projectRootPath?: string;
@@ -28,6 +30,7 @@ export interface SidebarWorkspacePlacement {
   projectKind: WorkspaceStructureProject["projectKind"];
   workspaceKind: WorkspaceDescriptor["workspaceKind"];
   name: string;
+  parentWorkspaceId?: string | null;
 }
 
 export interface SidebarStatusWorkspacePlacement extends SidebarWorkspacePlacement {
@@ -42,6 +45,7 @@ export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   // Prefills the rename input and signals whether a reset is available.
   title: string | null;
   pinnedAt?: string | null;
+  parentWorkspaceId?: string | null;
   labels?: string[];
   // Checkout branch (null when not a git checkout or detached HEAD).
   currentBranch: string | null;
@@ -156,6 +160,7 @@ export function createSidebarWorkspaceEntry(input: {
     workspaceKey: `${input.serverId}:${input.workspace.id}`,
     serverId: input.serverId,
     workspaceId: input.workspace.id,
+    projectId: input.workspace.projectId,
     projectViewKey,
     projectName: projectNameForWorkspace(input.workspace),
     projectRootPath: input.workspace.projectRootPath,
@@ -165,6 +170,7 @@ export function createSidebarWorkspaceEntry(input: {
     projectKind: input.workspace.projectKind,
     workspaceKind: input.workspace.workspaceKind,
     name: input.workspace.name,
+    parentWorkspaceId: input.workspace.parentWorkspaceId ?? null,
     title: input.workspace.title ?? null,
     pinnedAt: input.workspace.pinnedAt,
     labels: input.workspace.labels ?? EMPTY_WORKSPACE_LABELS,
@@ -311,6 +317,7 @@ function createStructuralWorkspaceEntry(input: {
     workspaceKey: identity.workspaceKey,
     serverId: identity.serverId,
     workspaceId: identity.workspaceId,
+    projectId: identity.projectId,
     projectViewKey: input.project.viewKey,
     projectName: input.project.projectName,
     projectRootPath: input.project.iconWorkingDir,
@@ -318,6 +325,7 @@ function createStructuralWorkspaceEntry(input: {
     projectKind: input.project.projectKind,
     workspaceKind: "checkout",
     name: identity.workspaceId,
+    parentWorkspaceId: null,
   };
 }
 
@@ -328,6 +336,7 @@ function resolveStructuralWorkspaceIdentity(input: {
   workspaceKey: string;
   serverId: string;
   workspaceId: string;
+  projectId?: string;
 } {
   const hostsByLongestPrefix = [...input.project.hosts].sort(
     (left, right) => right.serverId.length - left.serverId.length,
@@ -342,6 +351,7 @@ function resolveStructuralWorkspaceIdentity(input: {
       workspaceKey: input.workspaceKey,
       serverId: host.serverId,
       workspaceId,
+      projectId: host.projectId,
     };
   }
 
@@ -351,6 +361,7 @@ function resolveStructuralWorkspaceIdentity(input: {
       workspaceKey: input.workspaceKey,
       serverId: input.workspaceKey.slice(0, separatorIndex),
       workspaceId: input.workspaceKey.slice(separatorIndex + 1),
+      projectId: undefined,
     };
   }
 
@@ -359,6 +370,7 @@ function resolveStructuralWorkspaceIdentity(input: {
     workspaceKey: `${serverId}:${input.workspaceKey}`,
     serverId,
     workspaceId: input.workspaceKey,
+    projectId: undefined,
   };
 }
 

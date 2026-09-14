@@ -468,6 +468,7 @@ export const ptBR: TranslationResources = {
         restoringAction: "Restaurando...",
         unavailableTitle: "Workspace indisponível",
         checkFailedTitle: "Não foi possível verificar o workspace",
+        partialFailure: "Não foi possível restaurar alguns workspaces aninhados ({{count}}).",
       },
     },
     hoverCard: {
@@ -1335,11 +1336,27 @@ export const ptBR: TranslationResources = {
         archiving: "Arquivando...",
         hiding: "Ocultando...",
       },
+      hierarchy: {
+        title: "Hierarquia de workspaces",
+        moveTo: "Mover para…",
+        root: "Raiz do projeto",
+        search: "Buscar workspaces pai...",
+        noCandidates: "Nenhum workspace pai elegível",
+        hostUpgrade: "Atualize o host para gerenciar a hierarquia.",
+        failed: "Falha ao atualizar a hierarquia de workspaces",
+        invalidDrop: "Esse workspace não pode ser colocado aqui",
+        collapse: "Recolher workspace",
+        expand: "Expandir workspace",
+      },
       confirmations: {
         hideTitle: "Ocultar workspace?",
         hideMessage:
           'Ocultar "{{workspaceName}}" da barra lateral?\n\nOs arquivos no disco não serão alterados.',
         hideConfirm: "Ocultar",
+        archiveSubtreeTitle: "Arquivar a árvore de workspaces?",
+        archiveSubtreeMessage:
+          'Arquivar "{{workspaceName}}" e {{descendantCount}} workspace(s) descendente(s)?',
+        archiveSubtreeConfirm: "Arquivar tudo",
         cancel: "Cancelar",
       },
       rename: {
@@ -1354,6 +1371,7 @@ export const ptBR: TranslationResources = {
         hostDisconnected: "Host não está conectado",
         hideFailed: "Falha ao ocultar workspace",
         archiveFailed: "Falha ao arquivar workspace",
+        archivePartial: "Não foi possível arquivar {{failedCount}} workspace(s)",
       },
     },
   },

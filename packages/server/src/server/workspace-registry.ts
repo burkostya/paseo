@@ -101,6 +101,13 @@ const PersistedWorkspaceRecordSchema = z.object({
     .optional()
     .transform((value) => value ?? null),
   labels: z.array(z.string()).optional(),
+  // Manual sidebar hierarchy. Absent on records written by older daemons; null means root.
+  // COMPAT(workspaceHierarchy): added in v0.8.0, remove optional after 2027-09-13.
+  parentWorkspaceId: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((value) => value ?? null),
   untrustedSource: UntrustedWorkspaceSourceSchema.optional(),
 });
 
@@ -160,6 +167,10 @@ export interface WorkspaceRegistry {
     workspaceId: string,
     updater: (record: PersistedWorkspaceRecord) => PersistedWorkspaceRecord,
   ): Promise<PersistedWorkspaceRecord | null>;
+  setWorkspaceParent(input: {
+    workspaceId: string;
+    parentWorkspaceId: string | null;
+  }): Promise<PersistedWorkspaceRecord | null>;
   upsert(record: PersistedWorkspaceRecord, context?: WorkspaceMutationContext): Promise<void>;
   archive(
     workspaceId: string,
@@ -178,7 +189,7 @@ type RegistryRecord = PersistedProjectRecord | PersistedWorkspaceRecord;
 class FileBackedRegistry<TRecord extends RegistryRecord> {
   private readonly filePath: string;
   protected readonly logger: Logger;
-  private readonly schema: z.ZodType<TRecord, unknown>;
+  protected readonly schema: z.ZodType<TRecord, unknown>;
   private readonly getId: (record: TRecord) => string;
   private loaded = false;
   private readonly cache = new Map<string, TRecord>();
@@ -550,15 +561,90 @@ export class FileBackedWorkspaceRegistry
     return workspace;
   }
 
+  async setWorkspaceParent(input: {
+    workspaceId: string;
+    parentWorkspaceId: string | null;
+  }): Promise<PersistedWorkspaceRecord | null> {
+    let changed = false;
+    const updated = await this.mutateCache((records) => {
+      const workspace = records.get(input.workspaceId);
+      if (!workspace) {
+        throw new Error("Workspace not found");
+      }
+      if (workspace.archivedAt) {
+        throw new Error("Archived workspace cannot be moved");
+      }
+
+      const parentId = input.parentWorkspaceId;
+      if (parentId !== null && parentId.length === 0) {
+        throw new Error("Parent workspace ID must be non-empty");
+      }
+      if (parentId === input.workspaceId) {
+        throw new Error("Workspace cannot be its own parent");
+      }
+      if (parentId) {
+        const parent = records.get(parentId);
+        if (!parent) {
+          throw new Error("Parent workspace not found");
+        }
+        if (parent.archivedAt) {
+          throw new Error("Archived workspace cannot be a parent");
+        }
+        if (parent.projectId !== workspace.projectId) {
+          throw new Error("Parent workspace must belong to the same project");
+        }
+
+        const visited = new Set<string>();
+        let currentId: string | null = parentId;
+        while (currentId) {
+          if (currentId === input.workspaceId) {
+            throw new Error("Workspace hierarchy cannot contain a cycle");
+          }
+          if (visited.has(currentId)) {
+            throw new Error("Workspace hierarchy contains a cycle");
+          }
+          visited.add(currentId);
+          currentId = records.get(currentId)?.parentWorkspaceId ?? null;
+        }
+      }
+
+      const currentParentId = workspace.parentWorkspaceId ?? null;
+      if (currentParentId === parentId) {
+        return workspace;
+      }
+      changed = true;
+      const next = this.schema.parse({
+        ...workspace,
+        parentWorkspaceId: parentId,
+        updatedAt: new Date().toISOString(),
+      });
+      records.set(input.workspaceId, next);
+      return next;
+    });
+
+    if (updated && changed) {
+      await this.notifyMutation({
+        kind: "upsert",
+        workspaceId: input.workspaceId,
+        workspace: updated,
+      });
+    }
+    return updated;
+  }
+
   override async upsert(
     record: PersistedWorkspaceRecord,
     context?: WorkspaceMutationContext,
   ): Promise<void> {
-    await super.upsert(record);
+    // Notify with the same normalized shape persisted by the base registry. In particular,
+    // records from an older daemon may omit `parentWorkspaceId`, while subscribers always receive
+    // the explicit `null` root value used by the hierarchy projection.
+    const parsed = this.schema.parse(record);
+    await super.upsert(parsed);
     await this.notifyMutation({
       kind: "upsert",
-      workspaceId: record.workspaceId,
-      workspace: record,
+      workspaceId: parsed.workspaceId,
+      workspace: parsed,
       ...(context?.expectsInitialAgent ? { expectsInitialAgent: true } : {}),
     });
   }
@@ -581,9 +667,40 @@ export class FileBackedWorkspaceRegistry
   }
 
   override async remove(workspaceId: string): Promise<void> {
-    const workspace = await this.removeIfPresent(workspaceId);
+    const changedChildren: PersistedWorkspaceRecord[] = [];
+    const workspace = await this.mutateCache((records) => {
+      const existing = records.get(workspaceId);
+      if (!existing) return null;
+      const existingParentId = existing.parentWorkspaceId ?? null;
+      const existingParent = existingParentId ? records.get(existingParentId) : null;
+      // A stale parent link can survive older migrations or an interrupted removal. Do not
+      // recreate that dangling link when promoting children after removing this record.
+      const replacementParentId =
+        existingParent && existingParent.projectId === existing.projectId ? existingParentId : null;
+      for (const [id, child] of records) {
+        if (id === workspaceId || (child.parentWorkspaceId ?? null) !== workspaceId) continue;
+        const childReplacementParentId =
+          child.projectId === existing.projectId ? replacementParentId : null;
+        const next = this.schema.parse({
+          ...child,
+          parentWorkspaceId: childReplacementParentId,
+          updatedAt: new Date().toISOString(),
+        });
+        records.set(id, next);
+        changedChildren.push(next);
+      }
+      records.delete(workspaceId);
+      return existing;
+    });
     if (!workspace) return;
     await this.notifyMutation({ kind: "remove", workspaceId, workspace: null });
+    for (const child of changedChildren) {
+      await this.notifyMutation({
+        kind: "upsert",
+        workspaceId: child.workspaceId,
+        workspace: child,
+      });
+    }
   }
 
   async commitWorkspaceLabelMutation<TResult>(input: {
@@ -683,6 +800,7 @@ export function createPersistedWorkspaceRecord(input: {
   autoArchivedChangeRequestUrl?: string | null;
   pinnedAt?: string | null;
   labels?: string[];
+  parentWorkspaceId?: string | null;
   untrustedSource?: UntrustedWorkspaceSource;
 }): PersistedWorkspaceRecord {
   return PersistedWorkspaceRecordSchema.parse({
@@ -696,6 +814,7 @@ export function createPersistedWorkspaceRecord(input: {
     archivedAt: input.archivedAt ?? null,
     autoArchivedChangeRequestUrl: input.autoArchivedChangeRequestUrl ?? null,
     pinnedAt: input.pinnedAt ?? null,
+    parentWorkspaceId: input.parentWorkspaceId ?? null,
   });
 }
 

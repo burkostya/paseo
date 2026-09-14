@@ -16,6 +16,38 @@ interface WorkspaceArchiveClient {
   archiveWorkspace: (workspaceId: string) => Promise<{ error: string | null }>;
 }
 
+export interface WorkspaceArchiveHierarchyClient extends WorkspaceArchiveClient {
+  archiveWorkspaceSubtree: (
+    workspaceId: string,
+    expectedWorkspaceIds: readonly string[],
+  ) => Promise<{
+    accepted: boolean;
+    error: string | null;
+    results: Array<{
+      workspaceId: string;
+      status: "succeeded" | "unchanged" | "failed";
+      error: string | null;
+    }>;
+  }>;
+  inspectWorkspaceSubtree: (
+    workspaceId: string,
+    action: "archive" | "restore",
+  ) => Promise<{
+    workspaceId: string;
+    error: string | null;
+    entries: Array<{
+      workspaceId: string;
+      workspaceName?: string;
+      workspaceKind?: "local_checkout" | "worktree" | "directory";
+      archiveHasUncommittedChanges?: boolean | null;
+      archiveUnpushedCommitCount?: number | null;
+      diffStat?: { additions: number; deletions: number } | null;
+    }>;
+    expectedWorkspaceIds: string[];
+    changingWorkspaceIds: string[];
+  }>;
+}
+
 interface OptimisticWorkspaceArchiveSnapshot {
   workspace: WorkspaceDescriptor | null;
 }
@@ -69,6 +101,31 @@ function restoreOptimisticallyHiddenWorkspace(input: {
   }
 }
 
+function hideWorkspacesOptimistically(
+  workspaces: readonly WorkspaceArchiveTarget[],
+): Map<string, OptimisticWorkspaceArchiveSnapshot> {
+  const snapshots = new Map<string, OptimisticWorkspaceArchiveSnapshot>();
+  for (const workspace of workspaces) {
+    snapshots.set(workspace.workspaceId, hideWorkspaceOptimistically(workspace));
+  }
+  return snapshots;
+}
+
+function restoreOptimisticallyHiddenWorkspaces(input: {
+  serverId: string;
+  snapshots: ReadonlyMap<string, OptimisticWorkspaceArchiveSnapshot>;
+  workspaceIds?: ReadonlySet<string>;
+}): void {
+  for (const [workspaceId, snapshot] of input.snapshots) {
+    if (input.workspaceIds && !input.workspaceIds.has(workspaceId)) continue;
+    restoreOptimisticallyHiddenWorkspace({
+      serverId: input.serverId,
+      workspaceId,
+      snapshot,
+    });
+  }
+}
+
 async function archiveWorkspaceOrThrow(input: {
   client: WorkspaceArchiveClient;
   workspaceId: string;
@@ -95,6 +152,80 @@ export async function archiveWorkspaceOptimistically(input: {
       serverId: input.workspace.serverId,
       workspaceId: input.workspace.workspaceId,
       snapshot,
+    });
+    throw error;
+  }
+}
+
+/**
+ * Hide every workspace in a daemon-inspected subtree while the archive request is in flight.
+ * Successful records stay hidden; records reported as failed are restored from their snapshots so
+ * a partial operation leaves the UI actionable for a retry.
+ */
+export async function archiveWorkspaceSubtreeOptimistically(input: {
+  client: WorkspaceArchiveHierarchyClient;
+  workspace: WorkspaceArchiveTarget;
+  expectedWorkspaceIds: readonly string[];
+}): Promise<{
+  accepted: boolean;
+  error: string | null;
+  failedWorkspaceIds: string[];
+}> {
+  const expectedWorkspaceIds = Array.from(
+    new Set([input.workspace.workspaceId, ...input.expectedWorkspaceIds]),
+  );
+  const snapshots = hideWorkspacesOptimistically(
+    expectedWorkspaceIds.map((workspaceId) => ({
+      serverId: input.workspace.serverId,
+      workspaceId,
+    })),
+  );
+
+  try {
+    const payload = await input.client.archiveWorkspaceSubtree(
+      input.workspace.workspaceId,
+      expectedWorkspaceIds,
+    );
+    if (!payload.accepted) {
+      restoreOptimisticallyHiddenWorkspaces({
+        serverId: input.workspace.serverId,
+        snapshots,
+      });
+      return {
+        accepted: false,
+        error: payload.error,
+        failedWorkspaceIds: expectedWorkspaceIds,
+      };
+    }
+
+    const resultByWorkspaceId = new Map(
+      payload.results.map((result) => [result.workspaceId, result]),
+    );
+    const failedWorkspaceIds = expectedWorkspaceIds.filter(
+      (workspaceId) =>
+        resultByWorkspaceId.get(workspaceId)?.status === "failed" ||
+        !resultByWorkspaceId.has(workspaceId),
+    );
+    for (const workspaceId of expectedWorkspaceIds) {
+      clearWorkspaceArchivePending({
+        serverId: input.workspace.serverId,
+        workspaceId,
+      });
+    }
+    restoreOptimisticallyHiddenWorkspaces({
+      serverId: input.workspace.serverId,
+      snapshots,
+      workspaceIds: new Set(failedWorkspaceIds),
+    });
+    return {
+      accepted: true,
+      error: payload.error,
+      failedWorkspaceIds,
+    };
+  } catch (error) {
+    restoreOptimisticallyHiddenWorkspaces({
+      serverId: input.workspace.serverId,
+      snapshots,
     });
     throw error;
   }

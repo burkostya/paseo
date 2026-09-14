@@ -9,6 +9,8 @@ import {
   type Modifier,
   useSensor,
   useSensors,
+  useDndContext,
+  useDroppable,
 } from "@dnd-kit/core";
 import {
   SortableContext,
@@ -19,6 +21,10 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import type { DraggableListProps, DraggableRenderItemInfo } from "./draggable-list.types";
 import { getDragActivationConstraints, useDragReorderState } from "./drag-reorder";
+import {
+  resolveWorkspaceTreeDropZone,
+  WORKSPACE_TREE_ROOT_DROP_ZONE_ID,
+} from "./sidebar/workspace-tree-dnd";
 
 export type { DraggableListProps, DraggableRenderItemInfo };
 
@@ -33,6 +39,12 @@ const DRAG_ACTIVATION_CONFIG = {
   touchHoldDelayMs: 180,
   touchHoldTolerance: 8,
 };
+
+const TREE_ROOT_DROP_ZONE_IDLE_STYLE = {
+  outline: "1px dashed transparent",
+  outlineOffset: -1,
+  borderRadius: 8,
+} as const;
 
 function areRecordsEqual(
   left: Record<string, unknown> | undefined,
@@ -106,6 +118,7 @@ function SortableItemInner<T>({
   activeId,
   useDragHandle,
 }: SortableItemProps<T>) {
+  const { over } = useDndContext();
   const {
     attributes,
     listeners,
@@ -137,6 +150,7 @@ function SortableItemInner<T>({
   );
   const scaleTransform = isDragging ? "scale(1.02)" : "";
   const combinedTransform = [baseTransform, scaleTransform].filter(Boolean).join(" ");
+  const isDropTarget = Boolean(activeId && over?.id === id && activeId !== id);
 
   const style = useMemo(
     () => ({
@@ -144,8 +158,12 @@ function SortableItemInner<T>({
       transition,
       opacity: isDragging ? 0.9 : 1,
       zIndex: isDragging ? 1000 : 1,
+      // Keep a visible target cue while the pointer is over a row. The actual before/inside/after
+      // zone is resolved on drop from the active and target rectangles.
+      outline: isDropTarget ? "1px solid currentColor" : undefined,
+      outlineOffset: isDropTarget ? -1 : undefined,
     }),
-    [combinedTransform, transition, isDragging],
+    [combinedTransform, isDropTarget, transition, isDragging],
   );
   const stableAttributes = useShallowStableRecord(attributes as unknown as Record<string, unknown>);
   const stableListeners = useStableListenerRecord(
@@ -182,6 +200,22 @@ function SortableItemInner<T>({
   );
 }
 
+function TreeRootDropZone({ children }: { children: ReactElement }): ReactElement {
+  const { isOver, setNodeRef } = useDroppable({ id: WORKSPACE_TREE_ROOT_DROP_ZONE_ID });
+  const style = useMemo(
+    () => ({
+      ...TREE_ROOT_DROP_ZONE_IDLE_STYLE,
+      outline: isOver ? "1px solid currentColor" : TREE_ROOT_DROP_ZONE_IDLE_STYLE.outline,
+    }),
+    [isOver],
+  );
+  return (
+    <div ref={setNodeRef} style={style}>
+      {children}
+    </div>
+  );
+}
+
 const SortableItem = memo(SortableItemInner) as typeof SortableItemInner;
 
 export function DraggableList<T>({
@@ -189,6 +223,7 @@ export function DraggableList<T>({
   keyExtractor,
   renderItem,
   onDragEnd,
+  onDragEndWithIntent,
   style,
   containerStyle,
   contentContainerStyle,
@@ -196,6 +231,7 @@ export function DraggableList<T>({
   ListFooterComponent,
   ListHeaderComponent,
   ListEmptyComponent,
+  treeRootDropZone,
   showsVerticalScrollIndicator = true,
   scrollEnabled = true,
   extraData: _extraData,
@@ -208,6 +244,42 @@ export function DraggableList<T>({
     data,
     keyExtractor,
     onDragEnd,
+    onDragEndEvent: onDragEndWithIntent
+      ? (reordered, event) => {
+          const over = event.over;
+          if (over && String(over.id) === WORKSPACE_TREE_ROOT_DROP_ZONE_ID) {
+            onDragEndWithIntent(reordered, { kind: "root" }, String(event.active.id));
+            return;
+          }
+          if (over && String(over.id) === String(event.active.id)) return;
+          if (!over) {
+            onDragEndWithIntent(reordered, { kind: "root" }, String(event.active.id));
+            return;
+          }
+          const activeRect = event.active.rect.current.translated;
+          const targetRect = over.rect;
+          if (!activeRect || !targetRect) {
+            onDragEndWithIntent(
+              reordered,
+              { kind: "after", targetKey: String(over.id) },
+              String(event.active.id),
+            );
+            return;
+          }
+          const intent = resolveWorkspaceTreeDropZone({
+            activeTop: activeRect.top,
+            activeHeight: activeRect.height,
+            targetTop: targetRect.top,
+            targetHeight: targetRect.height,
+            targetWorkspaceKey: String(over.id),
+          });
+          const dropIntent =
+            intent.kind === "root"
+              ? ({ kind: "root" } as const)
+              : { kind: intent.kind, targetKey: intent.targetWorkspaceKey };
+          onDragEndWithIntent(reordered, dropIntent, String(event.active.id));
+        }
+      : undefined,
     onDragBegin,
   });
   const activationConstraints = getDragActivationConstraints(useDragHandle, DRAG_ACTIVATION_CONFIG);
@@ -272,6 +344,7 @@ export function DraggableList<T>({
                 );
               })}
             </SortableContext>
+            {treeRootDropZone ? <TreeRootDropZone>{treeRootDropZone}</TreeRootDropZone> : null}
           </DndContext>
           {ListFooterComponent}
         </ScrollView>
@@ -303,6 +376,7 @@ export function DraggableList<T>({
                 );
               })}
             </SortableContext>
+            {treeRootDropZone ? <TreeRootDropZone>{treeRootDropZone}</TreeRootDropZone> : null}
           </DndContext>
           {ListFooterComponent}
         </>

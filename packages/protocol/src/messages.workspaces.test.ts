@@ -10,6 +10,46 @@ import {
 } from "./messages.js";
 
 describe("workspace message schemas", () => {
+  test("parses workspace hierarchy changes and optional descriptor parents", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "workspace.hierarchy.setParent.request",
+        workspaceId: "child",
+        parentWorkspaceId: "parent",
+        requestId: "hierarchy-1",
+      }),
+    ).toMatchObject({ type: "workspace.hierarchy.setParent.request", parentWorkspaceId: "parent" });
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "workspace.hierarchy.setParent.response",
+        payload: {
+          requestId: "hierarchy-1",
+          workspaceId: "child",
+          parentWorkspaceId: null,
+          accepted: true,
+          error: null,
+        },
+      }),
+    ).toMatchObject({ payload: { accepted: true, parentWorkspaceId: null } });
+    const descriptor = WorkspaceDescriptorPayloadSchema.parse({
+      id: "child",
+      projectId: "project",
+      projectDisplayName: "Project",
+      projectRootPath: "/repo",
+      projectKind: "git",
+      workspaceKind: "worktree",
+      name: "child",
+      parentWorkspaceId: "parent",
+      status: "done",
+      activityAt: null,
+      diffStat: null,
+      gitRuntime: null,
+      githubRuntime: null,
+      scripts: [],
+    });
+    expect(descriptor.parentWorkspaceId).toBe("parent");
+  });
+
   test("parses mark-unread request and response", () => {
     expect(
       SessionInboundMessageSchema.parse({
