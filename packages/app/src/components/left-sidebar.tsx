@@ -79,6 +79,7 @@ interface SidebarSharedProps {
   hasProjectsBeforeFilter: boolean;
   hasActiveProjectFilter: boolean;
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
+  allWorkspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
   isInitialLoad: boolean;
   isRevalidating: boolean;
   isManualRefresh: boolean;
@@ -128,6 +129,7 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
     hasProjectsBeforeFilter,
     resolvedProjectFilters,
     workspaceEntriesByKey,
+    allWorkspaceEntriesByKey,
     isInitialLoad,
     isRevalidating,
     refreshAll,
@@ -222,6 +224,7 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
     hasProjectsBeforeFilter,
     hasActiveProjectFilter: resolvedProjectFilters.length > 0,
     workspaceEntriesByKey,
+    allWorkspaceEntriesByKey,
     isInitialLoad,
     isRevalidating,
     isManualRefresh,
@@ -553,6 +556,7 @@ function MobileSidebar({
   hasProjectsBeforeFilter,
   hasActiveProjectFilter,
   workspaceEntriesByKey,
+  allWorkspaceEntriesByKey,
   isInitialLoad,
   isRevalidating,
   isManualRefresh,
@@ -631,6 +635,7 @@ function MobileSidebar({
             hasProjectsBeforeFilter={hasProjectsBeforeFilter}
             hasActiveProjectFilter={hasActiveProjectFilter}
             workspaceEntriesByKey={workspaceEntriesByKey}
+            allWorkspaceEntriesByKey={allWorkspaceEntriesByKey}
             isRefreshing={isManualRefresh && isRevalidating}
             onRefresh={handleRefresh}
             onWorkspacePress={handleWorkspacePress}
@@ -665,6 +670,7 @@ function DesktopSidebar({
   hasProjectsBeforeFilter,
   hasActiveProjectFilter,
   workspaceEntriesByKey,
+  allWorkspaceEntriesByKey,
   isInitialLoad,
   isRevalidating,
   isManualRefresh,
@@ -809,6 +815,7 @@ function DesktopSidebar({
             hasProjectsBeforeFilter={hasProjectsBeforeFilter}
             hasActiveProjectFilter={hasActiveProjectFilter}
             workspaceEntriesByKey={workspaceEntriesByKey}
+            allWorkspaceEntriesByKey={allWorkspaceEntriesByKey}
             isRefreshing={isManualRefresh && isRevalidating}
             onRefresh={handleRefresh}
             onAddProject={handleOpenProject}

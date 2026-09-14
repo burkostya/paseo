@@ -1,15 +1,27 @@
 import { useCallback, useMemo, useState } from "react";
 
-const INITIAL_VISIBLE_ITEMS = 20;
+import { limitSidebarGroupItems, SIDEBAR_GROUP_ITEM_LIMIT } from "./sidebar-group-limit";
 
-export function useLimitedSidebarGroup<T>(items: readonly T[]) {
+export { SIDEBAR_GROUP_ITEM_LIMIT } from "./sidebar-group-limit";
+
+export function useLimitedSidebarGroup<T>(
+  items: readonly T[],
+  options?: { expanded?: boolean; onToggleExpanded?: () => void },
+) {
   const [expanded, setExpanded] = useState(false);
+  const isExpanded = options?.expanded ?? expanded;
   const visibleItems = useMemo(
-    () => (expanded ? items.slice() : items.slice(0, INITIAL_VISIBLE_ITEMS)),
-    [expanded, items],
+    () => limitSidebarGroupItems(items, isExpanded),
+    [isExpanded, items],
   );
-  const canToggle = items.length > INITIAL_VISIBLE_ITEMS;
-  const toggleExpanded = useCallback(() => setExpanded((current) => !current), []);
+  const canToggle = items.length > SIDEBAR_GROUP_ITEM_LIMIT;
+  const toggleExpanded = useCallback(() => {
+    if (options?.onToggleExpanded) {
+      options.onToggleExpanded();
+      return;
+    }
+    setExpanded((current) => !current);
+  }, [options]);
 
-  return { visibleItems, expanded, canToggle, toggleExpanded };
+  return { visibleItems, expanded: isExpanded, canToggle, toggleExpanded };
 }

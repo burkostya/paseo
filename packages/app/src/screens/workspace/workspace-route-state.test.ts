@@ -48,6 +48,7 @@ const recoverable = {
   },
   phase: "ready",
   error: null,
+  failedWorkspaceIds: [],
 } as const satisfies WorkspaceRecoveryModel;
 
 describe("resolveWorkspaceRouteState", () => {
@@ -110,6 +111,7 @@ describe("resolveWorkspaceRouteState", () => {
       ...recoverable,
       phase: "failed" as const,
       error: "Project root is missing",
+      failedWorkspaceIds: [],
     };
     expect(resolve({ recovery: failed })).toMatchObject({
       kind: "archived",
@@ -169,5 +171,19 @@ describe("resolveWorkspaceRouteState", () => {
         recovery: recoverable,
       }),
     ).toEqual({ kind: "ready" });
+  });
+
+  it("keeps a cached workspace in the recovery gate when a descendant restore fails", () => {
+    const partial = {
+      ...recoverable,
+      phase: "failed" as const,
+      error: null,
+      failedWorkspaceIds: ["workspace-2"],
+    } satisfies WorkspaceRecoveryModel;
+
+    expect(resolve({ workspace: createWorkspaceDescriptor(), recovery: partial })).toMatchObject({
+      kind: "archived",
+      recovery: { phase: "failed", failedWorkspaceIds: ["workspace-2"] },
+    });
   });
 });

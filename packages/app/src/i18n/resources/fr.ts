@@ -463,6 +463,8 @@ export const fr: TranslationResources = {
         restoringAction: "Restauration...",
         unavailableTitle: "Espace de travail indisponible",
         checkFailedTitle: "Impossible de vérifier l'espace de travail",
+        partialFailure:
+          "Certains espaces de travail imbriqués n'ont pas pu être restaurés ({{count}}).",
       },
     },
     hoverCard: {
@@ -1281,11 +1283,27 @@ export const fr: TranslationResources = {
         archiving: "Archivage...",
         hiding: "Dissimulation...",
       },
+      hierarchy: {
+        title: "Hiérarchie des espaces de travail",
+        moveTo: "Déplacer vers…",
+        root: "Racine du projet",
+        search: "Rechercher des espaces parents...",
+        noCandidates: "Aucun espace parent éligible",
+        hostUpgrade: "Mettez l’hôte à jour pour gérer la hiérarchie.",
+        failed: "Impossible de mettre à jour la hiérarchie",
+        invalidDrop: "Cet espace de travail ne peut pas être placé ici",
+        collapse: "Réduire l’espace de travail",
+        expand: "Développer l’espace de travail",
+      },
       confirmations: {
         hideTitle: "Masquer l'espace de travail?",
         hideMessage:
           "Masquer «{{workspaceName}}» dans la barre latérale?\n\nLes fichiers sur le disque ne seront pas modifiés.",
         hideConfirm: "Cacher",
+        archiveSubtreeTitle: "Archiver l’arbre d’espaces de travail?",
+        archiveSubtreeMessage:
+          "Archiver «{{workspaceName}}» et {{descendantCount}} espaces descendants?",
+        archiveSubtreeConfirm: "Tout archiver",
         cancel: "Annuler",
       },
       rename: {
@@ -1300,6 +1318,7 @@ export const fr: TranslationResources = {
         hostDisconnected: "Hostn'est pas connecté",
         hideFailed: "Échec du masquage de l'espace de travail",
         archiveFailed: "Échec de l'archivage de l'espace de travail",
+        archivePartial: "Impossible d’archiver {{failedCount}} espace(s) de travail",
       },
     },
   },

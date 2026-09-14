@@ -457,6 +457,7 @@ export const ar: TranslationResources = {
         restoringAction: "جارٍ الاستعادة...",
         unavailableTitle: "مساحة العمل غير متاحة",
         checkFailedTitle: "تعذر التحقق من مساحة العمل",
+        partialFailure: "تعذر استعادة بعض مساحات العمل المتداخلة ({{count}}).",
       },
     },
     hoverCard: {
@@ -1245,11 +1246,27 @@ export const ar: TranslationResources = {
         archiving: "أرشفة...",
         hiding: "إخفاء...",
       },
+      hierarchy: {
+        title: "تسلسل مساحات العمل",
+        moveTo: "نقل إلى…",
+        root: "جذر المشروع",
+        search: "البحث عن مساحات العمل الأصلية...",
+        noCandidates: "لا توجد مساحات عمل أصل مؤهلة",
+        hostUpgrade: "حدّث المضيف لإدارة تسلسل مساحات العمل.",
+        failed: "تعذر تحديث تسلسل مساحات العمل",
+        invalidDrop: "لا يمكن وضع مساحة العمل هذه هنا",
+        collapse: "طي مساحة العمل",
+        expand: "توسيع مساحة العمل",
+      },
       confirmations: {
         hideTitle: "إخفاء مساحة العمل؟",
         hideMessage:
           'إخفاء "{{workspaceName}}" من الشريط الجانبي؟\n\n لن يتم تغيير الملفات الموجودة على القرص.',
         hideConfirm: "يخفي",
+        archiveSubtreeTitle: "أرشفة شجرة مساحات العمل؟",
+        archiveSubtreeMessage:
+          'أرشفة "{{workspaceName}}" و{{descendantCount}} من مساحات العمل التابعة؟',
+        archiveSubtreeConfirm: "أرشفة الكل",
         cancel: "يلغي",
       },
       rename: {
@@ -1264,6 +1281,7 @@ export const ar: TranslationResources = {
         hostDisconnected: "Host غير متصل",
         hideFailed: "فشل في إخفاء مساحة العمل",
         archiveFailed: "فشل في أرشفة مساحة العمل",
+        archivePartial: "تعذر أرشفة {{failedCount}} من مساحات العمل",
       },
     },
   },

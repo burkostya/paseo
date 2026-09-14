@@ -1,7 +1,15 @@
 import { memo, useMemo, useCallback, useState, type ReactNode } from "react";
-import { Text, View, type ViewStyle } from "react-native";
+import { useTranslation } from "react-i18next";
+import { Pressable, Text, View, type GestureResponderEvent, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { CircleAlert, Folder, FolderGit2, Monitor } from "lucide-react-native";
+import {
+  ChevronDown,
+  ChevronRight,
+  CircleAlert,
+  Folder,
+  FolderGit2,
+  Monitor,
+} from "lucide-react-native";
 import { ProjectStatusIndicator } from "@/components/sidebar/project-leading-visual";
 import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
 import {
@@ -40,6 +48,8 @@ const ThemedCircleAlert = withUnistyles(CircleAlert);
 const ThemedMonitor = withUnistyles(Monitor);
 const ThemedFolder = withUnistyles(Folder);
 const ThemedFolderGit2 = withUnistyles(FolderGit2);
+const ThemedChevronDown = withUnistyles(ChevronDown);
+const ThemedChevronRight = withUnistyles(ChevronRight);
 
 export function SidebarWorkspaceRowFrame({
   workspace,
@@ -101,6 +111,9 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   showShortcutBadge = false,
   reserveIdleStatusIndicatorSpace = true,
   children,
+  hasChildren = false,
+  expanded = true,
+  onToggleCollapsed,
 }: {
   workspace: SidebarWorkspaceEntry;
   hostBadge?: HostBadgeModel | null;
@@ -118,7 +131,11 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   /** Keep the empty leading slot when the workspace has no active status. */
   reserveIdleStatusIndicatorSpace?: boolean;
   children?: ReactNode;
+  hasChildren?: boolean;
+  expanded?: boolean;
+  onToggleCollapsed?: () => void;
 }) {
+  const { t } = useTranslation();
   const {
     settings: { workspaceTitleSource },
   } = useAppSettings();
@@ -134,10 +151,40 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
     ],
     [isHovered, isCreating],
   );
+  const treeToggleAccessibilityState = useMemo(() => ({ expanded }), [expanded]);
+  const handleTreeTogglePress = useCallback(
+    (event: GestureResponderEvent) => {
+      event.stopPropagation();
+      onToggleCollapsed?.();
+    },
+    [onToggleCollapsed],
+  );
 
   return (
     <View style={styles.workspaceRowContent}>
       <View style={styles.workspaceRowMain}>
+        {hasChildren ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={
+              expanded
+                ? t("sidebar.workspace.hierarchy.collapse")
+                : t("sidebar.workspace.hierarchy.expand")
+            }
+            accessibilityState={treeToggleAccessibilityState}
+            hitSlop={6}
+            onPress={handleTreeTogglePress}
+            style={styles.workspaceTreeToggle}
+          >
+            {expanded ? (
+              <ThemedChevronDown size={14} uniProps={foregroundMutedColorMapping} />
+            ) : (
+              <ThemedChevronRight size={14} uniProps={foregroundMutedColorMapping} />
+            )}
+          </Pressable>
+        ) : (
+          <View style={styles.workspaceTreeTogglePlaceholder} />
+        )}
         {leadingProjectName ? (
           <ProjectStatusIndicator
             iconDataUri={leadingProjectIconDataUri}
@@ -464,6 +511,18 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "flex-start",
     gap: theme.spacing[2],
     width: "100%",
+  },
+  workspaceTreeToggle: {
+    width: theme.iconSize.md,
+    height: theme.iconSize.md,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  workspaceTreeTogglePlaceholder: {
+    width: theme.iconSize.md,
+    height: theme.iconSize.md,
+    flexShrink: 0,
   },
   workspaceContentColumn: {
     flex: 1,

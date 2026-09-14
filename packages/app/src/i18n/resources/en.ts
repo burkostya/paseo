@@ -454,6 +454,7 @@ export const en = {
         restoringAction: "Restoring...",
         unavailableTitle: "Workspace unavailable",
         checkFailedTitle: "Couldn't check workspace",
+        partialFailure: "Some nested workspaces could not be restored ({{count}}).",
       },
     },
     hoverCard: {
@@ -1253,11 +1254,27 @@ export const en = {
         archiving: "Archiving...",
         hiding: "Hiding...",
       },
+      hierarchy: {
+        title: "Workspace hierarchy",
+        moveTo: "Move to…",
+        root: "Project root",
+        search: "Search parent workspaces...",
+        noCandidates: "No eligible parent workspaces",
+        hostUpgrade: "Update the host to manage workspace hierarchy.",
+        failed: "Failed to update workspace hierarchy",
+        invalidDrop: "That workspace cannot be placed there",
+        collapse: "Collapse workspace",
+        expand: "Expand workspace",
+      },
       confirmations: {
         hideTitle: "Hide workspace?",
         hideMessage:
           'Hide "{{workspaceName}}" from the sidebar?\n\nFiles on disk will not be changed.',
         hideConfirm: "Hide",
+        archiveSubtreeTitle: "Archive workspace subtree?",
+        archiveSubtreeMessage:
+          'Archive "{{workspaceName}}" and {{descendantCount}} descendant workspaces?',
+        archiveSubtreeConfirm: "Archive all",
         cancel: "Cancel",
       },
       rename: {
@@ -1272,6 +1289,7 @@ export const en = {
         hostDisconnected: "Host is not connected",
         hideFailed: "Failed to hide workspace",
         archiveFailed: "Failed to archive workspace",
+        archivePartial: "{{failedCount}} workspace(s) could not be archived",
       },
     },
   },

@@ -462,6 +462,7 @@ export const ja: TranslationResources = {
         restoringAction: "復元中...",
         unavailableTitle: "ワークスペースを利用できません",
         checkFailedTitle: "ワークスペースを確認できませんでした",
+        partialFailure: "一部のネストされたワークスペースを復元できませんでした（{{count}}）。",
       },
     },
     hoverCard: {
@@ -1258,11 +1259,27 @@ export const ja: TranslationResources = {
         archiving: "アーカイブ中...",
         hiding: "非表示にしています...",
       },
+      hierarchy: {
+        title: "ワークスペース階層",
+        moveTo: "移動先…",
+        root: "プロジェクトルート",
+        search: "親ワークスペースを検索...",
+        noCandidates: "選択できる親ワークスペースはありません",
+        hostUpgrade: "階層を管理するにはホストを更新してください。",
+        failed: "ワークスペース階層を更新できませんでした",
+        invalidDrop: "そのワークスペースはここに配置できません",
+        collapse: "ワークスペースを折りたたむ",
+        expand: "ワークスペースを展開",
+      },
       confirmations: {
         hideTitle: "ワークスペースを非表示にしますか？",
         hideMessage:
           '"{{workspaceName}}"をサイドバーから非表示にしますか？\n\nディスク上のファイルは変更されません。',
         hideConfirm: "非表示",
+        archiveSubtreeTitle: "ワークスペースのツリーをアーカイブしますか？",
+        archiveSubtreeMessage:
+          "「{{workspaceName}}」と子ワークスペース{{descendantCount}}件をアーカイブしますか？",
+        archiveSubtreeConfirm: "すべてアーカイブ",
         cancel: "キャンセル",
       },
       rename: {
@@ -1277,6 +1294,7 @@ export const ja: TranslationResources = {
         hostDisconnected: "ホストが接続されていません",
         hideFailed: "ワークスペースの非表示に失敗しました",
         archiveFailed: "ワークスペースのアーカイブに失敗しました",
+        archivePartial: "{{failedCount}}件のワークスペースをアーカイブできませんでした",
       },
     },
   },

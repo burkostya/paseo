@@ -148,6 +148,13 @@ function ArchivedWorkspaceRecovery({
             : t("workspace.route.recovery.archivedTitle")}
         </Text>
         <Text style={styles.description}>{description}</Text>
+        {recovery.failedWorkspaceIds.length > 0 ? (
+          <Text style={styles.error} testID="workspace-recovery-partial-failure">
+            {t("workspace.route.recovery.partialFailure", {
+              count: recovery.failedWorkspaceIds.length,
+            })}
+          </Text>
+        ) : null}
         {recovery.error ? (
           <Text style={styles.error} testID="workspace-recovery-error">
             {recovery.error}

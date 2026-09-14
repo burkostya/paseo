@@ -9,8 +9,10 @@ import {
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
 import {
   archiveWorkspaceOptimistically,
+  archiveWorkspaceSubtreeOptimistically,
   archiveWorkspacesOptimistically,
   type WorkspaceArchiveTarget,
+  type WorkspaceArchiveHierarchyClient,
 } from "@/workspace/workspace-archive";
 
 const SERVER_ID = "workspace-archive-test";
@@ -62,6 +64,22 @@ function createClient(
   archiveWorkspace: DaemonClient["archiveWorkspace"],
 ): Pick<DaemonClient, "archiveWorkspace"> {
   return { archiveWorkspace };
+}
+
+function createHierarchyClient(
+  archiveWorkspaceSubtree: WorkspaceArchiveHierarchyClient["archiveWorkspaceSubtree"],
+): WorkspaceArchiveHierarchyClient {
+  return {
+    archiveWorkspace: async () => archivePayload({ workspaceId: "unused" }),
+    inspectWorkspaceSubtree: async () => ({
+      workspaceId: "unused",
+      error: null,
+      entries: [],
+      expectedWorkspaceIds: [],
+      changingWorkspaceIds: [],
+    }),
+    archiveWorkspaceSubtree,
+  };
 }
 
 function deferred<T>(): {
@@ -220,5 +238,45 @@ describe("archiveWorkspacesOptimistically", () => {
     );
     expect(storedWorkspaceOn(SERVER_ID, first.id)).toBeUndefined();
     expect(storedWorkspaceOn(SECOND_SERVER_ID, second.id)).toBeUndefined();
+  });
+});
+
+describe("archiveWorkspaceSubtreeOptimistically", () => {
+  it("keeps successful records hidden and restores failed records", async () => {
+    const parent = workspace({ id: "workspace-1" });
+    const child = workspace({
+      id: "workspace-2",
+      workspaceDirectory: "/repo/project/workspace-2",
+      name: "workspace-2",
+    });
+    getHostRuntimeStore().acceptWorkspaceSnapshots(SERVER_ID, [parent, child]);
+    const client = createHierarchyClient(async (_workspaceId, expectedWorkspaceIds) => ({
+      accepted: true,
+      error: null,
+      results: [
+        {
+          workspaceId: expectedWorkspaceIds[0] ?? parent.id,
+          status: "succeeded",
+          error: null,
+        },
+        {
+          workspaceId: expectedWorkspaceIds[1] ?? child.id,
+          status: "failed",
+          error: "directory missing",
+        },
+      ],
+    }));
+
+    await expect(
+      archiveWorkspaceSubtreeOptimistically({
+        client,
+        workspace: target({ workspaceId: parent.id }),
+        expectedWorkspaceIds: [parent.id, child.id],
+      }),
+    ).resolves.toMatchObject({ accepted: true, failedWorkspaceIds: [child.id] });
+
+    expect(storedWorkspace(parent.id)).toBeUndefined();
+    expect(storedWorkspace(child.id)).toEqual(child);
+    expect(isWorkspaceArchivePending({ serverId: SERVER_ID, workspaceId: child.id })).toBe(false);
   });
 });

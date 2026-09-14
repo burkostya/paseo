@@ -2998,6 +2998,88 @@ export class DaemonClient {
     return { pinnedAt: payload.pinnedAt };
   }
 
+  async setWorkspaceParent(
+    workspaceId: string,
+    parentWorkspaceId: string | null,
+    requestId?: string,
+  ): Promise<{ parentWorkspaceId: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "workspace.hierarchy.setParent.request",
+        workspaceId,
+        parentWorkspaceId,
+      },
+      responseType: "workspace.hierarchy.setParent.response",
+    });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "setWorkspaceParent rejected");
+    }
+    return { parentWorkspaceId: payload.parentWorkspaceId };
+  }
+
+  async inspectWorkspaceSubtree(
+    workspaceId: string,
+    action: "archive" | "restore",
+    requestId?: string,
+  ): Promise<
+    Extract<
+      SessionOutboundMessage,
+      { type: "workspace.hierarchy.inspectSubtree.response" }
+    >["payload"]
+  > {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "workspace.hierarchy.inspectSubtree.request",
+        workspaceId,
+        action,
+      },
+    });
+  }
+
+  async archiveWorkspaceSubtree(
+    workspaceId: string,
+    expectedWorkspaceIds: readonly string[],
+    requestId?: string,
+  ): Promise<
+    Extract<
+      SessionOutboundMessage,
+      { type: "workspace.hierarchy.archiveSubtree.response" }
+    >["payload"]
+  > {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "workspace.hierarchy.archiveSubtree.request",
+        workspaceId,
+        expectedWorkspaceIds: [...expectedWorkspaceIds],
+      },
+      timeout: 150_000,
+    });
+  }
+
+  async restoreWorkspaceSubtree(
+    workspaceId: string,
+    expectedWorkspaceIds: readonly string[],
+    requestId?: string,
+  ): Promise<
+    Extract<
+      SessionOutboundMessage,
+      { type: "workspace.hierarchy.restoreSubtree.response" }
+    >["payload"]
+  > {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "workspace.hierarchy.restoreSubtree.request",
+        workspaceId,
+        expectedWorkspaceIds: [...expectedWorkspaceIds],
+      },
+      timeout: 150_000,
+    });
+  }
+
   async inspectWorkspaceRecovery(
     workspaceId: string,
     requestId?: string,

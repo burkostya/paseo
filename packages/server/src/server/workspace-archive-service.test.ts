@@ -189,6 +189,47 @@ function assertArchiveResult(
 }
 
 describe("archiveByScope", () => {
+  test("workspace scope archives the full nested workspace subtree", async () => {
+    const temp = mkdtempSync(path.join(tmpdir(), "workspace-archive-tree-"));
+    cleanupPaths.push(temp);
+    const root = path.join(temp, "repo");
+    mkdirSync(root, { recursive: true });
+    const result = await archiveByScope(
+      createArchiveDeps({
+        paseoHome: path.join(temp, ".paseo"),
+        activeWorkspaces: [
+          {
+            workspaceId: "root",
+            projectId: "project",
+            parentWorkspaceId: null,
+            cwd: root,
+            kind: "local_checkout",
+          },
+          {
+            workspaceId: "child",
+            projectId: "project",
+            parentWorkspaceId: "root",
+            cwd: path.join(root, "child"),
+            kind: "directory",
+          },
+          {
+            workspaceId: "grandchild",
+            projectId: "project",
+            parentWorkspaceId: "child",
+            cwd: path.join(root, "grandchild"),
+            kind: "directory",
+          },
+        ],
+      }),
+      {
+        scope: { kind: "workspace", workspaceId: "root" },
+        requestId: "req-tree",
+        includeDescendants: true,
+      },
+    );
+    expect(result.archivedWorkspaceIds).toEqual(["root", "child", "grandchild"]);
+  });
+
   test("workspace scope archives the record and removes the directory on last reference", async () => {
     const { tempDir, repoDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");

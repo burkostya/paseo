@@ -538,4 +538,38 @@ describe("workspace registries", () => {
       pinnedAt: "2026-03-03T00:00:00.000Z",
     });
   });
+
+  test("sets workspace parents, rejects cycles, and reparents children on removal", async () => {
+    await workspaceRegistry.initialize();
+    const base = {
+      projectId: "project-one",
+      cwd: "/tmp/repo",
+      kind: "local_checkout" as const,
+      displayName: "workspace",
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    };
+    await workspaceRegistry.upsert(
+      createPersistedWorkspaceRecord({ ...base, workspaceId: "root" }),
+    );
+    await workspaceRegistry.upsert(
+      createPersistedWorkspaceRecord({ ...base, workspaceId: "child", parentWorkspaceId: "root" }),
+    );
+    await workspaceRegistry.upsert(
+      createPersistedWorkspaceRecord({
+        ...base,
+        workspaceId: "grandchild",
+        parentWorkspaceId: "child",
+      }),
+    );
+
+    await expect(
+      workspaceRegistry.setWorkspaceParent({
+        workspaceId: "root",
+        parentWorkspaceId: "grandchild",
+      }),
+    ).rejects.toThrow("cycle");
+    await workspaceRegistry.remove("child");
+    expect((await workspaceRegistry.get("grandchild"))?.parentWorkspaceId).toBe("root");
+  });
 });

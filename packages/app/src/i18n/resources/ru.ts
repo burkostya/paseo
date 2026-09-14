@@ -462,6 +462,8 @@ export const ru: TranslationResources = {
         restoringAction: "Восстановление...",
         unavailableTitle: "Рабочая область недоступна",
         checkFailedTitle: "Не удалось проверить рабочее пространство",
+        partialFailure:
+          "Не удалось восстановить некоторые вложенные рабочие пространства ({{count}}).",
       },
     },
     hoverCard: {
@@ -1263,11 +1265,27 @@ export const ru: TranslationResources = {
         archiving: "Архивирование...",
         hiding: "Скрытие...",
       },
+      hierarchy: {
+        title: "Иерархия рабочих пространств",
+        moveTo: "Переместить в…",
+        root: "Корень проекта",
+        search: "Поиск родительских рабочих пространств...",
+        noCandidates: "Нет подходящих родительских рабочих пространств",
+        hostUpgrade: "Обновите хост, чтобы управлять иерархией.",
+        failed: "Не удалось обновить иерархию рабочих пространств",
+        invalidDrop: "Это рабочее пространство нельзя разместить здесь",
+        collapse: "Свернуть рабочее пространство",
+        expand: "Развернуть рабочее пространство",
+      },
       confirmations: {
         hideTitle: "Скрыть рабочее пространство?",
         hideMessage:
           "Скрыть «{{workspaceName}}» на боковой панели?\n\nФайлы на диске не будут изменены.",
         hideConfirm: "Скрыть",
+        archiveSubtreeTitle: "Архивировать дерево рабочих пространств?",
+        archiveSubtreeMessage:
+          "Архивировать «{{workspaceName}}» и дочерние рабочие пространства ({{descendantCount}})?",
+        archiveSubtreeConfirm: "Архивировать всё",
         cancel: "Отмена",
       },
       rename: {
@@ -1282,6 +1300,7 @@ export const ru: TranslationResources = {
         hostDisconnected: "Хост не подключён",
         hideFailed: "Не удалось скрыть рабочее пространство",
         archiveFailed: "Не удалось архивировать рабочее пространство",
+        archivePartial: "Не удалось архивировать рабочих пространств: {{failedCount}}",
       },
     },
   },

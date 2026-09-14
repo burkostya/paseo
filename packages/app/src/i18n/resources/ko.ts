@@ -449,6 +449,7 @@ export const ko: TranslationResources = {
         restoringAction: "복원 중...",
         unavailableTitle: "워크스페이스를 사용할 수 없습니다",
         checkFailedTitle: "워크스페이스를 확인하지 못했습니다",
+        partialFailure: "일부 중첩 워크스페이스를 복원하지 못했습니다({{count}}).",
       },
     },
     hoverCard: {
@@ -1234,11 +1235,27 @@ export const ko: TranslationResources = {
         archiving: "보관하는 중...",
         hiding: "숨기는 중...",
       },
+      hierarchy: {
+        title: "워크스페이스 계층",
+        moveTo: "이동 위치…",
+        root: "프로젝트 루트",
+        search: "상위 워크스페이스 검색...",
+        noCandidates: "선택 가능한 상위 워크스페이스가 없습니다",
+        hostUpgrade: "워크스페이스 계층을 관리하려면 호스트를 업데이트하세요.",
+        failed: "워크스페이스 계층을 업데이트하지 못했습니다",
+        invalidDrop: "해당 워크스페이스는 여기에 배치할 수 없습니다",
+        collapse: "워크스페이스 접기",
+        expand: "워크스페이스 펼치기",
+      },
       confirmations: {
         hideTitle: "워크스페이스를 숨길까요?",
         hideMessage:
           '"{{workspaceName}}"을(를) 사이드바에서 숨길까요?\n\n디스크의 파일은 변경되지 않습니다.',
         hideConfirm: "숨기기",
+        archiveSubtreeTitle: "워크스페이스 트리를 보관할까요?",
+        archiveSubtreeMessage:
+          '"{{workspaceName}}" 및 하위 워크스페이스 {{descendantCount}}개를 보관할까요?',
+        archiveSubtreeConfirm: "모두 보관",
         cancel: "취소",
       },
       rename: {
@@ -1253,6 +1270,7 @@ export const ko: TranslationResources = {
         hostDisconnected: "호스트가 연결되어 있지 않습니다",
         hideFailed: "워크스페이스를 숨기지 못했습니다",
         archiveFailed: "워크스페이스를 보관하지 못했습니다.",
+        archivePartial: "워크스페이스 {{failedCount}}개를 보관하지 못했습니다",
       },
     },
   },

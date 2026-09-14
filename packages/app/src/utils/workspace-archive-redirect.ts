@@ -14,13 +14,40 @@ export interface RedirectIfArchivingActiveWorkspaceDeps {
   readWorkspaces: (serverId: string) => Iterable<WorkspaceDescriptor>;
 }
 
+function isInArchivedWorkspaceSubtree(input: {
+  archivedWorkspaceId: string;
+  activeWorkspaceId: string;
+  workspaces: Iterable<WorkspaceDescriptor>;
+}): boolean {
+  if (input.archivedWorkspaceId === input.activeWorkspaceId) return true;
+  const byId = new Map(Array.from(input.workspaces, (workspace) => [workspace.id, workspace]));
+  const visited = new Set<string>();
+  let current = byId.get(input.activeWorkspaceId);
+  while (current?.parentWorkspaceId) {
+    if (visited.has(current.id)) return false;
+    visited.add(current.id);
+    if (current.parentWorkspaceId === input.archivedWorkspaceId) return true;
+    current = byId.get(current.parentWorkspaceId);
+  }
+  return false;
+}
+
 export function redirectIfArchivingActiveWorkspace(
   input: RedirectIfArchivingActiveWorkspaceInput,
   deps: RedirectIfArchivingActiveWorkspaceDeps,
 ): boolean {
+  if (input.activeWorkspaceSelection?.serverId !== input.serverId) {
+    return false;
+  }
+
+  const workspaces = deps.readWorkspaces(input.serverId);
   if (
-    input.activeWorkspaceSelection?.serverId !== input.serverId ||
-    input.activeWorkspaceSelection.workspaceId !== input.workspaceId
+    !input.activeWorkspaceSelection ||
+    !isInArchivedWorkspaceSubtree({
+      archivedWorkspaceId: input.workspaceId,
+      activeWorkspaceId: input.activeWorkspaceSelection.workspaceId,
+      workspaces,
+    })
   ) {
     return false;
   }
@@ -29,7 +56,7 @@ export function redirectIfArchivingActiveWorkspace(
     buildWorkspaceArchiveRedirectRoute({
       serverId: input.serverId,
       archivedWorkspaceId: input.workspaceId,
-      workspaces: deps.readWorkspaces(input.serverId),
+      workspaces,
     }),
   );
   return true;

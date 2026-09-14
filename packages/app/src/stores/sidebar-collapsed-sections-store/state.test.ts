@@ -7,12 +7,14 @@ import {
   togglePinnedCollapsed,
   toggleProjectCollapsed,
   toggleWorkspaceGroupCollapsed,
+  toggleWorkspaceCollapsed,
 } from "@/stores/sidebar-collapsed-sections-store/state";
 
 function emptyState(): CollapsedProjectsState {
   return {
     collapsedProjectKeys: new Set(),
     collapsedWorkspaceGroupKeys: new Set(),
+    collapsedWorkspaceKeys: new Set(),
     collapsedPinned: false,
   };
 }
@@ -25,21 +27,25 @@ describe("sidebar collapsed projects transitions", () => {
     state = toggleProjectCollapsed(state, "project-b");
     state = toggleProjectCollapsed(state, "project-a");
     state = toggleWorkspaceGroupCollapsed(state, "running");
+    state = toggleWorkspaceCollapsed(state, "workspace-a");
 
     expect(Array.from(state.collapsedProjectKeys)).toEqual(["project-b"]);
     expect(Array.from(state.collapsedWorkspaceGroupKeys)).toEqual(["running"]);
+    expect(Array.from(state.collapsedWorkspaceKeys)).toEqual(["workspace-a"]);
   });
 
   it("serializes collapsed project keys for preference storage", () => {
     const state: CollapsedProjectsState = {
       collapsedProjectKeys: new Set(["project-a", "project-b"]),
       collapsedWorkspaceGroupKeys: new Set(["running"]),
+      collapsedWorkspaceKeys: new Set(["workspace-a"]),
       collapsedPinned: true,
     };
 
     expect(serializeCollapsedProjects(state)).toEqual({
       collapsedProjectKeys: ["project-a", "project-b"],
       collapsedWorkspaceGroupKeys: ["running"],
+      collapsedWorkspaceKeys: ["workspace-a"],
       collapsedPinned: true,
     });
   });

@@ -125,6 +125,20 @@ describe("workspace recovery", () => {
     expect(unarchived).toEqual([workspace.workspaceId]);
   });
 
+  test("restores only the requested archived workspace", async () => {
+    const workspace = createWorkspace({ workspaceId: "parent", kind: "directory", branch: null });
+    const { service, unarchived } = createHarness({
+      workspace,
+      directories: [workspace.cwd],
+    });
+
+    await expect(service.restore(workspace.workspaceId)).resolves.toEqual({
+      workspaceId: workspace.workspaceId,
+      action: "unarchive",
+    });
+    expect(unarchived).toEqual([workspace.workspaceId]);
+  });
+
   test("does not offer recovery for a missing non-worktree directory", async () => {
     const workspace = createWorkspace({ kind: "directory", branch: null });
     const { service } = createHarness({ workspace });

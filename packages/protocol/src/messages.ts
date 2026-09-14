@@ -988,6 +988,38 @@ export const WorkspacePinSetRequestSchema = z.object({
   requestId: z.string(),
 });
 
+// Manual workspace hierarchy. The field is nullable so clearing a parent is an
+// explicit operation and remains compatible with clients that omit it.
+export const WorkspaceHierarchySetParentRequestSchema = z.object({
+  type: z.literal("workspace.hierarchy.setParent.request"),
+  workspaceId: z.string(),
+  parentWorkspaceId: z.string().nullable(),
+  requestId: z.string(),
+});
+
+export const WorkspaceHierarchyActionSchema = z.enum(["archive", "restore"]);
+
+export const WorkspaceHierarchyInspectSubtreeRequestSchema = z.object({
+  type: z.literal("workspace.hierarchy.inspectSubtree.request"),
+  workspaceId: z.string(),
+  action: WorkspaceHierarchyActionSchema,
+  requestId: z.string(),
+});
+
+export const WorkspaceHierarchyArchiveSubtreeRequestSchema = z.object({
+  type: z.literal("workspace.hierarchy.archiveSubtree.request"),
+  workspaceId: z.string(),
+  expectedWorkspaceIds: z.array(z.string()),
+  requestId: z.string(),
+});
+
+export const WorkspaceHierarchyRestoreSubtreeRequestSchema = z.object({
+  type: z.literal("workspace.hierarchy.restoreSubtree.request"),
+  workspaceId: z.string(),
+  expectedWorkspaceIds: z.array(z.string()),
+  requestId: z.string(),
+});
+
 export const WorkspaceLabelColorSchema = z.enum(WORKSPACE_LABEL_COLORS);
 export const WorkspaceLabelDefinitionSchema = z.object({
   name: z.string(),
@@ -2081,6 +2113,75 @@ export const WorkspacePinSetResponsePayloadSchema = z.object({
 export const WorkspacePinSetResponseSchema = z.object({
   type: z.literal("workspace.pin.set.response"),
   payload: WorkspacePinSetResponsePayloadSchema,
+});
+
+export const WorkspaceHierarchySetParentResponsePayloadSchema = z.object({
+  requestId: z.string(),
+  workspaceId: z.string(),
+  parentWorkspaceId: z.string().nullable(),
+  accepted: z.boolean(),
+  error: z.string().nullable(),
+});
+
+export const WorkspaceHierarchySetParentResponseSchema = z.object({
+  type: z.literal("workspace.hierarchy.setParent.response"),
+  payload: WorkspaceHierarchySetParentResponsePayloadSchema,
+});
+
+export const WorkspaceHierarchySubtreeEntrySchema = z.object({
+  workspaceId: z.string(),
+  projectId: z.string(),
+  workspaceName: z.string(),
+  // COMPAT(workspaceHierarchyArchiveRisk): added in v0.8.0, keep optional while older hierarchy
+  // handlers may omit archive warning metadata.
+  workspaceKind: z.enum(["local_checkout", "worktree", "directory"]).optional(),
+  parentWorkspaceId: z.string().nullable(),
+  archivedAt: z.string().nullable(),
+  archived: z.boolean(),
+  archiveHasUncommittedChanges: z.boolean().nullable().optional(),
+  archiveUnpushedCommitCount: z.number().int().nonnegative().nullable().optional(),
+  diffStat: z.object({ additions: z.number(), deletions: z.number() }).nullable().optional(),
+});
+
+export const WorkspaceHierarchyWorkspaceResultSchema = z.object({
+  workspaceId: z.string(),
+  status: z.enum(["succeeded", "unchanged", "failed"]),
+  error: z.string().nullable(),
+});
+
+export const WorkspaceHierarchyInspectSubtreeResponseSchema = z.object({
+  type: z.literal("workspace.hierarchy.inspectSubtree.response"),
+  payload: z.object({
+    requestId: z.string(),
+    workspaceId: z.string(),
+    action: WorkspaceHierarchyActionSchema,
+    entries: z.array(WorkspaceHierarchySubtreeEntrySchema),
+    expectedWorkspaceIds: z.array(z.string()),
+    changingWorkspaceIds: z.array(z.string()),
+    error: z.string().nullable(),
+  }),
+});
+
+export const WorkspaceHierarchyArchiveSubtreeResponseSchema = z.object({
+  type: z.literal("workspace.hierarchy.archiveSubtree.response"),
+  payload: z.object({
+    requestId: z.string(),
+    workspaceId: z.string(),
+    accepted: z.boolean(),
+    error: z.string().nullable(),
+    results: z.array(WorkspaceHierarchyWorkspaceResultSchema),
+  }),
+});
+
+export const WorkspaceHierarchyRestoreSubtreeResponseSchema = z.object({
+  type: z.literal("workspace.hierarchy.restoreSubtree.response"),
+  payload: z.object({
+    requestId: z.string(),
+    workspaceId: z.string(),
+    accepted: z.boolean(),
+    error: z.string().nullable(),
+    results: z.array(WorkspaceHierarchyWorkspaceResultSchema),
+  }),
 });
 
 export const WorkspaceRecoveryStateSchema = z.discriminatedUnion("kind", [
@@ -3188,6 +3289,10 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProjectRemoveRequestSchema,
   WorkspaceTitleSetRequestSchema,
   WorkspacePinSetRequestSchema,
+  WorkspaceHierarchySetParentRequestSchema,
+  WorkspaceHierarchyInspectSubtreeRequestSchema,
+  WorkspaceHierarchyArchiveSubtreeRequestSchema,
+  WorkspaceHierarchyRestoreSubtreeRequestSchema,
   WorkspaceLabelListRequestSchema,
   WorkspaceLabelAssignmentSetRequestSchema,
   WorkspaceLabelUpdateRequestSchema,
@@ -3551,6 +3656,8 @@ export const ServerInfoStatusPayloadSchema = z
         directorySync: z.boolean().optional(),
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
         workspaceLabels: z.boolean().optional(),
+        // COMPAT(workspaceHierarchy): added in v0.8.0, remove after 2027-09-13.
+        workspaceHierarchy: z.boolean().optional(),
         // COMPAT(workspaceSetupRun): added in v0.8.0, remove gate after 2027-09-02.
         workspaceSetupRun: z.boolean().optional(),
         // COMPAT(workspaceTerminals): added in v0.8.0, remove gate after 2027-09-05.
@@ -4043,6 +4150,8 @@ export const WorkspaceDescriptorPayloadSchema = z
     pinnedAt: z.string().nullable().optional(),
     // COMPAT(workspaceLabels): added in v0.5.0, remove optional after 2027-08-14.
     labels: z.array(z.string()).optional(),
+    // COMPAT(workspaceHierarchy): added in v0.8.0, remove optional after 2027-09-13.
+    parentWorkspaceId: z.string().nullable().optional(),
     archivingAt: z.string().nullable().optional().default(null),
     status: WorkspaceStateBucketSchema,
     // Best-effort workspace status entry timestamp. Old daemons omit the
@@ -6895,6 +7004,10 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ProjectRemoveResponseSchema,
   WorkspaceTitleSetResponseSchema,
   WorkspacePinSetResponseSchema,
+  WorkspaceHierarchySetParentResponseSchema,
+  WorkspaceHierarchyInspectSubtreeResponseSchema,
+  WorkspaceHierarchyArchiveSubtreeResponseSchema,
+  WorkspaceHierarchyRestoreSubtreeResponseSchema,
   WorkspaceRecoveryInspectResponseSchema,
   WorkspaceRecoveryRestoreResponseSchema,
   WaitForFinishResponseMessageSchema,
@@ -7098,6 +7211,26 @@ export type WorkspaceTitleSetResponsePayload = z.infer<
 >;
 export type WorkspacePinSetResponse = z.infer<typeof WorkspacePinSetResponseSchema>;
 export type WorkspacePinSetResponsePayload = z.infer<typeof WorkspacePinSetResponsePayloadSchema>;
+export type WorkspaceHierarchySetParentResponse = z.infer<
+  typeof WorkspaceHierarchySetParentResponseSchema
+>;
+export type WorkspaceHierarchySetParentResponsePayload = z.infer<
+  typeof WorkspaceHierarchySetParentResponsePayloadSchema
+>;
+export type WorkspaceHierarchyAction = z.infer<typeof WorkspaceHierarchyActionSchema>;
+export type WorkspaceHierarchySubtreeEntry = z.infer<typeof WorkspaceHierarchySubtreeEntrySchema>;
+export type WorkspaceHierarchyWorkspaceResult = z.infer<
+  typeof WorkspaceHierarchyWorkspaceResultSchema
+>;
+export type WorkspaceHierarchyInspectSubtreeResponse = z.infer<
+  typeof WorkspaceHierarchyInspectSubtreeResponseSchema
+>;
+export type WorkspaceHierarchyArchiveSubtreeResponse = z.infer<
+  typeof WorkspaceHierarchyArchiveSubtreeResponseSchema
+>;
+export type WorkspaceHierarchyRestoreSubtreeResponse = z.infer<
+  typeof WorkspaceHierarchyRestoreSubtreeResponseSchema
+>;
 export type WorkspaceRecoveryState = z.infer<typeof WorkspaceRecoveryStateSchema>;
 export type WorkspaceRecoveryInspectResponse = z.infer<
   typeof WorkspaceRecoveryInspectResponseSchema
@@ -7245,6 +7378,18 @@ export type ProjectIconSetRequest = z.infer<typeof ProjectIconSetRequestSchema>;
 export type ProjectRemoveRequest = z.infer<typeof ProjectRemoveRequestSchema>;
 export type WorkspaceTitleSetRequest = z.infer<typeof WorkspaceTitleSetRequestSchema>;
 export type WorkspacePinSetRequest = z.infer<typeof WorkspacePinSetRequestSchema>;
+export type WorkspaceHierarchySetParentRequest = z.infer<
+  typeof WorkspaceHierarchySetParentRequestSchema
+>;
+export type WorkspaceHierarchyInspectSubtreeRequest = z.infer<
+  typeof WorkspaceHierarchyInspectSubtreeRequestSchema
+>;
+export type WorkspaceHierarchyArchiveSubtreeRequest = z.infer<
+  typeof WorkspaceHierarchyArchiveSubtreeRequestSchema
+>;
+export type WorkspaceHierarchyRestoreSubtreeRequest = z.infer<
+  typeof WorkspaceHierarchyRestoreSubtreeRequestSchema
+>;
 export type WorkspaceRecoveryInspectRequest = z.infer<typeof WorkspaceRecoveryInspectRequestSchema>;
 export type WorkspaceRecoveryRestoreRequest = z.infer<typeof WorkspaceRecoveryRestoreRequestSchema>;
 export type SetAgentModeRequestMessage = z.infer<typeof SetAgentModeRequestMessageSchema>;

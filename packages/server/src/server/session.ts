@@ -597,6 +597,13 @@ function sessionRequestId(message: SessionInboundMessage): string | null {
   return null;
 }
 
+function sameWorkspaceIdSet(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  const leftSet = new Set(left);
+  if (leftSet.size !== left.length) return false;
+  return right.length === leftSet.size && right.every((id) => leftSet.has(id));
+}
+
 type RegistryTransition = "created" | "unarchived" | "existing";
 
 interface ArchivedRecordSnapshot {

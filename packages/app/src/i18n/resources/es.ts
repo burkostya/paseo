@@ -463,6 +463,8 @@ export const es: TranslationResources = {
         restoringAction: "Restaurando...",
         unavailableTitle: "Espacio de trabajo no disponible",
         checkFailedTitle: "No se pudo comprobar el espacio de trabajo",
+        partialFailure:
+          "No se pudieron restaurar algunos espacios de trabajo anidados ({{count}}).",
       },
     },
     hoverCard: {
@@ -1281,11 +1283,27 @@ export const es: TranslationResources = {
         archiving: "Archivando...",
         hiding: "Ocultación...",
       },
+      hierarchy: {
+        title: "Jerarquía de espacios de trabajo",
+        moveTo: "Mover a…",
+        root: "Raíz del proyecto",
+        search: "Buscar espacios de trabajo principales...",
+        noCandidates: "No hay espacios de trabajo principales elegibles",
+        hostUpgrade: "Actualiza el host para gestionar la jerarquía.",
+        failed: "No se pudo actualizar la jerarquía",
+        invalidDrop: "Ese espacio de trabajo no se puede colocar aquí",
+        collapse: "Contraer espacio de trabajo",
+        expand: "Expandir espacio de trabajo",
+      },
       confirmations: {
         hideTitle: "¿Ocultar espacio de trabajo?",
         hideMessage:
           '¿Ocultar "{{workspaceName}}" de la barra lateral?\n\nLos archivos en el disco no se cambiarán.',
         hideConfirm: "Esconder",
+        archiveSubtreeTitle: "¿Archivar el árbol de espacios de trabajo?",
+        archiveSubtreeMessage:
+          '¿Archivar "{{workspaceName}}" y {{descendantCount}} espacios de trabajo descendientes?',
+        archiveSubtreeConfirm: "Archivar todo",
         cancel: "Cancelar",
       },
       rename: {
@@ -1300,6 +1318,7 @@ export const es: TranslationResources = {
         hostDisconnected: "Hostno está conectado",
         hideFailed: "No se pudo ocultar el espacio de trabajo",
         archiveFailed: "No se pudo archivar el espacio de trabajo",
+        archivePartial: "No se pudieron archivar {{failedCount}} espacios de trabajo",
       },
     },
   },
