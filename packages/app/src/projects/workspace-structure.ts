@@ -38,7 +38,12 @@ interface ProjectDraft {
   projectKind: WorkspaceDescriptor["projectKind"];
   iconWorkingDir: string;
   hosts: Map<string, WorkspaceStructureHostPlacement>;
-  workspaces: Array<{ workspaceId: string; workspaceName: string; workspaceKey: string }>;
+  workspaces: Array<{
+    workspaceId: string;
+    workspaceName: string;
+    workspaceKey: string;
+    projectId: string;
+  }>;
 }
 
 /** The single app boundary that turns host-local projects into grouped display projects. */
@@ -87,6 +92,7 @@ export function buildWorkspaceStructureProjects(input: {
         workspaceId: workspace.id,
         workspaceName: workspace.name,
         workspaceKey: `${session.serverId}:${workspace.id}`,
+        projectId: workspace.projectId,
       });
     }
   }

@@ -117,6 +117,8 @@ export interface WorkspaceDescriptor {
   name: string;
   title?: string | null;
   pinnedAt?: string | null;
+  // Manually assigned sidebar parent; null means the project root.
+  parentWorkspaceId?: string | null;
   labels?: string[];
   status: WorkspaceDescriptorPayload["status"];
   statusEnteredAt: Date | null;
@@ -154,6 +156,7 @@ export function normalizeWorkspaceDescriptor(
     name: payload.name,
     title: payload.title ?? null,
     pinnedAt: payload.pinnedAt ?? null,
+    parentWorkspaceId: payload.parentWorkspaceId ?? null,
     // COMPAT(workspaceLabels): old daemons omit assignments.
     labels: payload.labels ?? [],
     status: payload.status,

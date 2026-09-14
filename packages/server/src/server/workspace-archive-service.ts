@@ -25,7 +25,8 @@ import { WorkspaceAutomationBlockedError } from "./workspace-automation-gate.js"
 export type ActiveWorkspaceRef = Pick<
   PersistedWorkspaceRecord,
   "workspaceId" | "cwd" | "kind" | "worktreeRoot" | "isPaseoOwnedWorktree" | "mainRepoRoot"
->;
+> &
+  Partial<Pick<PersistedWorkspaceRecord, "projectId" | "parentWorkspaceId">>;
 
 export interface ArchiveDependencies {
   paseoHome?: string;
@@ -74,6 +75,10 @@ export interface ArchiveResult {
 export interface ArchiveByScopeRequest {
   scope: ArchiveScope;
   requestId: string;
+  /** Internal hierarchy coordinator switch. Legacy archive requests stay single-workspace. */
+  includeDescendants?: boolean;
+  /** A caller that already owns the hierarchy lifecycle marker can suppress per-record markers. */
+  manageArchivingState?: boolean;
 }
 
 export async function requireActiveWorkspaceForArchive(
@@ -131,19 +136,23 @@ async function archiveByScopeWithPriority(
   dependencies: ArchiveDependencies,
   request: ArchiveByScopeRequest,
 ): Promise<ArchiveResult> {
-  const target = await resolveArchiveTarget(dependencies, request.scope);
+  const target = await resolveArchiveTarget(
+    dependencies,
+    request.scope,
+    request.includeDescendants === true,
+  );
   const targetWorkspaceIds = target.workspaceIds;
 
   await stopWorkspaceSetups(dependencies, target.setupWorkspaceIds, request.requestId);
 
-  if (targetWorkspaceIds.length > 0) {
+  if (targetWorkspaceIds.length > 0 && request.manageArchivingState !== false) {
     dependencies.markWorkspaceArchiving(targetWorkspaceIds, new Date().toISOString());
   }
 
   let removedDirectory = false;
 
   try {
-    if (targetWorkspaceIds.length > 0) {
+    if (targetWorkspaceIds.length > 0 && request.manageArchivingState !== false) {
       await dependencies.emitWorkspaceUpdatesForWorkspaceIds(targetWorkspaceIds);
     }
 
@@ -182,7 +191,7 @@ async function archiveByScopeWithPriority(
       removedDirectory,
     };
   } finally {
-    if (targetWorkspaceIds.length > 0) {
+    if (targetWorkspaceIds.length > 0 && request.manageArchivingState !== false) {
       dependencies.clearWorkspaceArchiving(targetWorkspaceIds);
       await dependencies.emitWorkspaceUpdatesForWorkspaceIds(targetWorkspaceIds);
     }
@@ -192,6 +201,7 @@ async function archiveByScopeWithPriority(
 async function resolveArchiveTarget(
   dependencies: ArchiveDependencies,
   scope: ArchiveScope,
+  includeDescendants = false,
 ): Promise<ArchiveTarget> {
   const activeWorkspaces = await dependencies.listActiveWorkspaces();
 
@@ -208,11 +218,24 @@ async function resolveArchiveTarget(
       return { backing: null, teardownTargets: [], setupWorkspaceIds: [], workspaceIds: [] };
     }
     const isArchived = "archivedAt" in record && Boolean(record.archivedAt);
+    let workspaceIds: string[];
+    if (isArchived) {
+      workspaceIds = [];
+    } else if (includeDescendants) {
+      workspaceIds = collectWorkspaceSubtreeIds({ rootWorkspaceId: workspaceId, activeWorkspaces });
+    } else {
+      workspaceIds = [workspaceId];
+    }
+    const subtreeSet = new Set(workspaceIds);
     return {
       backing: await resolveWorkspaceBackingDirectory(record, dependencies),
-      teardownTargets: isArchived ? [] : [{ workspaceId, cwd: record.cwd }],
-      setupWorkspaceIds: [workspaceId],
-      workspaceIds: isArchived ? [] : [workspaceId],
+      teardownTargets: isArchived
+        ? []
+        : activeWorkspaces
+            .filter((workspace) => subtreeSet.has(workspace.workspaceId))
+            .map((workspace) => ({ workspaceId: workspace.workspaceId, cwd: workspace.cwd })),
+      setupWorkspaceIds: workspaceIds,
+      workspaceIds,
     };
   }
 
@@ -244,6 +267,39 @@ async function resolveArchiveTarget(
     setupWorkspaceIds: targetWorkspaces.map((workspace) => workspace.workspaceId),
     workspaceIds: targetWorkspaces.map((workspace) => workspace.workspaceId),
   };
+}
+
+function collectWorkspaceSubtreeIds(input: {
+  rootWorkspaceId: string;
+  activeWorkspaces: readonly ActiveWorkspaceRef[];
+}): string[] {
+  const byParent = new Map<string | null, ActiveWorkspaceRef[]>();
+  for (const workspace of input.activeWorkspaces) {
+    const parentId = workspace.parentWorkspaceId ?? null;
+    const siblings = byParent.get(parentId) ?? [];
+    siblings.push(workspace);
+    byParent.set(parentId, siblings);
+  }
+  const root = input.activeWorkspaces.find(
+    (workspace) => workspace.workspaceId === input.rootWorkspaceId,
+  );
+  if (!root) return [];
+
+  const result: string[] = [];
+  const visited = new Set<string>();
+  const stack = [root];
+  while (stack.length > 0) {
+    const workspace = stack.pop();
+    if (!workspace || visited.has(workspace.workspaceId)) continue;
+    visited.add(workspace.workspaceId);
+    result.push(workspace.workspaceId);
+    const children = byParent.get(workspace.workspaceId) ?? [];
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      const child = children[index];
+      if (child && child.projectId === root.projectId) stack.push(child);
+    }
+  }
+  return result;
 }
 
 async function stopWorkspaceSetups(

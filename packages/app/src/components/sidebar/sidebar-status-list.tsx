@@ -20,6 +20,7 @@ import { NestableScrollContainer } from "react-native-draggable-flatlist";
 import type { GestureType } from "react-native-gesture-handler";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
+import type { ActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { type SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { StatusBucket } from "@/hooks/sidebar-status-view-model";
 import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels";
@@ -62,6 +63,7 @@ import {
 import { useOpenKebabMenuVisibility } from "@/components/sidebar/use-open-kebab-menu-visibility";
 import { getSidebarRowBackdrop } from "@/components/sidebar/sidebar-row-backdrop";
 import { getStatusDotColor } from "@/utils/status-dot-color";
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { selectWorkspaceServiceSummary } from "@/components/sidebar/workspace-meta-row";
 import {
   SidebarWorkspaceTrailingContent,
@@ -69,9 +71,11 @@ import {
   type SidebarWorkspaceTrailing,
 } from "@/components/sidebar/workspace-trailing";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
+import { useSidebarExpandedSectionsStore } from "@/stores/sidebar-expanded-sections-store";
 import {
   SidebarWorkspaceContextMenu,
   SidebarWorkspaceMenu,
+  type WorkspaceParentCandidate,
 } from "@/components/sidebar/sidebar-workspace-menu";
 import { PinnedSectionHeader } from "@/components/sidebar/pinned-section-header";
 import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
@@ -107,6 +111,7 @@ const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedCircleDot = withUnistyles(CircleDot);
 const ThemedCircleX = withUnistyles(CircleX);
 const EMPTY_SHORTCUT_INDEX = new Map<string, number>();
+type WorkspaceParentSetter = (parentWorkspaceId: string | null) => void | Promise<void>;
 
 function statusWorkspaceKeyExtractor(workspace: SidebarWorkspaceEntry): string {
   return workspace.workspaceKey;
@@ -121,6 +126,9 @@ interface StatusWorkspaceListProps {
   onWorkspacePress?: () => void;
   hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
+  supportsWorkspaceHierarchyByServerId: ReadonlyMap<string, boolean>;
+  workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
+  allWorkspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   onPinnedWorkspaceReorder: (workspaces: SidebarWorkspaceEntry[]) => void;
   listHeaderComponent?: ReactNode;
@@ -139,6 +147,9 @@ export function SidebarStatusWorkspaceList({
   onWorkspacePress,
   hostBadgeByServerId,
   supportsPinningByServerId,
+  supportsWorkspaceHierarchyByServerId,
+  workspaceEntriesByKey,
+  allWorkspaceEntriesByKey,
   onToggleWorkspacePin,
   onPinnedWorkspaceReorder,
   listHeaderComponent,
@@ -146,6 +157,53 @@ export function SidebarStatusWorkspaceList({
   parentGestureRef,
   dragGestureHostActive,
 }: StatusWorkspaceListProps) {
+  const toast = useToast();
+  const { t } = useTranslation();
+  const workspaceParentCandidatesFor = useCallback(
+    (_workspace: SidebarWorkspaceEntry): readonly WorkspaceParentCandidate[] =>
+      Array.from(allWorkspaceEntriesByKey.values()).map((candidate) => ({
+        workspaceKey: candidate.workspaceKey,
+        serverId: candidate.serverId,
+        workspaceId: candidate.workspaceId,
+        projectId: candidate.projectId,
+        name: candidate.name,
+        parentWorkspaceId: candidate.parentWorkspaceId ?? null,
+      })),
+    [allWorkspaceEntriesByKey],
+  );
+  const handleSetWorkspaceParent = useCallback(
+    async (workspace: SidebarWorkspaceEntry, parentWorkspaceId: string | null) => {
+      if (supportsWorkspaceHierarchyByServerId.get(workspace.serverId) !== true) {
+        const message = t("sidebar.workspace.hierarchy.hostUpgrade");
+        toast.error(message);
+        throw new Error(message);
+      }
+      const client = getHostRuntimeStore().getClient(workspace.serverId);
+      if (!client) {
+        const message = t("sidebar.workspace.toasts.hostDisconnected");
+        toast.error(message);
+        throw new Error(message);
+      }
+      try {
+        await client.setWorkspaceParent(workspace.workspaceId, parentWorkspaceId);
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : t("sidebar.workspace.hierarchy.failed"),
+        );
+        throw error;
+      }
+    },
+    [supportsWorkspaceHierarchyByServerId, t, toast],
+  );
+  const workspaceParentSettersByKey = useMemo(() => {
+    const setters = new Map<string, WorkspaceParentSetter>();
+    for (const workspace of workspaceEntriesByKey.values()) {
+      setters.set(workspace.workspaceKey, (parentWorkspaceId) =>
+        handleSetWorkspaceParent(workspace, parentWorkspaceId),
+      );
+    }
+    return setters;
+  }, [handleSetWorkspaceParent, workspaceEntriesByKey]);
   const collapsedWorkspaceGroupKeys = useSidebarCollapsedSectionsStore(
     (state) => state.collapsedWorkspaceGroupKeys,
   );
@@ -153,12 +211,19 @@ export function SidebarStatusWorkspaceList({
   const togglePinnedCollapsed = useSidebarCollapsedSectionsStore(
     (state) => state.togglePinnedCollapsed,
   );
+  const expandedPinned = useSidebarExpandedSectionsStore((state) => state.expandedPinned);
+  const togglePinnedExpanded = useSidebarExpandedSectionsStore(
+    (state) => state.togglePinnedExpanded,
+  );
   const {
     visibleItems: visiblePinnedWorkspaces,
     expanded: pinnedWorkspacesExpanded,
     canToggle: canTogglePinnedWorkspaces,
     toggleExpanded: togglePinnedWorkspacesExpanded,
-  } = useLimitedSidebarGroup(pinnedWorkspaces);
+  } = useLimitedSidebarGroup(pinnedWorkspaces, {
+    expanded: expandedPinned,
+    onToggleExpanded: togglePinnedExpanded,
+  });
 
   const statusShortcutIndex = showShortcutBadges
     ? shortcutIndexByWorkspaceKey
@@ -186,6 +251,8 @@ export function SidebarStatusWorkspaceList({
         drag={drag}
         isDragging={isActive}
         dragHandleProps={dragHandleProps}
+        workspaceParentCandidates={workspaceParentCandidatesFor(workspace)}
+        onSetParent={workspaceParentSettersByKey.get(workspace.workspaceKey)}
       />
     ),
     [
@@ -196,6 +263,8 @@ export function SidebarStatusWorkspaceList({
       showShortcutBadges,
       statusShortcutIndex,
       supportsPinningByServerId,
+      workspaceParentSettersByKey,
+      workspaceParentCandidatesFor,
     ],
   );
   const content = (
@@ -241,6 +310,8 @@ export function SidebarStatusWorkspaceList({
           onWorkspacePress={onWorkspacePress}
           hostBadgeByServerId={hostBadgeByServerId}
           supportsPinningByServerId={supportsPinningByServerId}
+          workspaceParentSettersByKey={workspaceParentSettersByKey}
+          workspaceParentCandidatesFor={workspaceParentCandidatesFor}
           onToggleWorkspacePin={onToggleWorkspacePin}
         />
       )}
@@ -281,6 +352,8 @@ function StatusGroupList({
   onWorkspacePress,
   hostBadgeByServerId,
   supportsPinningByServerId,
+  workspaceParentSettersByKey,
+  workspaceParentCandidatesFor,
   onToggleWorkspacePin,
 }: {
   groups: SidebarWorkspaceGroup[];
@@ -291,6 +364,10 @@ function StatusGroupList({
   onWorkspacePress?: () => void;
   hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
+  workspaceParentSettersByKey: ReadonlyMap<string, WorkspaceParentSetter>;
+  workspaceParentCandidatesFor: (
+    workspace: SidebarWorkspaceEntry,
+  ) => readonly WorkspaceParentCandidate[];
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
 }) {
   return (
@@ -306,6 +383,8 @@ function StatusGroupList({
           onWorkspacePress={onWorkspacePress}
           hostBadgeByServerId={hostBadgeByServerId}
           supportsPinningByServerId={supportsPinningByServerId}
+          workspaceParentSettersByKey={workspaceParentSettersByKey}
+          workspaceParentCandidatesFor={workspaceParentCandidatesFor}
           onToggleWorkspacePin={onToggleWorkspacePin}
         />
       ))}
@@ -322,6 +401,8 @@ function StatusGroupRows({
   onWorkspacePress,
   hostBadgeByServerId,
   supportsPinningByServerId,
+  workspaceParentSettersByKey,
+  workspaceParentCandidatesFor,
   onToggleWorkspacePin,
 }: {
   group: SidebarWorkspaceGroup;
@@ -332,14 +413,27 @@ function StatusGroupRows({
   onWorkspacePress?: () => void;
   hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
+  workspaceParentSettersByKey: ReadonlyMap<string, WorkspaceParentSetter>;
+  workspaceParentCandidatesFor: (
+    workspace: SidebarWorkspaceEntry,
+  ) => readonly WorkspaceParentCandidate[];
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
 }) {
+  const expanded = useSidebarExpandedSectionsStore((state) =>
+    state.expandedWorkspaceGroupKeys.has(group.key),
+  );
+  const toggleWorkspaceGroupExpanded = useSidebarExpandedSectionsStore(
+    (state) => state.toggleWorkspaceGroupExpanded,
+  );
   const {
     visibleItems: visibleWorkspaces,
     expanded: workspacesExpanded,
     canToggle: canToggleWorkspaces,
     toggleExpanded: toggleWorkspacesExpanded,
-  } = useLimitedSidebarGroup(group.rows);
+  } = useLimitedSidebarGroup(group.rows, {
+    expanded,
+    onToggleExpanded: () => toggleWorkspaceGroupExpanded(group.key),
+  });
 
   return (
     <View style={collapsed ? undefined : styles.statusGroupBlockExpanded}>
@@ -361,6 +455,8 @@ function StatusGroupRows({
               shortcutNumber={shortcutIndex.get(workspace.workspaceKey) ?? null}
               showShortcutBadge={showShortcutBadges}
               canPin={supportsPinningByServerId.get(workspace.serverId) === true}
+              workspaceParentCandidates={workspaceParentCandidatesFor(workspace)}
+              onSetParent={workspaceParentSettersByKey.get(workspace.workspaceKey)}
               onToggleWorkspacePin={onToggleWorkspacePin}
               onWorkspacePress={onWorkspacePress}
             />
@@ -504,6 +600,8 @@ const StatusWorkspaceRow = memo(function StatusWorkspaceRow({
   drag,
   isDragging = false,
   dragHandleProps,
+  workspaceParentCandidates,
+  onSetParent,
 }: {
   workspace: SidebarWorkspaceEntry;
   hostBadge: HostBadgeModel | null;
@@ -523,6 +621,8 @@ const StatusWorkspaceRow = memo(function StatusWorkspaceRow({
   drag?: () => void;
   isDragging?: boolean;
   dragHandleProps?: DraggableListDragHandleProps;
+  workspaceParentCandidates?: readonly WorkspaceParentCandidate[];
+  onSetParent?: WorkspaceParentSetter;
 }) {
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const selected =
@@ -542,6 +642,7 @@ const StatusWorkspaceRow = memo(function StatusWorkspaceRow({
       projectName={projectName}
       projectIconDataUri={projectIconDataUri}
       selected={selected}
+      activeWorkspaceSelection={activeWorkspaceSelection}
       shortcutNumber={shortcutNumber}
       showShortcutBadge={showShortcutBadge}
       canPin={canPin}
@@ -552,6 +653,8 @@ const StatusWorkspaceRow = memo(function StatusWorkspaceRow({
       drag={drag}
       isDragging={isDragging}
       dragHandleProps={dragHandleProps}
+      workspaceParentCandidates={workspaceParentCandidates}
+      onSetParent={onSetParent}
     />
   );
 });
@@ -562,6 +665,7 @@ function StatusWorkspaceRowWithMenu({
   projectName,
   projectIconDataUri,
   selected,
+  activeWorkspaceSelection,
   shortcutNumber,
   showShortcutBadge,
   canPin,
@@ -572,12 +676,15 @@ function StatusWorkspaceRowWithMenu({
   drag,
   isDragging = false,
   dragHandleProps,
+  workspaceParentCandidates,
+  onSetParent,
 }: {
   workspace: SidebarWorkspaceEntry;
   hostBadge: HostBadgeModel | null;
   projectName: string;
   projectIconDataUri: string | null;
   selected: boolean;
+  activeWorkspaceSelection: ActiveWorkspaceSelection | null;
   shortcutNumber: number | null;
   showShortcutBadge: boolean;
   canPin: boolean;
@@ -592,22 +699,38 @@ function StatusWorkspaceRowWithMenu({
   drag?: () => void;
   isDragging?: boolean;
   dragHandleProps?: DraggableListDragHandleProps;
+  workspaceParentCandidates?: readonly WorkspaceParentCandidate[];
+  onSetParent?: WorkspaceParentSetter;
 }) {
   const { t } = useTranslation();
   const toast = useToast();
   const [isHidingWorkspace, setIsHidingWorkspace] = useState(false);
   const [isRenameOpen, setIsRenameOpen] = useState(false);
+  const [isParentUpdatePending, setIsParentUpdatePending] = useState(false);
   const isArchiving = workspace.archivingAt !== null || isHidingWorkspace;
+
+  const handleSetParent = useCallback(
+    (nextParentWorkspaceId: string | null) => {
+      if (!onSetParent || isParentUpdatePending) return;
+      setIsParentUpdatePending(true);
+      void (async () => {
+        try {
+          await onSetParent(nextParentWorkspaceId);
+        } finally {
+          setIsParentUpdatePending(false);
+        }
+      })().catch(() => {});
+    },
+    [isParentUpdatePending, onSetParent],
+  );
 
   const redirectAfterArchive = useCallback(() => {
     redirectIfArchivingActiveWorkspace({
       serverId: workspace.serverId,
       workspaceId: workspace.workspaceId,
-      activeWorkspaceSelection: selected
-        ? { serverId: workspace.serverId, workspaceId: workspace.workspaceId }
-        : null,
+      activeWorkspaceSelection,
     });
-  }, [selected, workspace]);
+  }, [activeWorkspaceSelection, workspace]);
 
   const archiveController = useWorkspaceArchive({
     serverId: workspace.serverId,
@@ -698,6 +821,9 @@ function StatusWorkspaceRowWithMenu({
         drag={drag}
         isDragging={isDragging}
         dragHandleProps={dragHandleProps}
+        workspaceParentCandidates={workspaceParentCandidates}
+        onSetParent={onSetParent ? handleSetParent : undefined}
+        parentUpdatePending={isParentUpdatePending}
       />
       <WorkspaceRenameModal
         visible={isRenameOpen}
@@ -737,6 +863,9 @@ interface StatusWorkspaceRowInnerProps {
   drag?: () => void;
   isDragging?: boolean;
   dragHandleProps?: DraggableListDragHandleProps;
+  workspaceParentCandidates?: readonly WorkspaceParentCandidate[];
+  onSetParent?: WorkspaceParentSetter;
+  parentUpdatePending?: boolean;
 }
 
 function StatusWorkspaceRowInner(props: StatusWorkspaceRowInnerProps) {
@@ -782,6 +911,9 @@ function StatusWorkspaceRowInnerContent({
   inStatusGroup = true,
   isDragging = false,
   dragHandleProps,
+  workspaceParentCandidates,
+  onSetParent,
+  parentUpdatePending = false,
   dragInteraction,
 }: StatusWorkspaceRowInnerProps & {
   dragInteraction?: ReturnType<typeof useLongPressDragInteraction>;
@@ -871,6 +1003,9 @@ function StatusWorkspaceRowInnerContent({
               hostBadgeLabel={hostBadge?.label}
               serviceSummary={serviceSummary}
               workspaceKey={workspace.workspaceKey}
+              parentWorkspaceId={workspace.parentWorkspaceId}
+              workspaceParentCandidates={workspaceParentCandidates}
+              onSetParent={onSetParent}
               onCopyPath={onCopyPath}
               onCopyBranchName={onCopyBranchName}
               onRename={onRename}
@@ -929,6 +1064,9 @@ function StatusWorkspaceRowInnerContent({
                     archiveStatus={archiveStatus}
                     archivePendingLabel={archivePendingLabel}
                     archiveShortcutKeys={archiveShortcutKeys}
+                    workspaceParentCandidates={workspaceParentCandidates}
+                    onSetParent={onSetParent}
+                    parentUpdatePending={parentUpdatePending}
                   />
                 ) : null}
               </SidebarWorkspaceRowContent>
@@ -960,6 +1098,9 @@ function StatusWorkspaceActionSlot({
   archiveStatus,
   archivePendingLabel,
   archiveShortcutKeys,
+  workspaceParentCandidates,
+  onSetParent,
+  parentUpdatePending = false,
 }: {
   workspace: SidebarWorkspaceEntry;
   backdrop: SidebarSurfaceBackdrop;
@@ -980,6 +1121,9 @@ function StatusWorkspaceActionSlot({
   archiveStatus?: "idle" | "pending" | "success";
   archivePendingLabel?: string;
   archiveShortcutKeys?: ShortcutKey[][] | null;
+  workspaceParentCandidates?: readonly WorkspaceParentCandidate[];
+  onSetParent?: WorkspaceParentSetter;
+  parentUpdatePending?: boolean;
 }) {
   const kebab = useOpenKebabMenuVisibility(showKebab);
   return (
@@ -991,12 +1135,17 @@ function StatusWorkspaceActionSlot({
         visible={kebab.showKebab}
         scrimBackdrop={showScrim ? backdrop : undefined}
       >
-        {kebab.showKebab && onArchive ? (
+        {kebab.showKebab && (onArchive || onSetParent) ? (
           <SidebarWorkspaceMenu
             {...kebab.menuProps}
             workspaceKey={workspace.workspaceKey}
             serverId={workspace.serverId}
             workspaceId={workspace.workspaceId}
+            projectId={workspace.projectId}
+            parentWorkspaceId={workspace.parentWorkspaceId}
+            workspaceParentCandidates={workspaceParentCandidates}
+            onSetParent={onSetParent}
+            parentUpdatePending={parentUpdatePending}
             workspaceLabels={workspace.labels}
             onCopyPath={onCopyPath}
             onCopyBranchName={onCopyBranchName}
