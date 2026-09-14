@@ -3,6 +3,11 @@ import type {
   SidebarWorkspacePlacement,
 } from "@/hooks/use-sidebar-workspaces-list";
 import type { StatusGroup } from "@/hooks/sidebar-status-view-model";
+import { limitSidebarGroupItems } from "@/components/sidebar/sidebar-group-limit";
+import {
+  buildWorkspaceTreeRows,
+  limitWorkspaceTreeRows,
+} from "@/components/sidebar/workspace-hierarchy";
 
 export interface SidebarShortcutWorkspaceTarget {
   serverId: string;
@@ -31,13 +36,22 @@ function createShortcutTarget(
 export function buildSidebarShortcutModel(input: {
   projects: SidebarProjectEntry[];
   collapsedProjectKeys: ReadonlySet<string>;
+  collapsedWorkspaceKeys?: ReadonlySet<string>;
+  expandedProjectWorkspaceKeys?: ReadonlySet<string>;
   shortcutLimit?: number;
 }): SidebarShortcutModel {
   return buildSidebarShortcutSections({
-    sections: input.projects.map((project) => ({
-      workspaces: project.workspaces,
-      collapsed: input.collapsedProjectKeys.has(project.viewKey),
-    })),
+    sections: input.projects.map((project) => {
+      const rows = buildWorkspaceTreeRows({
+        workspaces: project.workspaces,
+        collapsedKeys: input.collapsedWorkspaceKeys,
+      });
+      const expanded = input.expandedProjectWorkspaceKeys?.has(project.viewKey) ?? false;
+      return {
+        workspaces: (expanded ? rows : limitWorkspaceTreeRows(rows)).map((row) => row.workspace),
+        collapsed: input.collapsedProjectKeys.has(project.viewKey),
+      };
+    }),
     shortcutLimit: input.shortcutLimit,
   });
 }
@@ -45,11 +59,15 @@ export function buildSidebarShortcutModel(input: {
 export function buildStatusSidebarShortcutModel(input: {
   groups: readonly StatusGroup[];
   collapsedStatusGroupKeys?: ReadonlySet<string>;
+  expandedStatusGroupKeys?: ReadonlySet<string>;
   shortcutLimit?: number;
 }): SidebarShortcutModel {
   return buildSidebarShortcutSections({
     sections: input.groups.map((group) => ({
-      workspaces: group.rows,
+      workspaces: limitSidebarGroupItems(
+        group.rows,
+        input.expandedStatusGroupKeys?.has(group.bucket) ?? false,
+      ),
       collapsed: input.collapsedStatusGroupKeys?.has(group.bucket),
     })),
     shortcutLimit: input.shortcutLimit,

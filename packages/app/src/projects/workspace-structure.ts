@@ -36,6 +36,7 @@ interface WorkspaceSortItem {
   workspaceName: string;
   workspaceKey: string;
   sortTime: number;
+  projectId: string;
 }
 
 interface ProjectDraft {
@@ -96,6 +97,7 @@ export function buildWorkspaceStructureProjects(input: {
         sortTime: workspaceSortTime(workspace, input.workspaceSort),
         workspaceName: workspace.name,
         workspaceKey: `${session.serverId}:${workspace.id}`,
+        projectId: workspace.projectId,
       });
     }
   }

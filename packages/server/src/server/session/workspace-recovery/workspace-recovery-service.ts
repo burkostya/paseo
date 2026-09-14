@@ -43,6 +43,10 @@ export type WorkspaceRecoveryState =
 
 export interface WorkspaceRecoveryService {
   inspect(workspaceId: string): Promise<WorkspaceRecoveryState>;
+  /** Restore one record without walking its descendants. Used by the hierarchy coordinator. */
+  restoreSingle(
+    workspaceId: string,
+  ): Promise<{ workspaceId: string; action: WorkspaceRecoveryAction }>;
   restore(workspaceId: string): Promise<{ workspaceId: string; action: WorkspaceRecoveryAction }>;
 }
 
@@ -140,11 +144,26 @@ export function createWorkspaceRecoveryService(deps: {
       throw new Error(resolved.message);
     }
 
-    if (resolved.kind === "restore") {
-      await recreateArchivedWorktree(resolved.workspace, resolved.sourceRepoRoot);
-    }
-    await deps.unarchiveWorkspace(resolved.workspace);
+    await applyRecoveryPlan(resolved);
     return { workspaceId, action: resolved.kind };
+  }
+
+  async function restoreSingle(
+    workspaceId: string,
+  ): Promise<{ workspaceId: string; action: WorkspaceRecoveryAction }> {
+    const resolved = await resolveRecovery(workspaceId);
+    if (resolved.kind === "unavailable") {
+      throw new Error(resolved.message);
+    }
+    await applyRecoveryPlan(resolved);
+    return { workspaceId, action: resolved.kind };
+  }
+
+  async function applyRecoveryPlan(plan: RecoveryPlan): Promise<void> {
+    if (plan.kind === "restore") {
+      await recreateArchivedWorktree(plan.workspace, plan.sourceRepoRoot);
+    }
+    await deps.unarchiveWorkspace(plan.workspace);
   }
 
   async function recreateArchivedWorktree(
@@ -225,7 +244,7 @@ export function createWorkspaceRecoveryService(deps: {
     }
   }
 
-  return { inspect, restore };
+  return { inspect, restoreSingle, restore };
 }
 
 async function resolveRecoveryBase(repoRoot: string, recordedBase: string | null): Promise<string> {

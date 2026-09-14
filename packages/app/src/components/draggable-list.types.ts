@@ -20,11 +20,21 @@ export interface DraggableRenderItemInfo<T> {
   dragHandleProps?: DraggableListDragHandleProps;
 }
 
+export type DraggableDropIntent =
+  | { kind: "inside"; targetKey: string }
+  | { kind: "before"; targetKey: string }
+  | { kind: "after"; targetKey: string }
+  | { kind: "root" };
+
 export interface DraggableListProps<T> {
   data: T[];
   keyExtractor: (item: T, index: number) => string;
   renderItem: (info: DraggableRenderItemInfo<T>) => ReactElement;
   onDragEnd: (data: T[]) => void;
+  /** Optional tree-aware callback. When supplied, platforms report the drop zone and skip onDragEnd. */
+  onDragEndWithIntent?: (data: T[], intent: DraggableDropIntent, sourceKey: string) => void;
+  /** Optional visible root target rendered for tree-aware drag operations. */
+  treeRootDropZone?: ReactElement | null;
   style?: StyleProp<ViewStyle>;
   /** Outer container style (useful for nested, non-scrolling lists). */
   containerStyle?: StyleProp<ViewStyle>;

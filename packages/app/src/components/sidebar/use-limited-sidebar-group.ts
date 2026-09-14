@@ -6,16 +6,26 @@ import {
 
 const PINNED_POLICY = { kind: "pinned" } as const;
 
+type ExpansionOptions = { expanded?: boolean; onToggleExpanded?: () => void };
+
 export function useLimitedSidebarGroup<T>(
   items: readonly T[],
-  policy: SidebarGroupVisibilityPolicy<T> = PINNED_POLICY,
+  policyOrOptions: SidebarGroupVisibilityPolicy<T> | ExpansionOptions = PINNED_POLICY,
+  options?: ExpansionOptions,
 ) {
-  const [expanded, setExpanded] = useState(false);
+  const policy = "kind" in policyOrOptions ? policyOrOptions : PINNED_POLICY;
+  const expansion = "kind" in policyOrOptions ? options : policyOrOptions;
+  const [localExpanded, setExpanded] = useState(false);
+  const expanded = expansion?.expanded ?? localExpanded;
   const visibility = useMemo(
     () => selectSidebarGroupVisibility(items, expanded, policy),
     [expanded, items, policy],
   );
-  const toggleExpanded = useCallback(() => setExpanded((current) => !current), []);
+  const onToggleExpanded = expansion?.onToggleExpanded;
+  const toggleExpanded = useCallback(() => {
+    if (onToggleExpanded) onToggleExpanded();
+    else setExpanded((current) => !current);
+  }, [onToggleExpanded]);
 
   return { ...visibility, expanded, toggleExpanded };
 }
