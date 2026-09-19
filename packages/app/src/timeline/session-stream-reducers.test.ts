@@ -3859,6 +3859,78 @@ describe("processAgentStreamEvent", () => {
     expect(result.sideEffects).toEqual([]);
   });
 
+  it("keeps Pi reasoning chunks in one live thought before bootstrap", () => {
+    const paintedTail = [makeAssistantItem("painted replica")];
+    let head: StreamItem[] = [];
+    const chunks = ["The", " ", "`blender`", " is already", " in nix", "pkgs."];
+    for (const [index, text] of chunks.entries()) {
+      const result = processAgentStreamEvent({
+        ...baseStreamInput,
+        event: { type: "timeline", provider: "pi", item: { type: "reasoning", text } },
+        seq: 51 + index,
+        epoch: "epoch-1",
+        timestamp: new Date(2000 + index),
+        currentTail: paintedTail,
+        currentHead: head,
+        hasAuthoritativeBaseline: false,
+      });
+      expect(result.tail).toBe(paintedTail);
+      expect(result.cursorChanged).toBe(false);
+      head = result.head;
+    }
+    expect(head).toEqual([
+      expect.objectContaining({
+        kind: "thought",
+        text: chunks.join(""),
+        status: "loading",
+        timelineCursor: { epoch: "epoch-1", seq: 56 },
+      }),
+    ]);
+  });
+
+  it("preserves reasoning boundaries and completes the live overlay before bootstrap", () => {
+    const paintedTail = [makeAssistantItem("painted replica")];
+    let head: StreamItem[] = [];
+    const events: AgentStreamEventPayload[] = [
+      makeTimelineEvent("Before ", "reasoning"),
+      makeTimelineEvent("tool", "reasoning"),
+      {
+        type: "timeline",
+        provider: "pi",
+        item: makeToolCallTimelineEntry(53, "read-1", "completed", {
+          type: "unknown",
+          input: {},
+          output: null,
+        }).item,
+      },
+      makeTimelineEvent("After ", "reasoning"),
+      makeTimelineEvent("tool", "reasoning"),
+      makeTimelineEvent("Final "),
+      makeTimelineEvent("answer"),
+      { type: "turn_canceled", provider: "pi", reason: "Request was aborted" },
+    ];
+    for (const [index, event] of events.entries()) {
+      const result = processAgentStreamEvent({
+        ...baseStreamInput,
+        event,
+        seq: 51 + index,
+        epoch: "epoch-1",
+        timestamp: new Date(2000 + index),
+        currentTail: paintedTail,
+        currentHead: head,
+        hasAuthoritativeBaseline: false,
+      });
+      expect(result.tail).toBe(paintedTail);
+      head = result.head;
+    }
+    expect(head).toEqual([
+      expect.objectContaining({ kind: "thought", text: "Before tool", status: "ready" }),
+      expect.objectContaining({ kind: "tool_call" }),
+      expect.objectContaining({ kind: "thought", text: "After tool", status: "ready" }),
+      expect.objectContaining({ kind: "assistant_message", text: "Final answer" }),
+    ]);
+  });
+
   it("reconciles a pre-bootstrap echo with its submitted row", () => {
     const submitted = makeSubmittedUserMessage("submitted before bootstrap", "client-message-1");
     const result = processAgentStreamEvent({
