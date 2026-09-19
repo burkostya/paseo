@@ -1603,9 +1603,11 @@ export function processAgentStreamEvent(
         unmatchedUserMessageInsert: "head",
       });
     } else {
+      // Keep the active stream in the head so reasoning deltas append to it.
+      // Treating the overlay as tail creates a new thought for every chunk.
       const overlay = applyStreamEvent({
-        tail: currentHead,
-        head: [],
+        tail: [],
+        head: currentHead,
         event,
         timestamp,
         source: "live",
