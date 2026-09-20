@@ -896,9 +896,12 @@ export class ReplicaCache {
   private readonly maxBytes: number;
   private totalBytes = 0;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
+  private persistRetryScheduled = false;
   private writeQueue: Promise<void> = Promise.resolve();
+  private persistInFlight: Promise<boolean> | null = null;
   private preparePromise: Promise<void> | null = null;
   private storedIndexPromise: Promise<void> | null = null;
+  private persistFailureLogged = false;
 
   constructor(
     private readonly rowStore: ReplicaRowStore,
@@ -1003,11 +1006,7 @@ export class ReplicaCache {
     try {
       await this.prepareStore();
       while (this.activeServerIds.has(serverId)) {
-        // A read may only answer from rows the store already holds, so it waits for this host's
-        // accepted commits to land. A store that rejects them will keep rejecting them: fail closed
-        // rather than re-attempt the write on every pass. A write rejected for another host leaves
-        // this host's stored rows readable.
-        if (!(await this.syncPending()) && this.hasPendingHostChanges(serverId)) return [];
+        if (!(await this.flushForRead(serverId))) return [];
         const revision = this.hostRevisions.get(serverId) ?? 0;
         const rows = await this.rowStore.read(serverId, kinds, ids);
         if (this.canReadHostRevision(serverId, revision)) return rows;
@@ -1197,27 +1196,44 @@ export class ReplicaCache {
   }
 
   async flush(): Promise<void> {
-    await this.syncPending();
-  }
-
-  /** Resolves to whether every pending change reached the store. */
-  private async syncPending(): Promise<boolean> {
-    const persisted = await this.persist();
+    await this.persist(true);
     await this.writeQueue.catch(() => undefined);
-    return persisted;
   }
 
   private async flushPending(): Promise<void> {
-    await this.persist();
+    await this.persist(true);
   }
 
-  private async persist(): Promise<boolean> {
+  private async flushForRead(serverId: string): Promise<boolean> {
+    if (this.persistInFlight) {
+      await this.persistInFlight;
+    }
+
+    if (this.hasPendingHostChanges(serverId)) {
+      if (!(await this.persist(false)) && this.hasPendingHostChanges(serverId)) return false;
+    }
+
+    await this.writeQueue.catch(() => undefined);
+    return !this.hasPendingHostChanges(serverId);
+  }
+
+  private async persist(force: boolean): Promise<boolean> {
+    const inFlight = this.persistInFlight;
+    if (inFlight) {
+      const succeeded = await inFlight;
+      if (!force || succeeded || !this.hasPendingChanges()) return succeeded;
+      if (this.persistInFlight === inFlight) this.persistInFlight = null;
+    }
+
     if (this.persistTimer) {
+      if (!force && this.persistRetryScheduled) return false;
       clearTimeout(this.persistTimer);
       this.persistTimer = null;
+      this.persistRetryScheduled = false;
     }
     if (!this.hasPendingChanges()) return true;
-    const write = this.writeQueue
+
+    const attempt = this.writeQueue
       .catch(() => undefined)
       .then(async () => {
         const pending = this.drainPendingChanges();
@@ -1233,19 +1249,22 @@ export class ReplicaCache {
           for (const serverId of pending.baselines) {
             if (!evicted.has(serverId)) this.invalidatedHosts.delete(serverId);
           }
-        } catch {
+          this.persistFailureLogged = false;
+          return true;
+        } catch (error) {
           this.restorePendingChanges(pending);
-          if (this.hasPendingChanges()) this.schedulePersist();
+          if (this.hasPendingChanges()) this.schedulePersist(true);
+          this.reportPersistFailure(error);
           return false;
         }
-        return true;
       });
-    // The queue only sequences writes; every consumer decides for itself what a failure means.
-    this.writeQueue = write.then(
-      () => undefined,
-      () => undefined,
-    );
-    return write;
+    this.writeQueue = attempt.then(() => undefined);
+    this.persistInFlight = attempt;
+    try {
+      return await attempt;
+    } finally {
+      if (this.persistInFlight === attempt) this.persistInFlight = null;
+    }
   }
 
   private queueEntityDelete(serverId: string, kind: ReplicaRowKind, id: string): void {
@@ -1503,16 +1522,24 @@ export class ReplicaCache {
   }
 
   private prepareStore(): Promise<void> {
-    this.preparePromise ??= (async () => {
+    if (this.preparePromise) return this.preparePromise;
+
+    const preparePromise = (async () => {
       await this.rowStore.open();
       // COMPAT(replica-blob-cache): remove after 2026-11
       await this.clearLegacyCache().catch(() => undefined);
     })();
+    this.preparePromise = preparePromise.catch((error) => {
+      this.preparePromise = null;
+      throw error;
+    });
     return this.preparePromise;
   }
 
   private ensureStoredIndex(): Promise<void> {
-    this.storedIndexPromise ??= this.rowStore.readAll().then(async (hosts) => {
+    if (this.storedIndexPromise) return this.storedIndexPromise;
+
+    const storedIndexPromise = this.rowStore.readAll().then(async (hosts) => {
       this.storedRows.clear();
       this.hostBytes.clear();
       this.hostWriteOrder.clear();
@@ -1531,6 +1558,10 @@ export class ReplicaCache {
       }
       return undefined;
     });
+    this.storedIndexPromise = storedIndexPromise.catch((error) => {
+      this.storedIndexPromise = null;
+      throw error;
+    });
     return this.storedIndexPromise;
   }
 
@@ -1546,11 +1577,20 @@ export class ReplicaCache {
     return this.writeQueue;
   }
 
-  private schedulePersist(): void {
+  private schedulePersist(retry = false): void {
     if (this.persistTimer) return;
+    this.persistRetryScheduled = retry;
     this.persistTimer = setTimeout(() => {
       this.persistTimer = null;
+      this.persistRetryScheduled = false;
       void this.flushPending();
     }, PERSIST_DELAY_MS);
+  }
+
+  private reportPersistFailure(error: unknown): void {
+    if (this.persistFailureLogged) return;
+    this.persistFailureLogged = true;
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[ReplicaCache] Failed to persist local cache; retrying later: ${message}`);
   }
 }
