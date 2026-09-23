@@ -117,6 +117,7 @@ and updating `next`, integrating it after a release, and releasing a hotfix from
 
 - **NEVER restart the main Paseo daemon on port 6767 without permission** — it manages all running agents. If you're an agent, restarting it kills your own process.
 - **NEVER assume a timeout means the service needs restarting** — timeouts can be transient.
+- **SSH commands blocked by the sandbox:** For an explicitly requested SSH-backed Git operation (`git push`, `git fetch`, or similar) that fails because the sandbox cannot read SSH configuration or reach credentials, retry the same command with `sandbox_permissions: "require_escalated"` and a justification naming the repository and branch. Do not change SSH file permissions, switch remotes, or expose credentials to work around the sandbox. If escalation is rejected, report that the remote operation could not be completed.
 - **NEVER add auth checks to tests** — agent providers handle their own auth.
 - **Before changing app routes, startup routing, remembered workspace restore, or active workspace selection, read [docs/expo-router.md](docs/expo-router.md).**
 - **NEVER run the full test suite locally.** The test suites are heavy and will freeze the machine, especially if multiple agents run them in parallel. Rules:
