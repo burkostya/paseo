@@ -419,6 +419,31 @@ describe("pickAndPersistImages", () => {
 });
 
 describe("dispatchComposerAgentMessage", () => {
+  it("sends a Continue action to the current agent without composer attachments", async () => {
+    const client = createFakeSendClient();
+    const stream = createFakeStream();
+
+    await dispatchComposerAgentMessage({
+      client,
+      agentId: "agent-with-error",
+      text: "Continue",
+      attachments: [],
+      encodeImages: passthroughEncodeImages,
+      submission: stream,
+    });
+
+    expect(client.calls).toHaveLength(1);
+    expect(client.calls[0]).toMatchObject({
+      agentId: "agent-with-error",
+      text: "Continue",
+      options: { images: [], attachments: [] },
+    });
+    expect(stream.tail.get("agent-with-error")?.[0]).toMatchObject({
+      kind: "user_message",
+      text: "Continue",
+    });
+  });
+
   it("forwards the configured active-turn intent without provider capability checks", async () => {
     const client = createFakeSendClient();
     const stream = createFakeStream();
