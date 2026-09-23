@@ -251,6 +251,11 @@ export const ko: TranslationResources = {
     },
   },
   agentPanel: {
+    continue: {
+      label: "계속하기",
+      accessibilityLabel: "오류 후 대화 계속하기",
+      message: "계속하기",
+    },
     states: {
       notFound: "에이전트를 찾을 수 없습니다",
       failedToLoad: "에이전트를 불러오지 못했습니다",

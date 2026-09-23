@@ -256,6 +256,11 @@ export const ja: TranslationResources = {
     },
   },
   agentPanel: {
+    continue: {
+      label: "続行",
+      accessibilityLabel: "エラー後に会話を続行",
+      message: "続行",
+    },
     states: {
       notFound: "エージェントが見つかりません",
       failedToLoad: "エージェントの読み込みに失敗しました",

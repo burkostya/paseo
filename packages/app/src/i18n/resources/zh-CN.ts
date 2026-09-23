@@ -254,6 +254,11 @@ export const zhCN: TranslationResources = {
     },
   },
   agentPanel: {
+    continue: {
+      label: "继续",
+      accessibilityLabel: "在错误后继续对话",
+      message: "继续",
+    },
     states: {
       notFound: "未找到 Agent",
       failedToLoad: "加载 Agent 失败",

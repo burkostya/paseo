@@ -257,6 +257,11 @@ export const ru: TranslationResources = {
     },
   },
   agentPanel: {
+    continue: {
+      label: "Продолжить",
+      accessibilityLabel: "Продолжить диалог после ошибки",
+      message: "Продолжить",
+    },
     states: {
       notFound: "Агент не найден",
       failedToLoad: "Не удалось загрузить агента",

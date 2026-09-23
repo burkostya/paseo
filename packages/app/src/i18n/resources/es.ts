@@ -257,6 +257,11 @@ export const es: TranslationResources = {
     },
   },
   agentPanel: {
+    continue: {
+      label: "Continuar",
+      accessibilityLabel: "Continuar la conversación después del error",
+      message: "Continuar",
+    },
     states: {
       notFound: "Agentno encontrado",
       failedToLoad: "No se pudo cargar el agente",

@@ -256,6 +256,11 @@ export const ptBR: TranslationResources = {
     },
   },
   agentPanel: {
+    continue: {
+      label: "Continuar",
+      accessibilityLabel: "Continuar a conversa após o erro",
+      message: "Continuar",
+    },
     states: {
       notFound: "Agente não encontrado",
       failedToLoad: "Falha ao carregar agente",

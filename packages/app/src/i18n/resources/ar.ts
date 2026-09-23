@@ -255,6 +255,11 @@ export const ar: TranslationResources = {
     },
   },
   agentPanel: {
+    continue: {
+      label: "متابعة",
+      accessibilityLabel: "متابعة المحادثة بعد الخطأ",
+      message: "متابعة",
+    },
     states: {
       notFound: "لم يتم العثور على Agent",
       failedToLoad: "فشل تحميل الوكيل",

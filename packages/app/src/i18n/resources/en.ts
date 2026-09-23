@@ -251,6 +251,11 @@ export const en = {
     },
   },
   agentPanel: {
+    continue: {
+      label: "Continue",
+      accessibilityLabel: "Continue the conversation after the error",
+      message: "Continue",
+    },
     states: {
       notFound: "Agent not found",
       failedToLoad: "Failed to load agent",
