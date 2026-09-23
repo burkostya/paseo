@@ -316,7 +316,6 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 1,
     fontSize: theme.fontSize.base,
     lineHeight: 22,
-    flexShrink: 1,
   },
   description: {
     color: theme.colors.foregroundMuted,
