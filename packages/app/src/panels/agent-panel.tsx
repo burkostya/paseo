@@ -32,6 +32,8 @@ import {
   useComposerFullscreen,
   type ComposerEditingSession,
 } from "@/composer/editing-session";
+import { dispatchComposerAgentMessage } from "@/composer/actions";
+import { createMessageSubmissionWriter } from "@/composer/submission/writer";
 import { useWorkspaceHasDiffStat } from "@/composer/workspace-diff-stat";
 import {
   resolveComposerTrackControlClearance,
@@ -41,6 +43,7 @@ import { getActiveMessageSubmissions } from "@/composer/submission/model";
 import { RewindComposerRestoreProvider } from "@/components/rewind/composer-restore";
 import { useAgentDescriptor } from "@/agent-presentation";
 import { useToastHost, type ToastApi, type ToastState } from "@/components/toast-host";
+import { useToast } from "@/contexts/toast-context";
 import type { WorkspaceComposerAttachment } from "@/attachments/types";
 import { useWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 import { COMPACT_FORM_FACTOR_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
@@ -102,6 +105,11 @@ import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agen
 import { applyLegacyDaemonWorkspaceOwnership } from "@/workspace/legacy-daemon-workspaces";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 import { buildDraftAgentSetup, type ClientSlashCommand } from "@/client-slash-commands";
+import { encodeImages } from "@/utils/encode-images";
+import {
+  createContinueAfterErrorSubmitter,
+  resolveContinueAfterErrorActionState,
+} from "./continue-after-error";
 
 interface ChatAgentStateShape {
   serverId: string | null;
@@ -1173,6 +1181,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
         isPaneFocused={isPaneFocused}
         isArchivingCurrentAgent={isArchivingCurrentAgent}
         archivedAt={agentState.archivedAt}
+        lastError={agentState.lastError ?? null}
         cwd={cwd}
         isSubmitLoading={false}
         agentInputDraft={agentInputDraft}
@@ -1429,6 +1438,7 @@ const AgentComposerSection = memo(function AgentComposerSection({
   isPaneFocused,
   isArchivingCurrentAgent,
   archivedAt,
+  lastError,
   cwd,
   isSubmitLoading,
   agentInputDraft,
@@ -1443,6 +1453,7 @@ const AgentComposerSection = memo(function AgentComposerSection({
   isPaneFocused: boolean;
   isArchivingCurrentAgent: boolean;
   archivedAt: Date | null;
+  lastError: string | null;
   cwd: string;
   isSubmitLoading: boolean;
   agentInputDraft: AgentInputDraft;
@@ -1468,6 +1479,7 @@ const AgentComposerSection = memo(function AgentComposerSection({
       serverId={serverId}
       isPaneFocused={isPaneFocused}
       cwd={cwd}
+      lastError={lastError}
       isSubmitLoading={isSubmitLoading}
       agentInputDraft={agentInputDraft}
       editingSession={editingSession}
@@ -1484,6 +1496,7 @@ function ActiveAgentComposer({
   serverId,
   isPaneFocused,
   cwd,
+  lastError,
   isSubmitLoading,
   agentInputDraft,
   editingSession,
@@ -1496,6 +1509,7 @@ function ActiveAgentComposer({
   serverId: string;
   isPaneFocused: boolean;
   cwd: string;
+  lastError: string | null;
   isSubmitLoading: boolean;
   agentInputDraft: AgentInputDraft;
   editingSession: ComposerEditingSession;
@@ -1504,6 +1518,7 @@ function ActiveAgentComposer({
   onComposerHeightChange: (height: number) => void;
   onMessageSent: () => void;
 }) {
+  const { t } = useTranslation();
   const isCompactFormFactor = useIsCompactFormFactor();
   const { onLayout: onInputAreaLayout, isBelow: isCompactComposerLayout } = useContainerWidthBelow(
     COMPACT_FORM_FACTOR_WIDTH,
@@ -1512,6 +1527,132 @@ function ActiveAgentComposer({
   const paneContext = usePaneContext();
   const openInSidePane = useSettings((settings) => settings.openInSidePane);
   const { workspaceId, tabId, retargetCurrentTab } = paneContext;
+  const client = useHostRuntimeClient(serverId);
+  const isConnected = useHostRuntimeIsConnected(serverId);
+  const toast = useToast();
+  const currentAgentKey = JSON.stringify([serverId, agentId]);
+  const [sendingAgentKey, setSendingAgentKey] = useState<string | null>(null);
+  const [dismissedError, setDismissedError] = useState<{
+    agentKey: string;
+    error: string;
+  } | null>(null);
+  const isSendingContinue = sendingAgentKey === currentAgentKey;
+  const [submitContinueOnce] = useState(createContinueAfterErrorSubmitter);
+  const isAgentTurnActive = useSessionStore(
+    (state) => selectAgentTurnPresentation(state.sessions[serverId], agentId).isActive,
+  );
+  const hasPendingPermission = useSessionStore((state) => {
+    const session = state.sessions[serverId];
+    const agent = resolveChatAgentFromSession(state, serverId, agentId);
+    if ((agent?.pendingPermissions.length ?? 0) > 0) return true;
+    for (const permission of session?.pendingPermissions.values() ?? []) {
+      if (permission.agentId === agentId) return true;
+    }
+    return false;
+  });
+  const continueActionState = resolveContinueAfterErrorActionState({
+    hasError:
+      Boolean(lastError?.trim()) &&
+      !(dismissedError?.agentKey === currentAgentKey && dismissedError.error === lastError),
+    isAgentTurnActive,
+    hasPendingPermission,
+    isArchived: false,
+    isConnected: Boolean(client && isConnected),
+    isSending: isSendingContinue,
+  });
+
+  useEffect(() => {
+    if (
+      dismissedError &&
+      (dismissedError.agentKey !== currentAgentKey ||
+        dismissedError.error !== lastError ||
+        isAgentTurnActive)
+    ) {
+      setDismissedError(null);
+    }
+  }, [currentAgentKey, dismissedError, isAgentTurnActive, lastError]);
+
+  const handleAttentionPromptSend = useCallback(() => {
+    if (lastError?.trim()) {
+      setDismissedError({ agentKey: currentAgentKey, error: lastError });
+    }
+    onAttentionPromptSend();
+  }, [currentAgentKey, lastError, onAttentionPromptSend]);
+
+  const handleContinueAfterError = useCallback(async () => {
+    if (!client || !isConnected || !lastError || isAgentTurnActive || hasPendingPermission) {
+      return;
+    }
+
+    const currentState = useSessionStore.getState();
+    const currentAgent = resolveChatAgentFromSession(currentState, serverId, agentId);
+    const currentSession = currentState.sessions[serverId];
+    const currentTurn = selectAgentTurnPresentation(currentSession, agentId);
+    if (
+      !currentAgent ||
+      currentAgent.lastError !== lastError ||
+      currentAgent.archivedAt ||
+      currentTurn.isActive ||
+      (currentAgent.pendingPermissions.length ?? 0) > 0 ||
+      Array.from(currentSession?.pendingPermissions.values() ?? []).some(
+        (permission) => permission.agentId === agentId,
+      )
+    ) {
+      return;
+    }
+
+    try {
+      const didSend = await submitContinueOnce(async () => {
+        setSendingAgentKey(currentAgentKey);
+        try {
+          await dispatchComposerAgentMessage({
+            client,
+            agentId,
+            text: t("agentPanel.continue.message"),
+            attachments: [],
+            encodeImages,
+            submission: createMessageSubmissionWriter(serverId),
+          });
+        } finally {
+          setSendingAgentKey(null);
+        }
+      });
+      if (!didSend) return;
+      handleAttentionPromptSend();
+      onMessageSent();
+    } catch (error) {
+      console.error("[AgentPanel] Failed to continue after agent error:", error);
+      toast.error(t("composer.errors.failedToSend"));
+    }
+  }, [
+    agentId,
+    client,
+    currentAgentKey,
+    hasPendingPermission,
+    handleAttentionPromptSend,
+    isAgentTurnActive,
+    isConnected,
+    lastError,
+    onMessageSent,
+    serverId,
+    submitContinueOnce,
+    t,
+    toast,
+  ]);
+  const emptySubmitAction = useMemo(
+    () =>
+      continueActionState === "hidden"
+        ? undefined
+        : {
+            label: t("agentPanel.continue.label"),
+            accessibilityLabel: t("agentPanel.continue.accessibilityLabel"),
+            onSubmit: handleContinueAfterError,
+            disabled: continueActionState === "disabled",
+            loading: continueActionState === "sending",
+            testID: "agent-continue-after-error",
+          },
+    [continueActionState, handleContinueAfterError, t],
+  );
   const { archiveAgent } = useArchiveAgent();
   const closeWorkspaceTab = useWorkspaceLayoutStore((state) => state.closeTab);
   const hideWorkspaceAgent = useWorkspaceLayoutStore((state) => state.hideAgent);
@@ -1598,8 +1739,9 @@ function ActiveAgentComposer({
         autoFocus
         autoFocusKey={String(agentInputDraft.attachmentFocusRequestId)}
         isSubmitLoading={isSubmitLoading}
+        emptySubmitAction={emptySubmitAction}
         onAttentionInputFocus={onAttentionInputFocus}
-        onAttentionPromptSend={onAttentionPromptSend}
+        onAttentionPromptSend={handleAttentionPromptSend}
         onComposerHeightChange={onComposerHeightChange}
         onMessageSent={onMessageSent}
         onClientSlashCommand={handleClientSlashCommand}
