@@ -2630,12 +2630,6 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  private planToolCallId(request: AgentPermissionRequest): string {
-    return typeof request.metadata?.toolUseId === "string"
-      ? request.metadata.toolUseId
-      : request.id;
-  }
-
   private resolveDeniedPermission(
     request: AgentPermissionRequest,
     response: Extract<AgentPermissionResponse, { behavior: "deny" }>,

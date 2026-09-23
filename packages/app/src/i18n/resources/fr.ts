@@ -2086,11 +2086,6 @@ export const fr: TranslationResources = {
     sessionCost: "Coût de la session : {{cost}}",
     accessibility: "Fenêtre de contexte : {{percentage}} % utilisés",
   },
-  providerUsageAlerts: {
-    hostSummary: "{{provider}} · {{window}} : {{percentage}} % utilisés",
-    additional: "+{{count}} autres",
-    openUsage: "Ouvrir les limites d’utilisation de {{host}}",
-  },
   review: {
     comment: {
       add: "Ajouter un commentaire de revue",
@@ -2624,34 +2619,6 @@ export const fr: TranslationResources = {
       },
       workspaces: {
         unavailable: "Connectez-vous à cet hôte pour gérer les espaces de travail",
-      },
-      issueTrackers: {
-        updateRequired: "Mettez à jour cet host pour configurer les liens de tickets",
-        sectionTitle: "Serveurs de tickets",
-        add: "Ajouter",
-        addTitle: "Ajouter un serveur de tickets",
-        editTitle: "Modifier le serveur de tickets",
-        nameLabel: "Nom",
-        urlLabel: "Modèle d’URL",
-        urlHint: "Utilisez {id} à l’emplacement de l’identifiant",
-        prefixesLabel: "Préfixes d’ID",
-        prefixesHint: "Un préfixe sensible à la casse par ligne, suivi d’un nombre",
-        preview: "Aperçu",
-        save: "Enregistrer",
-        remove: "Supprimer",
-        removeTitle: "Supprimer le serveur de tickets ?",
-        removeMessage: "Supprimer « {{name}} » ?",
-        empty: "Aucun serveur de tickets configuré",
-        editAccessibility: "Modifier le serveur de tickets {{name}}",
-        removeAccessibility: "Supprimer le serveur de tickets {{name}}",
-        ambiguousHost: "Cet ID correspond à plusieurs hosts",
-        errors: {
-          nameRequired: "Le nom est obligatoire",
-          prefixRequired: "Au moins un préfixe est obligatoire",
-          duplicatePrefix: "Chaque ID et préfixe doit être unique sur cet host",
-          missingPlaceholder: "Le modèle d’URL doit contenir {id}",
-          invalidUrl: "Le modèle doit produire une URL HTTP ou HTTPS valide",
-        },
       },
       terminalProfiles: {
         unavailable: "Connectez-vous à cet hôte pour gérer les profils de terminal",
