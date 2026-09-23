@@ -113,6 +113,7 @@ export const ko: TranslationResources = {
     },
   },
   composer: {
+    history: en.composer.history,
     placeholders: {
       desktop: "에이전트에게 메시지를 보내거나 @files 태그, /commands, /skills를 사용하세요",
       mobile: "메시지, @files, /commands",
@@ -243,6 +244,10 @@ export const ko: TranslationResources = {
       implement: "구현",
       question: "어떻게 진행할까요?",
       proposedPlan: "제안된 계획",
+      approved: "승인됨",
+      rejected: "거부됨",
+      skipped: "건너뜀",
+      planDisabledAfterMessages: en.agentStream.permission.planDisabledAfterMessages,
     },
   },
   agentPanel: {
@@ -914,6 +919,7 @@ export const ko: TranslationResources = {
         },
       },
       diff: {
+        basePicker: en.workspace.git.diff.basePicker,
         openChangesTab: "변경사항 탭 열기",
         openDiffTab: "Diff 탭 열기",
         closeChangesTab: "변경사항 탭 닫기",
@@ -2257,6 +2263,8 @@ export const ko: TranslationResources = {
         jumpToTab: "탭으로 이동",
         previousWorkspace: "이전 워크스페이스",
         nextWorkspace: "다음 워크스페이스",
+        previousRecentWorkspace: "이전 최근 워크스페이스",
+        nextRecentWorkspace: "다음 최근 워크스페이스",
         previousTab: "이전 탭",
         nextTab: "다음 탭",
         splitPaneRight: "창을 오른쪽으로 분할",

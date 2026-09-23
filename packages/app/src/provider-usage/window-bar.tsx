@@ -26,15 +26,7 @@ function fillToneStyle(tone: ProviderUsageTone) {
 
 export function ProviderUsageWindowBar({ window }: { window: ProviderUsageWindow }) {
   const usedPct = resolveUsedPct(window);
-  const derivedTone = deriveTone(usedPct);
-  const toneRank: Record<ProviderUsageTone, number> = {
-    default: 0,
-    ok: 0,
-    warning: 1,
-    danger: 2,
-  };
-  const providerTone = window.tone ?? "default";
-  const tone = toneRank[providerTone] >= toneRank[derivedTone] ? providerTone : derivedTone;
+  const tone = window.tone ?? deriveTone(usedPct);
 
   const fillWidth = clampPct(usedPct ?? 0);
   const fillStyle = useMemo<StyleProp<ViewStyle>>(

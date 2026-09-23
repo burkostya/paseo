@@ -31,7 +31,6 @@ const CodexAuthSchema = z.object({
 const CodexWindowSchema = z.object({
   used_percent: ApiNumberSchema.optional(),
   reset_at: ApiNumberSchema.optional(),
-  limit_window_seconds: ApiNumberSchema.optional(),
 });
 
 const CodexUsageResponseSchema = z.object({
@@ -69,12 +68,11 @@ interface CodexQuotaProviderOptions {
 
 function codexWindow(
   window: CodexWindow | null | undefined,
-): { usedPct: number; resetsAt: string | null; windowMinutes: number | null } | null {
+): { usedPct: number; resetsAt: string | null } | null {
   if (!window) return null;
   return {
     usedPct: window.used_percent ?? 0,
     resetsAt: window.reset_at != null ? new Date(window.reset_at * 1000).toISOString() : null,
-    windowMinutes: window.limit_window_seconds != null ? window.limit_window_seconds / 60 : null,
   };
 }
 
@@ -121,7 +119,6 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
           label: "Session",
           utilizationPct: session.usedPct,
           resetsAt: session.resetsAt,
-          windowMinutes: session.windowMinutes ?? 300,
           tone: toneFromUsedPct(session.usedPct),
         }),
       );
@@ -133,7 +130,6 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
           label: "Weekly",
           utilizationPct: weekly.usedPct,
           resetsAt: weekly.resetsAt,
-          windowMinutes: weekly.windowMinutes ?? 10_080,
           tone: toneFromUsedPct(weekly.usedPct),
         }),
       );
@@ -145,7 +141,6 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
           label: "Code review",
           utilizationPct: codeReview.usedPct,
           resetsAt: codeReview.resetsAt,
-          windowMinutes: codeReview.windowMinutes,
           tone: toneFromUsedPct(codeReview.usedPct),
         }),
       );

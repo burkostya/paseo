@@ -1,13 +1,5 @@
 import { router } from "expo-router";
-import {
-  AlertTriangle,
-  FolderPlus,
-  GitBranch,
-  Import,
-  Server,
-  Settings,
-  X,
-} from "lucide-react-native";
+import { FolderPlus, GitBranch, Import, Server, Settings, X } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
@@ -51,16 +43,11 @@ import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels"
 import type { SidebarProjectIconTarget } from "@/utils/sidebar-project-row-model";
 import { type SidebarGroupMode, useSidebarViewStore } from "@/stores/sidebar-view-store";
 import { useHosts } from "@/runtime/host-runtime";
-import { useProviderUsageAlerts } from "@/provider-usage/alerts";
 import { usePanelStore } from "@/stores/panel-store";
 import { useOwnsWindowChromeCorner, WindowChromeSafeArea } from "@/utils/desktop-window";
 import { useCloseAgentListGesture } from "@/mobile-panels/gestures";
 import { MobilePanelOverlay } from "@/mobile-panels/presentation";
-import {
-  buildSettingsAddHostRoute,
-  buildSettingsHostSectionRoute,
-  buildSettingsRoute,
-} from "@/utils/host-routes";
+import { buildSettingsAddHostRoute, buildSettingsRoute } from "@/utils/host-routes";
 import { openHostOverview } from "@/navigation/settings-navigation";
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
 import { SidebarCalloutSlot } from "./sidebar-callout-slot";
@@ -410,9 +397,6 @@ function SidebarHostPicker({
   );
 
   const handleOpen = useCallback(() => setIsOpen(true), []);
-  const handleOpenUsage = useCallback((serverId: string) => {
-    router.push(buildSettingsHostSectionRoute(serverId, "usage"));
-  }, []);
 
   return (
     <HostPicker
@@ -426,46 +410,22 @@ function SidebarHostPicker({
       onAddHost={onAddHost}
       showActiveConnection
       onOpenHostSettings={onOpenHostSettings}
-      onOpenHostUsage={handleOpenUsage}
       searchable
       desktopPlacement="top-start"
       desktopMinWidth={240}
       addHostTestID="sidebar-host-add"
       hostOptionTestID={sidebarHostOptionTestID}
     >
-      <View style={styles.hostTriggerContainer}>
-        <FooterIconButton
-          buttonRef={triggerRef}
-          onPress={handleOpen}
-          testID="sidebar-hosts-trigger"
-          label={label}
-          icon={Server}
-          iconSize={theme.iconSize.sm}
-          theme={theme}
-        />
-        {hosts.map((host) => (
-          <SidebarHostUsageAlertDot key={host.serverId} serverId={host.serverId} theme={theme} />
-        ))}
-      </View>
-    </HostPicker>
-  );
-}
-
-function SidebarHostUsageAlertDot({ serverId, theme }: { serverId: string; theme: SidebarTheme }) {
-  const highestAlert = useProviderUsageAlerts(serverId)[0];
-  const danger = (highestAlert?.thresholdPct ?? 0) >= 90;
-  const dotStyle = useMemo(
-    () => [styles.hostUsageAlertDot, danger && styles.hostUsageAlertDotDanger],
-    [danger],
-  );
-  if (!highestAlert) return null;
-  return (
-    <View style={dotStyle} testID="sidebar-hosts-usage-alert" pointerEvents="none">
-      <AlertTriangle
-        size={9}
-        color={danger ? theme.colors.statusDanger : theme.colors.statusWarning}
+      <FooterIconButton
+        buttonRef={triggerRef}
+        onPress={handleOpen}
+        testID="sidebar-hosts-trigger"
+        label={label}
+        icon={Server}
+        iconSize={theme.iconSize.sm}
+        theme={theme}
       />
-    </View>
+    </HostPicker>
   );
 }
 
@@ -1022,23 +982,6 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     paddingVertical: theme.spacing[1],
     paddingHorizontal: theme.spacing[1],
-  },
-  hostTriggerContainer: {
-    position: "relative",
-  },
-  hostUsageAlertDot: {
-    position: "absolute",
-    right: -1,
-    top: -1,
-    width: 12,
-    height: 12,
-    borderRadius: theme.borderRadius.full,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: theme.colors.surfaceSidebar,
-  },
-  hostUsageAlertDotDanger: {
-    zIndex: 1,
   },
   tooltipRow: {
     flexDirection: "row",

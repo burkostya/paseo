@@ -33,8 +33,6 @@ import { createCompactMarkdownStyles, createMarkdownStyles } from "@/styles/mark
 import type { Theme } from "@/styles/theme";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { isNative } from "@/constants/platform";
-import { useIssueTrackers } from "@/issue-links/context";
-import { createIssueAwareMarkdownParser } from "@/issue-links/markdown";
 import {
   splitHtmlishMarkdown,
   type MarkdownDisplayPart,
@@ -88,22 +86,12 @@ export function MarkdownRenderer({
   text,
   compact = false,
   rules,
-  markdownit,
+  markdownit = defaultMarkdownParser,
   onLinkPress,
   allowedImageHandlers,
   topLevelMaxExceededItem,
   enableHtmlish = true,
 }: MarkdownRendererProps) {
-  const issueTrackers = useIssueTrackers();
-  const resolvedMarkdownParser = useMemo(
-    () => markdownit ?? createIssueAwareMarkdownParser(issueTrackers),
-    [issueTrackers, markdownit],
-  );
-  const defaultLinkPress = useCallback((url: string) => {
-    void openExternalUrl(url);
-    return false;
-  }, []);
-  const resolvedLinkPress = onLinkPress ?? defaultLinkPress;
   const markdownRules = useMemo(() => rules ?? createSharedMarkdownRules(), [rules]);
   const parts = useMemo(
     () => (enableHtmlish ? splitHtmlishMarkdown(text) : [{ kind: "markdown" as const, text }]),
@@ -113,8 +101,8 @@ export function MarkdownRenderer({
     () => ({
       compact,
       rules: markdownRules,
-      markdownit: resolvedMarkdownParser,
-      onLinkPress: resolvedLinkPress,
+      markdownit,
+      onLinkPress,
       allowedImageHandlers,
       topLevelMaxExceededItem,
     }),
@@ -122,8 +110,8 @@ export function MarkdownRenderer({
       allowedImageHandlers,
       compact,
       markdownRules,
-      resolvedLinkPress,
-      resolvedMarkdownParser,
+      markdownit,
+      onLinkPress,
       topLevelMaxExceededItem,
     ],
   );

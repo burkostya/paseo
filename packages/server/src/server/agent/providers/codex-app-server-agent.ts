@@ -4892,7 +4892,8 @@ export class CodexAppServerAgentSession implements AgentSession {
       // prompt, and an accepted steer — so the transcript record belongs here
       // rather than in handlePlanPermissionResponse.
       const pending = this.pendingPermissionHandlers.get(requestId);
-      const planText = pending?.plan?.text ?? this.pendingPermissions.get(requestId)?.metadata?.planText;
+      const planText =
+        pending?.plan?.text ?? this.pendingPermissions.get(requestId)?.metadata?.planText;
       if (typeof planText === "string") {
         this.emitEvent({
           type: "timeline",

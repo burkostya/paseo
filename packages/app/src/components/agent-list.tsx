@@ -185,6 +185,122 @@ function SessionRowTrailingAttention({
   );
 }
 
+function SessionRowMobileMeta({
+  profile,
+  profileSize,
+  projectName,
+  projectRanges,
+  branch,
+  branchRanges,
+  timeAgo,
+  showHostColumn,
+  serverLabel,
+  profileTestID,
+  projectTestID,
+  branchTestID,
+}: {
+  profile: AgentProfileIdentity | null;
+  profileSize: number;
+  projectName: string;
+  projectRanges: ReturnType<typeof findHighlightRanges>;
+  branch: string;
+  branchRanges: ReturnType<typeof findHighlightRanges>;
+  timeAgo: string;
+  showHostColumn: boolean;
+  serverLabel?: string;
+  profileTestID: string;
+  projectTestID: string;
+  branchTestID: string;
+}) {
+  return (
+    <View style={styles.rowMetaRow}>
+      <SessionRowProfileIdentity profile={profile} size={profileSize} testID={profileTestID} />
+      {profile ? <Text style={styles.sessionMetaSeparator}>·</Text> : null}
+      <HighlightedText
+        text={projectName}
+        ranges={projectRanges}
+        style={styles.sessionMetaText}
+        numberOfLines={1}
+        testID={projectTestID}
+      />
+      <Text style={styles.sessionMetaSeparator}>·</Text>
+      <HighlightedText
+        text={branch}
+        ranges={branchRanges}
+        style={styles.sessionMetaText}
+        numberOfLines={1}
+        testID={branchTestID}
+      />
+      <Text style={styles.sessionMetaSeparator}>·</Text>
+      <Text style={styles.sessionMetaText}>{timeAgo}</Text>
+      {showHostColumn && serverLabel ? (
+        <>
+          <Text style={styles.sessionMetaSeparator}>·</Text>
+          <Text style={styles.sessionMetaText} numberOfLines={1}>
+            {serverLabel}
+          </Text>
+        </>
+      ) : null}
+    </View>
+  );
+}
+
+function SessionRowDesktopColumns({
+  projectName,
+  projectRanges,
+  branch,
+  branchRanges,
+  profile,
+  profileSize,
+  timeAgo,
+  showHostColumn,
+  serverLabel,
+  projectTestID,
+  branchTestID,
+  profileTestID,
+}: {
+  projectName: string;
+  projectRanges: ReturnType<typeof findHighlightRanges>;
+  branch: string;
+  branchRanges: ReturnType<typeof findHighlightRanges>;
+  profile: AgentProfileIdentity | null;
+  profileSize: number;
+  timeAgo: string;
+  showHostColumn: boolean;
+  serverLabel?: string;
+  projectTestID: string;
+  branchTestID: string;
+  profileTestID: string;
+}) {
+  return (
+    <View style={styles.rowColumns}>
+      <HighlightedText
+        text={projectName}
+        ranges={projectRanges}
+        style={styles.columnMeta}
+        numberOfLines={1}
+        testID={projectTestID}
+      />
+      {showHostColumn ? (
+        <Text style={styles.columnMetaHost} numberOfLines={1}>
+          {serverLabel}
+        </Text>
+      ) : null}
+      <HighlightedText
+        text={branch}
+        ranges={branchRanges}
+        style={styles.columnMeta}
+        numberOfLines={1}
+        testID={branchTestID}
+      />
+      <SessionRowProfileIdentity profile={profile} size={profileSize} testID={profileTestID} />
+      <Text style={styles.columnMetaFixed} numberOfLines={1}>
+        {timeAgo}
+      </Text>
+    </View>
+  );
+}
+
 function SessionRow({
   agent,
   search,
@@ -293,71 +409,37 @@ function SessionRow({
         </View>
         {isMobile ? agentTitle : null}
         {isMobile ? (
-          <View style={styles.rowMetaRow}>
-            <SessionRowProfileIdentity
-              profile={selectedProfile}
-              size={theme.iconSize.sm}
-              testID={`agent-row-profile-${agent.serverId}-${agent.id}`}
-            />
-            {selectedProfile ? <Text style={styles.sessionMetaSeparator}>·</Text> : null}
-            <HighlightedText
-              text={projectName}
-              ranges={ranges.project}
-              style={styles.sessionMetaText}
-              numberOfLines={1}
-              testID={`agent-row-project-${agent.serverId}-${agent.id}`}
-            />
-            <Text style={styles.sessionMetaSeparator}>·</Text>
-            <HighlightedText
-              text={branch}
-              ranges={ranges.branch}
-              style={styles.sessionMetaText}
-              numberOfLines={1}
-              testID={`agent-row-branch-${agent.serverId}-${agent.id}`}
-            />
-            <Text style={styles.sessionMetaSeparator}>·</Text>
-            <Text style={styles.sessionMetaText}>{timeAgo}</Text>
-            {showHostColumn && agent.serverLabel ? (
-              <>
-                <Text style={styles.sessionMetaSeparator}>·</Text>
-                <Text style={styles.sessionMetaText} numberOfLines={1}>
-                  {agent.serverLabel}
-                </Text>
-              </>
-            ) : null}
-          </View>
+          <SessionRowMobileMeta
+            profile={selectedProfile}
+            profileSize={theme.iconSize.sm}
+            projectName={projectName}
+            projectRanges={ranges.project}
+            branch={branch}
+            branchRanges={ranges.branch}
+            timeAgo={timeAgo}
+            showHostColumn={showHostColumn}
+            serverLabel={agent.serverLabel}
+            profileTestID={`agent-row-profile-${agent.serverId}-${agent.id}`}
+            projectTestID={`agent-row-project-${agent.serverId}-${agent.id}`}
+            branchTestID={`agent-row-branch-${agent.serverId}-${agent.id}`}
+          />
         ) : null}
       </View>
       {!isMobile ? (
-        <View style={styles.rowColumns}>
-          <HighlightedText
-            text={projectName}
-            ranges={ranges.project}
-            style={styles.columnMeta}
-            numberOfLines={1}
-            testID={`agent-row-project-${agent.serverId}-${agent.id}`}
-          />
-          {showHostColumn ? (
-            <Text style={styles.columnMetaHost} numberOfLines={1}>
-              {agent.serverLabel}
-            </Text>
-          ) : null}
-          <HighlightedText
-            text={branch}
-            ranges={ranges.branch}
-            style={styles.columnMeta}
-            numberOfLines={1}
-            testID={`agent-row-branch-${agent.serverId}-${agent.id}`}
-          />
-          <SessionRowProfileIdentity
-            profile={selectedProfile}
-            size={theme.iconSize.sm}
-            testID={`agent-row-profile-${agent.serverId}-${agent.id}`}
-          />
-          <Text style={styles.columnMetaFixed} numberOfLines={1}>
-            {timeAgo}
-          </Text>
-        </View>
+        <SessionRowDesktopColumns
+          projectName={projectName}
+          projectRanges={ranges.project}
+          branch={branch}
+          branchRanges={ranges.branch}
+          profile={selectedProfile}
+          profileSize={theme.iconSize.sm}
+          timeAgo={timeAgo}
+          showHostColumn={showHostColumn}
+          serverLabel={agent.serverLabel}
+          projectTestID={`agent-row-project-${agent.serverId}-${agent.id}`}
+          branchTestID={`agent-row-branch-${agent.serverId}-${agent.id}`}
+          profileTestID={`agent-row-profile-${agent.serverId}-${agent.id}`}
+        />
       ) : null}
       <SessionRowTrailingAttention
         isMobile={isMobile}
