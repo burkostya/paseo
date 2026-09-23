@@ -12,7 +12,6 @@ import {
   MutableDaemonConfigPatchSchema,
 } from "@getpaseo/protocol/messages";
 import type { AgentSkillSelection } from "@getpaseo/protocol/messages";
-import { assertValidIssueTrackerConfigs } from "@getpaseo/protocol/issue-trackers";
 
 export type { MutableDaemonConfig, MutableDaemonConfigPatch } from "@getpaseo/protocol/messages";
 
@@ -35,7 +34,6 @@ interface SupportedMutableConfigPatch {
   skills?: MutableDaemonConfig["skills"];
   pluginsEnabled?: boolean;
   plugins?: MutableDaemonConfig["plugins"];
-  issueTrackers?: MutableDaemonConfig["issueTrackers"];
 }
 
 interface LoggerLike {
@@ -213,7 +211,6 @@ const RELOADABLE_PATHS = [
   "daemon.appendSystemPrompt",
   "daemon.terminalProfiles",
   "daemon.agentProfiles",
-  "daemon.issueTrackers",
   "app.baseUrl",
   "agents.providers",
   "agents.catalogRefreshTimeoutMs",
@@ -238,7 +235,6 @@ const PERSISTED_TO_MUTABLE_PATH = new Map<string, string>([
   ["daemon.appendSystemPrompt", "appendSystemPrompt"],
   ["daemon.terminalProfiles", "terminalProfiles"],
   ["daemon.agentProfiles", "agentProfiles"],
-  ["daemon.issueTrackers", "issueTrackers"],
   ["app.baseUrl", "app.baseUrl"],
   ["agents.providers", "providers"],
   ["agents.catalogRefreshTimeoutMs", "catalogRefreshTimeoutMs"],
@@ -321,7 +317,6 @@ function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMut
     ...(patch.agentProfiles !== undefined ? { agentProfiles: patch.agentProfiles } : {}),
     ...(patch.pluginsEnabled !== undefined ? { pluginsEnabled: patch.pluginsEnabled } : {}),
     ...(patch.plugins !== undefined ? { plugins: patch.plugins } : {}),
-    ...(patch.issueTrackers !== undefined ? { issueTrackers: patch.issueTrackers } : {}),
   };
 }
 
@@ -386,7 +381,6 @@ export class DaemonConfigStore {
     this.reloadSource = options.reloadSource;
     this.startupPersisted = options.startupPersisted ?? loadPersistedConfig(paseoHome, this.logger);
     this.lastKnownPersisted = this.startupPersisted;
-    assertValidIssueTrackerConfigs(this.current.issueTrackers ?? []);
   }
 
   public get(): MutableDaemonConfig {
@@ -421,7 +415,6 @@ export class DaemonConfigStore {
         removedProviders,
       ),
     );
-    assertValidIssueTrackerConfigs(next.issueTrackers ?? []);
 
     const configChanged = !isEqualValue(this.current, next);
 
@@ -721,6 +714,5 @@ function mergeMutableDaemonPatch(
   if (patch.appendSystemPrompt !== undefined) next.appendSystemPrompt = patch.appendSystemPrompt;
   if (patch.terminalProfiles !== undefined) next.terminalProfiles = patch.terminalProfiles;
   if (patch.agentProfiles !== undefined) next.agentProfiles = patch.agentProfiles;
-  if (patch.issueTrackers !== undefined) next.issueTrackers = patch.issueTrackers;
   return Object.keys(next).length > 0 ? next : undefined;
 }
