@@ -260,6 +260,11 @@ export const fr: TranslationResources = {
     },
   },
   agentPanel: {
+    continue: {
+      label: "Continuer",
+      accessibilityLabel: "Continuer la conversation après l’erreur",
+      message: "Continuer",
+    },
     states: {
       notFound: "Agentintrouvable",
       failedToLoad: "Échec du chargement de l'agent",
