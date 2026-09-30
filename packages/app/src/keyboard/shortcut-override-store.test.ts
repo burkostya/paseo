@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ShortcutOverrides } from "@/keyboard/keyboard-shortcuts";
 import {
   createShortcutOverrideStore,
+  removeRetiredWorkspaceHistoryShortcutOverrides,
   type ShortcutOverrideStore,
 } from "@/keyboard/shortcut-override-store";
 
@@ -79,6 +80,16 @@ async function settle(ticks: number): Promise<void> {
 }
 
 describe("createShortcutOverrideStore", () => {
+  it("removes only the retired workspace history shortcut overrides", () => {
+    expect(
+      removeRetiredWorkspaceHistoryShortcutOverrides({
+        "workspace-navigate-history-ctrl-tab-desktop": "Ctrl+Alt+Tab",
+        "workspace-navigate-history-ctrl-shift-tab-desktop": null,
+        "workspace-navigate-relative-cmd-left-mac": "Ctrl+ArrowLeft",
+      }),
+    ).toEqual({ "workspace-navigate-relative-cmd-left-mac": "Ctrl+ArrowLeft" });
+  });
+
   it("persists a rebind", async () => {
     const h = createHarness();
 

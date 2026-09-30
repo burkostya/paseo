@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { ShortcutOverrides } from "@/keyboard/keyboard-shortcuts";
 import {
   createShortcutOverrideStore,
+  removeRetiredWorkspaceHistoryShortcutOverrides,
   type ShortcutOverrideStore,
 } from "@/keyboard/shortcut-override-store";
 import { readValidatedJson } from "@/storage/validated-storage";
@@ -78,13 +79,22 @@ function getStore(queryClient: QueryClient): ShortcutOverrideStore {
 }
 
 async function loadOverridesFromStorage(): Promise<ShortcutOverrides> {
+  let stored: ShortcutOverrides | null | undefined;
   try {
-    return (
-      (await readValidatedJson(AsyncStorage, STORAGE_KEY, ShortcutOverridesSchema)) ??
-      EMPTY_OVERRIDES
-    );
+    stored = await readValidatedJson(AsyncStorage, STORAGE_KEY, ShortcutOverridesSchema);
   } catch (err) {
     console.error("[KeyboardShortcutOverrides] Failed to load overrides:", err);
+    return EMPTY_OVERRIDES;
   }
-  return EMPTY_OVERRIDES;
+  if (!stored) return EMPTY_OVERRIDES;
+
+  const cleaned = removeRetiredWorkspaceHistoryShortcutOverrides(stored);
+  if (Object.keys(cleaned).length !== Object.keys(stored).length) {
+    try {
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(cleaned));
+    } catch (err) {
+      console.error("[KeyboardShortcutOverrides] Failed to remove retired overrides:", err);
+    }
+  }
+  return cleaned;
 }

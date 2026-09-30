@@ -4,6 +4,7 @@ import {
   collectSupersededPlanPermissionRequestIds,
   projectPlanPermissionItems,
   resolvePlanPermissionResolutionStatus,
+  resolvePlanTimelineDisplayResolutionStatus,
   resolvePlanTimelineResolutionStatus,
 } from "./plan-permission-state";
 
@@ -118,6 +119,24 @@ describe("resolvePlanTimelineResolutionStatus", () => {
   it("does not trust unknown persisted values", () => {
     expect(resolvePlanTimelineResolutionStatus({ planResolution: "dismissed" })).toBeNull();
     expect(resolvePlanTimelineResolutionStatus({ actionId: "reject" })).toBeNull();
+  });
+});
+
+describe("resolvePlanTimelineDisplayResolutionStatus", () => {
+  it("shows persisted and legacy skipped outcomes as rejected", () => {
+    expect(resolvePlanTimelineDisplayResolutionStatus({ planResolution: "skipped" })).toBe(
+      "rejected",
+    );
+    expect(resolvePlanTimelineDisplayResolutionStatus({ actionId: "superseded" })).toBe("rejected");
+  });
+
+  it("keeps approved and rejected outcomes unchanged", () => {
+    expect(resolvePlanTimelineDisplayResolutionStatus({ planResolution: "approved" })).toBe(
+      "approved",
+    );
+    expect(resolvePlanTimelineDisplayResolutionStatus({ planResolution: "rejected" })).toBe(
+      "rejected",
+    );
   });
 });
 

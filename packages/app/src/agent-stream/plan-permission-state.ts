@@ -90,6 +90,14 @@ export function resolvePlanTimelineResolutionStatus(
   return metadata?.actionId === "superseded" ? "skipped" : null;
 }
 
+export function resolvePlanTimelineDisplayResolutionStatus(
+  metadata: Record<string, unknown> | undefined,
+): "approved" | "rejected" | null {
+  const status = resolvePlanTimelineResolutionStatus(metadata);
+  if (status === "skipped") return "rejected";
+  return status;
+}
+
 function resolutionForPlanTimelineResult(
   result: PlanTimelineResult,
 ): AgentPermissionResponse | undefined {

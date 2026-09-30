@@ -137,10 +137,6 @@ export const ja: TranslationResources = {
       queue: "キュー",
       send: "送信",
     },
-    history: {
-      title: "プロンプト履歴",
-      open: "プロンプト履歴を開く",
-    },
     cancel: {
       cancelingAgent: "エージェントをキャンセル中",
       stopAgent: "エージェントを停止",
@@ -2523,8 +2519,6 @@ export const ja: TranslationResources = {
         jumpToTab: "タブにジャンプ",
         previousWorkspace: "前のワークスペース",
         nextWorkspace: "次のワークスペース",
-        previousRecentWorkspace: "最近使った前のワークスペース",
-        nextRecentWorkspace: "最近使った次のワークスペース",
         previousTab: "前のタブ",
         nextTab: "次のタブ",
         splitPaneRight: "右にペインを分割",

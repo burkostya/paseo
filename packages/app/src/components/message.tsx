@@ -83,7 +83,7 @@ import { capAssistantMessageForRender, getUtf8ByteLength } from "./assistant-mes
 import { getTurnDurationLabel } from "./assistant-turn-footer-label";
 import { getCompactionMarkerLabel } from "./message-compaction-label";
 import { PlanCard } from "./plan-card";
-import { resolvePlanTimelineResolutionStatus } from "@/agent-stream/plan-permission-state";
+import { resolvePlanTimelineDisplayResolutionStatus } from "@/agent-stream/plan-permission-state";
 import { ToolCallDetailsContent } from "./tool-call-details";
 import { useToolCallSheet } from "./tool-call-sheet";
 export type { InlinePathTarget } from "@/assistant-file-links";
@@ -2375,7 +2375,7 @@ export const ToolCall = memo(function ToolCall({
     maxDetailHeight,
   ]);
 
-  const resolutionStatus = resolvePlanTimelineResolutionStatus(metadata);
+  const resolutionStatus = resolvePlanTimelineDisplayResolutionStatus(metadata);
   const resolutionLabel = resolutionStatus ? t(`agentStream.permission.${resolutionStatus}`) : null;
   const planFooter = useMemo(
     () =>

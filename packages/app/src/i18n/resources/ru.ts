@@ -137,10 +137,6 @@ export const ru: TranslationResources = {
       queue: "Очередь",
       send: "Отправить",
     },
-    history: {
-      title: "История запросов",
-      open: "Открыть историю запросов",
-    },
     cancel: {
       cancelingAgent: "Отменить агента",
       stopAgent: "Остановить агента",
@@ -2545,8 +2541,6 @@ export const ru: TranslationResources = {
         jumpToTab: "Перейти на вкладку",
         previousWorkspace: "Предыдущее рабочее пространство",
         nextWorkspace: "Следующее рабочее пространство",
-        previousRecentWorkspace: "Предыдущее недавнее рабочее пространство",
-        nextRecentWorkspace: "Следующее недавнее рабочее пространство",
         previousTab: "Предыдущая вкладка",
         nextTab: "Следующая вкладка",
         splitPaneRight: "Разделить панель справа",
