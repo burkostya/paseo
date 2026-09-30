@@ -133,10 +133,6 @@ export const ar: TranslationResources = {
       queue: "طابور",
       send: "يرسل",
     },
-    history: {
-      title: "سجل المطالبات",
-      open: "فتح سجل المطالبات",
-    },
     cancel: {
       cancelingAgent: "وكيل الإلغاء",
       stopAgent: "توقف الوكيل",
@@ -2309,8 +2305,6 @@ export const ar: TranslationResources = {
         jumpToTab: "انتقل إلى علامة التبويب",
         previousWorkspace: "مساحة العمل السابقة",
         nextWorkspace: "مساحة العمل التالية",
-        previousRecentWorkspace: "مساحة العمل الحديثة السابقة",
-        nextRecentWorkspace: "مساحة العمل الحديثة التالية",
         previousTab: "علامة التبويب السابقة",
         nextTab: "علامة التبويب التالية",
         splitPaneRight: "تقسيم الجزء الأيمن",

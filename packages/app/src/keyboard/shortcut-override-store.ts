@@ -26,6 +26,21 @@ export interface ShortcutOverrideStore {
   resetAll(): Promise<void>;
 }
 
+const RETIRED_WORKSPACE_HISTORY_BINDING_IDS = new Set([
+  "workspace-navigate-history-ctrl-tab-desktop",
+  "workspace-navigate-history-ctrl-shift-tab-desktop",
+]);
+
+export function removeRetiredWorkspaceHistoryShortcutOverrides(
+  overrides: ShortcutOverrides,
+): ShortcutOverrides {
+  return Object.fromEntries(
+    Object.entries(overrides).filter(
+      ([bindingId]) => !RETIRED_WORKSPACE_HISTORY_BINDING_IDS.has(bindingId),
+    ),
+  );
+}
+
 export interface CreateShortcutOverrideStoreOptions {
   storage: ShortcutOverrideStorage;
   cache: ShortcutOverrideCache;

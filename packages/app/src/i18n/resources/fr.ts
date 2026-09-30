@@ -136,10 +136,6 @@ export const fr: TranslationResources = {
       queue: "File d'attente",
       send: "Envoyer",
     },
-    history: {
-      title: "Historique des prompts",
-      open: "Ouvrir l'historique des prompts",
-    },
     cancel: {
       cancelingAgent: "Agent d'annulation",
       stopAgent: "Agent d'arrêt",
@@ -2368,8 +2364,6 @@ export const fr: TranslationResources = {
         jumpToTab: "Aller à l'onglet",
         previousWorkspace: "Espace de travail précédent",
         nextWorkspace: "Espace de travail suivant",
-        previousRecentWorkspace: "Espace de travail récent précédent",
-        nextRecentWorkspace: "Espace de travail récent suivant",
         previousTab: "Onglet précédent",
         nextTab: "Onglet suivant",
         splitPaneRight: "Volet divisé à droite",

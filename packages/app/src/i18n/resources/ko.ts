@@ -114,7 +114,6 @@ export const ko: TranslationResources = {
     },
   },
   composer: {
-    history: en.composer.history,
     placeholders: {
       desktop: "에이전트에게 메시지를 보내거나 @files 태그, /commands, /skills를 사용하세요",
       mobile: "메시지, @files, /commands",
@@ -2307,8 +2306,6 @@ export const ko: TranslationResources = {
         jumpToTab: "탭으로 이동",
         previousWorkspace: "이전 워크스페이스",
         nextWorkspace: "다음 워크스페이스",
-        previousRecentWorkspace: "이전 최근 워크스페이스",
-        nextRecentWorkspace: "다음 최근 워크스페이스",
         previousTab: "이전 탭",
         nextTab: "다음 탭",
         splitPaneRight: "창을 오른쪽으로 분할",

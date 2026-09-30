@@ -91,4 +91,19 @@ describe("tool-call presentation", () => {
     expect(presentation.isPlan).toBe(true);
     expect(presentation.icon).toBe(fakeIcons.brain);
   });
+
+  it("shows skipped and legacy superseded plans as rejected", () => {
+    for (const metadata of [{ planResolution: "skipped" }, { actionId: "superseded" }]) {
+      const presentation = buildToolCallPresentation({
+        toolName: "plan_approval",
+        status: "completed",
+        error: null,
+        detail: { type: "plan", text: "1. Do the thing" },
+        metadata,
+        resolveIcon: fakeResolveIcon,
+      });
+
+      expect(presentation.planOutcome).toBe("rejected");
+    }
+  });
 });
