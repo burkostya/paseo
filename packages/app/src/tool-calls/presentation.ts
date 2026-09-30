@@ -1,4 +1,5 @@
 import type { PlanOutcome } from "@/components/plan-card";
+import { resolvePlanTimelineDisplayResolutionStatus } from "@/agent-stream/plan-permission-state";
 import type { ComponentType } from "react";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import type { ToolCallDisplayInput } from "@/utils/tool-call-display";
@@ -83,6 +84,8 @@ export function buildToolCallPresentation(
 
 function resolvePlanOutcome(input: BuildToolCallPresentationInput): PlanOutcome | undefined {
   if (input.status === "canceled") return "canceled";
+  const resolution = resolvePlanTimelineDisplayResolutionStatus(input.metadata);
+  if (resolution) return resolution;
   if (input.metadata?.approved === false) return "rejected";
   if (input.metadata?.approved === true) return "approved";
   if (input.status === "running" || input.status === "executing") return "pending";

@@ -217,20 +217,6 @@ describe("keyboard-shortcuts", () => {
       payload: { delta: 1 },
     },
     {
-      name: "matches Ctrl+Tab for the next recent workspace from terminal focus",
-      event: { key: "Tab", code: "Tab", ctrlKey: true },
-      context: { isDesktop: true, focusScope: "terminal" },
-      action: "workspace.navigate.history",
-      payload: { delta: 1 },
-    },
-    {
-      name: "matches Ctrl+Shift+Tab for the previous recent workspace from message input",
-      event: { key: "Tab", code: "Tab", ctrlKey: true, shiftKey: true },
-      context: { isDesktop: true, focusScope: "message-input" },
-      action: "workspace.navigate.history",
-      payload: { delta: -1 },
-    },
-    {
       name: "matches tab relative navigation via Alt+Shift+]",
       event: { key: "}", code: "BracketRight", altKey: true, shiftKey: true },
       action: "workspace.tab.navigate.relative",
@@ -743,8 +729,6 @@ describe("keyboard-shortcut help sections", () => {
         "new-workspace": ["mod", "N"],
         "workspace-tab-new": ["mod", "T"],
         "workspace-jump-index": ["mod", "1-9"],
-        "workspace-history-next": ["ctrl", "Tab"],
-        "workspace-history-prev": ["ctrl", "shift", "Tab"],
         "workspace-tab-jump-index": ["mod", "alt", "1-9"],
         // Derived from `combo: "Cmd+W"`, so the token is `mod` where the row
         // used to be hand-authored as `meta`. This binding is mac-only and

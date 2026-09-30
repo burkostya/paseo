@@ -156,10 +156,8 @@ function createSession(
   options: {
     goalsEnabled?: boolean;
     autoReviewEnabled?: boolean;
-    nativeCommandsEnabled?: boolean;
     workspaceGitService?: {
       resolveRepoRoot(cwd: string): Promise<string | null>;
-      getCheckoutDiff(cwd: string, options: { mode: "uncommitted" }): Promise<{ diff: string }>;
     };
   } = {},
 ): CodexTestSession {
@@ -176,7 +174,6 @@ function createSession(
     options.autoReviewEnabled === true,
     undefined,
     "interactive",
-    options.nativeCommandsEnabled ?? true,
   ) as CodexTestSession;
   session.connectionState = "connected";
   session.currentThreadId = "test-thread";
@@ -5490,13 +5487,11 @@ describe("Codex app-server provider", () => {
       }),
     };
 
-    const handler = await session.resolveCommand?.("/goal ship feature");
+    const handler = session.tryHandleOutOfBand?.("/goal ship feature");
     expect(handler).not.toBeNull();
 
     const events: AgentStreamEvent[] = [];
-    if (handler?.kind === "handled") {
-      await handler.run({ emit: (event) => events.push(event) });
-    }
+    await handler?.run({ emit: (event) => events.push(event) });
 
     expect(requests).toContainEqual({
       method: "thread/goal/set",
@@ -5516,219 +5511,6 @@ describe("Codex app-server provider", () => {
         },
       },
     ]);
-  });
-
-  test("advertises the complete headless Codex command catalog", async () => {
-    const session = createSession();
-    session.client = {
-      request: vi.fn(async (method: string) => {
-        if (method === "skills/list") return { data: [] };
-        return {};
-      }),
-    };
-
-    const commands = await session.listCommands?.();
-
-    expect(commands?.map((command) => command.name)).toEqual(
-      expect.arrayContaining([
-        "apps",
-        "clean",
-        "compact",
-        "debug-config",
-        "diff",
-        "hooks",
-        "init",
-        "logout",
-        "mcp",
-        "plan",
-        "plugins",
-        "ps",
-        "rename",
-        "review",
-        "rollout",
-        "skills",
-        "status",
-        "stop",
-        "usage",
-      ]),
-    );
-    expect(commands?.map((command) => command.name)).not.toEqual(
-      expect.arrayContaining(["model", "permissions", "resume", "copy", "theme"]),
-    );
-  });
-
-  test("dispatches headless Codex commands to native RPCs and Git", async () => {
-    const gitDiffRequests: Array<{ cwd: string; mode: string }> = [];
-    const session = createSession(
-      {},
-      {
-        workspaceGitService: {
-          resolveRepoRoot: async (cwd) => cwd,
-          getCheckoutDiff: async (cwd, options) => {
-            gitDiffRequests.push({ cwd, mode: options.mode });
-            return { diff: "diff --git a/a b/a" };
-          },
-        },
-      },
-    );
-    session.activeForegroundTurnId = null;
-    const requests: Array<{ method: string; params: unknown }> = [];
-    session.client = {
-      request: vi.fn(async (method: string, params: unknown) => {
-        requests.push({ method, params });
-        if (method === "thread/loaded/list") return { data: ["test-thread"] };
-        if (method === "account/usage/read") {
-          return { summary: {}, dailyUsageBuckets: [] };
-        }
-        if (method === "thread/read") {
-          return { thread: { path: "/tmp/rollout.jsonl" } };
-        }
-        if (method === "config/read") {
-          return { config: {}, origins: {}, layers: [] };
-        }
-        if (method === "plugin/list") {
-          return { marketplaces: [] };
-        }
-        return { data: [] };
-      }),
-    };
-
-    const cases = [
-      ["/status", "account/read"],
-      ["/usage cumulative", "account/usage/read"],
-      ["/mcp verbose", "mcpServerStatus/list"],
-      ["/skills", "skills/list"],
-      ["/hooks", "hooks/list"],
-      ["/apps", "app/list"],
-      ["/plugins", "plugin/list"],
-      ["/debug-config", "config/read"],
-      ["/rollout", "thread/read"],
-      ["/ps", "thread/backgroundTerminals/list"],
-      ["/stop", "thread/backgroundTerminals/clean"],
-      ["/clean", "thread/backgroundTerminals/clean"],
-      ["/rename useful thread", "thread/name/set"],
-      ["/logout", "account/logout"],
-    ] as const;
-
-    for (const [prompt, expectedMethod] of cases) {
-      const resolution = await session.resolveCommand?.(prompt);
-      expect(resolution?.kind).toBe("handled");
-      if (resolution?.kind === "handled") {
-        await resolution.run({ emit: () => {} });
-      }
-      expect(requests.some((request) => request.method === expectedMethod)).toBe(true);
-    }
-
-    const diffResolution = await session.resolveCommand?.("/diff");
-    if (diffResolution?.kind === "handled") {
-      await diffResolution.run({ emit: () => {} });
-    }
-    expect(gitDiffRequests).toEqual([{ cwd: "/tmp/codex-question-test", mode: "uncommitted" }]);
-  });
-
-  test("maps Codex foreground commands without sending their slash text to the model", async () => {
-    const session = createSession();
-    session.activeForegroundTurnId = null;
-    session.client = {
-      request: vi.fn(async (method: string) => {
-        if (method === "skills/list") return { data: [] };
-        return {};
-      }),
-    };
-
-    await expect(session.resolveCommand?.("/plan inspect the architecture")).resolves.toEqual({
-      kind: "foreground",
-      prompt: "inspect the architecture",
-    });
-    const init = await session.resolveCommand?.("/init");
-    expect(init).toMatchObject({ kind: "foreground" });
-    if (init?.kind === "foreground") {
-      expect(init.prompt).toContain("Generate a file named AGENTS.md");
-    }
-    await expect(session.resolveCommand?.("/review")).resolves.toEqual({
-      kind: "foreground",
-      prompt: "/review",
-    });
-  });
-
-  test("starts bare and custom Codex reviews through review/start", async () => {
-    for (const prompt of ["/review", "/review focus on concurrency"] as const) {
-      const session = createSession();
-      session.activeForegroundTurnId = null;
-      const requests: Array<{ method: string; params: unknown }> = [];
-      session.client = {
-        request: vi.fn(async (method: string, params: unknown) => {
-          requests.push({ method, params });
-          if (method === "thread/loaded/list") return { data: ["test-thread"] };
-          return {};
-        }),
-      };
-
-      await session.startTurn(prompt);
-
-      expect(requests).toContainEqual({
-        method: "review/start",
-        params: {
-          threadId: "test-thread",
-          delivery: "inline",
-          target:
-            prompt === "/review"
-              ? { type: "uncommittedChanges" }
-              : { type: "custom", instructions: "focus on concurrency" },
-        },
-      });
-      expect(requests.some((request) => request.method === "turn/start")).toBe(false);
-    }
-  });
-
-  test("rejects unknown Codex commands and slash commands with attachments", async () => {
-    const session = createSession();
-    session.client = {
-      request: vi.fn(async (method: string) => {
-        if (method === "skills/list") return { data: [] };
-        return {};
-      }),
-    };
-    const events: AgentStreamEvent[] = [];
-
-    for (const prompt of [
-      "/does-not-exist",
-      [
-        { type: "text" as const, text: "/status" },
-        { type: "image" as const, data: "image-data", mimeType: "image/png" },
-      ],
-    ]) {
-      const resolution = await session.resolveCommand?.(prompt);
-      if (resolution?.kind === "handled") {
-        await resolution.run({ emit: (event) => events.push(event) });
-      }
-    }
-
-    expect(events.map((event) => (event.type === "timeline" ? event.item : null))).toEqual([
-      {
-        type: "assistant_message",
-        text: "[Error] Unknown command /does-not-exist. Type / to see available commands.",
-      },
-      {
-        type: "assistant_message",
-        text: "[Error] Slash commands cannot be combined with attachments.",
-      },
-    ]);
-  });
-
-  test("keeps the full Codex catalog behind the 0.144.3 compatibility gate", async () => {
-    const session = createSession({}, { nativeCommandsEnabled: false });
-    session.client = {
-      request: vi.fn(async (method: string) => {
-        if (method === "skills/list") return { data: [] };
-        return {};
-      }),
-    };
-
-    const commands = await session.listCommands?.();
-
-    expect(commands?.map((command) => command.name)).toContain("compact");
-    expect(commands?.map((command) => command.name)).not.toContain("status");
   });
 
   test("lists /compact and sends Codex compaction out of band", async () => {
@@ -5755,14 +5537,12 @@ describe("Codex app-server provider", () => {
     });
 
     session.activeForegroundTurnId = null;
-    const handler = await session.resolveCommand?.("/compact");
+    const handler = session.tryHandleOutOfBand?.("/compact");
     expect(handler).not.toBeNull();
 
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
-    if (handler?.kind === "handled") {
-      await handler.run({ emit: (event) => events.push(event) });
-    }
+    await handler?.run({ emit: (event) => events.push(event) });
     asInternals(session).handleNotification("item/started", {
       threadId: "test-thread",
       item: {

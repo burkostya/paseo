@@ -81,7 +81,7 @@ import { isRenderProfileEnabled } from "@/utils/render-profiler";
 import { getAgentAttachmentPillContent } from "@/attachments/attachment-pill-content";
 import { CopyButton } from "@/components/copy-button";
 import { PlanCard } from "./plan-card";
-import { resolvePlanTimelineResolutionStatus } from "@/agent-stream/plan-permission-state";
+import { resolvePlanTimelineDisplayResolutionStatus } from "@/agent-stream/plan-permission-state";
 import { useToolCallSheet } from "./tool-call-sheet";
 import { ToolCallDetailsContent } from "./tool-call-details";
 import {
@@ -3131,7 +3131,7 @@ export const ToolCall = memo(function ToolCall({
     maxDetailHeight,
   ]);
 
-  const resolutionStatus = resolvePlanTimelineResolutionStatus(metadata);
+  const resolutionStatus = resolvePlanTimelineDisplayResolutionStatus(metadata);
   const resolutionLabel = resolutionStatus ? t(`agentStream.permission.${resolutionStatus}`) : null;
   const planFooter = useMemo(
     () =>

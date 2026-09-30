@@ -129,10 +129,6 @@ export const en = {
       queue: "Queue",
       send: "Send",
     },
-    history: {
-      title: "Prompt history",
-      open: "Open prompt history",
-    },
     cancel: {
       cancelingAgent: "Canceling agent",
       stopAgent: "Stop agent",
@@ -2498,8 +2494,6 @@ export const en = {
         jumpToTab: "Jump to tab",
         previousWorkspace: "Previous workspace",
         nextWorkspace: "Next workspace",
-        previousRecentWorkspace: "Previous recent workspace",
-        nextRecentWorkspace: "Next recent workspace",
         previousTab: "Previous tab",
         nextTab: "Next tab",
         splitPaneRight: "Split pane right",

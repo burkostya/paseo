@@ -134,10 +134,6 @@ export const ptBR: TranslationResources = {
       queue: "Fila",
       send: "Enviar",
     },
-    history: {
-      title: "Histórico de prompts",
-      open: "Abrir histórico de prompts",
-    },
     cancel: {
       cancelingAgent: "Cancelando agente",
       stopAgent: "Parar agente",
@@ -2410,8 +2406,6 @@ export const ptBR: TranslationResources = {
         jumpToTab: "Ir para aba",
         previousWorkspace: "Workspace anterior",
         nextWorkspace: "Próximo workspace",
-        previousRecentWorkspace: "Workspace recente anterior",
-        nextRecentWorkspace: "Próximo workspace recente",
         previousTab: "Aba anterior",
         nextTab: "Próxima aba",
         splitPaneRight: "Dividir painel à direita",
