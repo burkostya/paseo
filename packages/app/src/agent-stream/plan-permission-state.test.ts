@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { StreamItem } from "@/types/stream";
+import type { AgentToolCallItem, StreamItem } from "@/types/stream";
 import {
   collectSupersededPlanPermissionRequestIds,
   projectPlanPermissionItems,
@@ -71,7 +71,7 @@ function planTimelineResult(
   id: string,
   planText: string,
   planResolution: "approved" | "rejected" | "skipped",
-): Extract<StreamItem, { kind: "tool_call" }> {
+): AgentToolCallItem {
   return {
     kind: "tool_call",
     id: `timeline_${id}`,
@@ -107,6 +107,16 @@ describe("resolvePlanPermissionResolutionStatus", () => {
 });
 
 describe("resolvePlanTimelineResolutionStatus", () => {
+  it("recognizes approval metadata while preserving explicit resolution precedence", () => {
+    expect(resolvePlanTimelineResolutionStatus({ approved: true })).toBe("approved");
+    expect(
+      resolvePlanTimelineResolutionStatus({ approved: true, planResolution: "rejected" }),
+    ).toBe("rejected");
+    expect(resolvePlanTimelineResolutionStatus({ approved: true, planResolution: "skipped" })).toBe(
+      "skipped",
+    );
+  });
+
   it("reads persisted statuses and the legacy Claude superseded action", () => {
     expect(resolvePlanTimelineResolutionStatus(undefined)).toBeNull();
     expect(resolvePlanTimelineResolutionStatus({ approved: false })).toBeNull();
@@ -179,6 +189,64 @@ describe("collectSupersededPlanPermissionRequestIds", () => {
 });
 
 describe("projectPlanPermissionItems", () => {
+  describe.each([
+    { name: "explicit resolution", metadata: { approved: true, planResolution: "approved" } },
+    { name: "approval flag", metadata: { approved: true } },
+  ])("with $name", ({ metadata }) => {
+    it.each(["tail", "head"] as const)(
+      "updates the original card when the approval arrives in %s",
+      (lane) => {
+        const proposal = plan("plan-1", undefined, "Do the work");
+        const followUp = userMessage("u1");
+        const timelineResult = planTimelineResult("plan-1", "Do the work", "approved");
+        timelineResult.payload.data.metadata = metadata;
+        timelineResult.timelineCursor = { epoch: "epoch-1", seq: 42 };
+        timelineResult.turnId = "turn-1";
+        const input = { tail: [proposal, followUp] as StreamItem[], head: [] as StreamItem[] };
+        input[lane].push(timelineResult);
+
+        const result = projectPlanPermissionItems(input);
+
+        expect(result.tail).toHaveLength(2);
+        expect(result.head).toEqual([]);
+        expect(result.tail[0]).toEqual({
+          ...proposal,
+          timelineCursor: timelineResult.timelineCursor,
+          turnId: "turn-1",
+          resolution: { behavior: "allow", selectedActionId: "implement" },
+        });
+        expect(result.tail[1]).toBe(followUp);
+
+        const replayed = projectPlanPermissionItems({
+          tail: result.tail,
+          head: [proposal, timelineResult],
+        });
+        expect(replayed.tail).toEqual(result.tail);
+        expect(replayed.head).toEqual([]);
+      },
+    );
+
+    it("hydrates one approved card from repeated results without a permission request", () => {
+      const timelineResult = planTimelineResult("plan-1", "Do the work", "approved");
+      timelineResult.payload.data.metadata = metadata;
+      const followUp = assistantMessage("a1");
+
+      const result = projectPlanPermissionItems({
+        tail: [timelineResult, followUp],
+        head: [timelineResult],
+      });
+
+      expect(result.tail).toHaveLength(2);
+      expect(result.tail[0]).toMatchObject({
+        kind: "permission_plan",
+        request: { id: "plan-1", input: { plan: "Do the work" } },
+        resolution: { behavior: "allow", selectedActionId: "implement" },
+      });
+      expect(result.tail[1]).toBe(followUp);
+      expect(result.head).toEqual([]);
+    });
+  });
+
   it("keeps one skipped request at its original position when it is replayed in the live head", () => {
     const duplicate = plan("plan-1", undefined, "Same proposal");
     duplicate.timelineCursor = { epoch: "epoch-1", seq: 41 };
@@ -236,21 +304,27 @@ describe("projectPlanPermissionItems", () => {
     });
   });
 
-  it("keeps plans with equal text distinct by request id", () => {
-    const result = projectPlanPermissionItems({
-      tail: [plan("plan-1", undefined, "same plan"), plan("plan-2", undefined, "same plan")],
-      head: [planTimelineResult("plan-1", "same plan", "skipped")],
-    });
+  it.each(["approved", "skipped"] as const)(
+    "keeps plans with equal text distinct when one is %s",
+    (outcome) => {
+      const result = projectPlanPermissionItems({
+        tail: [plan("plan-1", undefined, "same plan"), plan("plan-2", undefined, "same plan")],
+        head: [planTimelineResult("plan-1", "same plan", outcome)],
+      });
 
-    expect(result.tail).toHaveLength(2);
-    expect(
-      result.tail.map((item) => (item.kind === "permission_plan" ? item.request.id : "")),
-    ).toEqual(["plan-1", "plan-2"]);
-    expect(result.tail[0]).toMatchObject({
-      resolution: { behavior: "deny", selectedActionId: "superseded" },
-    });
-    expect(result.tail[1]).not.toHaveProperty("resolution");
-  });
+      expect(result.tail).toHaveLength(2);
+      expect(
+        result.tail.map((item) => (item.kind === "permission_plan" ? item.request.id : "")),
+      ).toEqual(["plan-1", "plan-2"]);
+      expect(result.tail[0]).toMatchObject({
+        resolution:
+          outcome === "approved"
+            ? { behavior: "allow", selectedActionId: "implement" }
+            : { behavior: "deny", selectedActionId: "superseded" },
+      });
+      expect(result.tail[1]).not.toHaveProperty("resolution");
+    },
+  );
 
   it("deduplicates repeated timeline results across history and the live head", () => {
     const repeated = planTimelineResult("plan-1", "Do the work", "skipped");

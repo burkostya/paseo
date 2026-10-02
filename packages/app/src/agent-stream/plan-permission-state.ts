@@ -87,7 +87,10 @@ export function resolvePlanTimelineResolutionStatus(
 
   // Claude emitted actionId before planResolution was persisted. Keep those
   // historical superseded plans labelled without guessing ordinary denials.
-  return metadata?.actionId === "superseded" ? "skipped" : null;
+  if (metadata?.actionId === "superseded") return "skipped";
+  // Providers also emit approval-only metadata. Unlike a denial, approval has
+  // no ambiguous rejected/superseded outcome.
+  return metadata?.approved === true ? "approved" : null;
 }
 
 export function resolvePlanTimelineDisplayResolutionStatus(
