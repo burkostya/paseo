@@ -73,7 +73,7 @@ test("selects, persists, and resets the committed diff base branch", async ({ pa
 
     await selectDiffMode(page, "uncommitted");
     await expect(baseTrigger).toHaveCount(0);
-    await expect(page.getByText("No uncommitted changes", { exact: true })).toBeVisible();
+    await expect(page.getByText("No changes to display", { exact: true })).toBeVisible();
 
     await selectDiffMode(page, "committed");
     await expect(baseTrigger).toContainText("release");

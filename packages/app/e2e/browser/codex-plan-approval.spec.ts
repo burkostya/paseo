@@ -7,9 +7,9 @@ import {
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 
 const EXPECTED_PLAN_MARKDOWN = [
-  "1. Add the README note.",
-  "2. Keep the change scoped.",
-  "3. Verify the diff.",
+  "1. Add the (c) README note.",
+  '2. Run --name="my repo".',
+  "3. Verify ---buzz in the diff.",
 ].join("\n");
 
 test.describe("Codex plan approval", () => {
@@ -57,6 +57,11 @@ test.describe("Codex plan approval", () => {
       await expect
         .poll(() => page.evaluate<string>("navigator.clipboard.readText()"))
         .toBe(EXPECTED_PLAN_MARKDOWN);
+
+      await page.reload();
+      await expect(page.getByTestId("timeline-plan-card")).toHaveCount(1, { timeout: 30_000 });
+      await expect(page.getByTestId("permission-plan-resolution")).toContainText("Approved");
+      await expect(page.getByTestId("permission-plan-card")).toHaveCount(0);
     } finally {
       await session.cleanup();
     }
@@ -82,6 +87,11 @@ test.describe("Codex plan approval", () => {
         timeout: 30_000,
       });
       await expect(page.getByTestId("permission-plan-resolution")).toContainText("Rejected");
+
+      await page.reload();
+      await expect(page.getByTestId("timeline-plan-card")).toHaveCount(1, { timeout: 30_000 });
+      await expect(page.getByTestId("permission-plan-resolution")).toContainText("Rejected");
+      await expect(page.getByTestId("permission-plan-card")).toHaveCount(0);
     } finally {
       await session.cleanup();
     }

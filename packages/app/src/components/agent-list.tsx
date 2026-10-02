@@ -194,7 +194,7 @@ function SessionRowMobileMeta({
   projectRanges,
   branch,
   branchRanges,
-  timeAgo,
+  lastActivityAt,
   showHostColumn,
   serverLabel,
   profileTestID,
@@ -207,7 +207,7 @@ function SessionRowMobileMeta({
   projectRanges: ReturnType<typeof findHighlightRanges>;
   branch: string;
   branchRanges: ReturnType<typeof findHighlightRanges>;
-  timeAgo: string;
+  lastActivityAt: Date;
   showHostColumn: boolean;
   serverLabel?: string;
   profileTestID: string;
@@ -234,7 +234,7 @@ function SessionRowMobileMeta({
         testID={branchTestID}
       />
       <Text style={styles.sessionMetaSeparator}>·</Text>
-      <Text style={styles.sessionMetaText}>{timeAgo}</Text>
+      <AgentActivityTime date={lastActivityAt} isMobile />
       {showHostColumn && serverLabel ? (
         <>
           <Text style={styles.sessionMetaSeparator}>·</Text>
@@ -254,7 +254,7 @@ function SessionRowDesktopColumns({
   branchRanges,
   profile,
   profileSize,
-  timeAgo,
+  lastActivityAt,
   showHostColumn,
   serverLabel,
   projectTestID,
@@ -267,7 +267,7 @@ function SessionRowDesktopColumns({
   branchRanges: ReturnType<typeof findHighlightRanges>;
   profile: AgentProfileIdentity | null;
   profileSize: number;
-  timeAgo: string;
+  lastActivityAt: Date;
   showHostColumn: boolean;
   serverLabel?: string;
   projectTestID: string;
@@ -296,9 +296,7 @@ function SessionRowDesktopColumns({
         testID={branchTestID}
       />
       <SessionRowProfileIdentity profile={profile} size={profileSize} testID={profileTestID} />
-      <Text style={styles.columnMetaFixed} numberOfLines={1}>
-        {timeAgo}
-      </Text>
+      <AgentActivityTime date={lastActivityAt} isMobile={false} />
     </View>
   );
 }
@@ -418,7 +416,7 @@ function SessionRow({
             projectRanges={ranges.project}
             branch={branch}
             branchRanges={ranges.branch}
-            timeAgo={timeAgo}
+            lastActivityAt={agent.lastActivityAt}
             showHostColumn={showHostColumn}
             serverLabel={agent.serverLabel}
             profileTestID={`agent-row-profile-${agent.serverId}-${agent.id}`}
@@ -435,7 +433,7 @@ function SessionRow({
           branchRanges={ranges.branch}
           profile={selectedProfile}
           profileSize={theme.iconSize.sm}
-          timeAgo={timeAgo}
+          lastActivityAt={agent.lastActivityAt}
           showHostColumn={showHostColumn}
           serverLabel={agent.serverLabel}
           projectTestID={`agent-row-project-${agent.serverId}-${agent.id}`}
