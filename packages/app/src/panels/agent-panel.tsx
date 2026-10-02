@@ -37,8 +37,8 @@ import {
 import { getActiveMessageSubmissions } from "@/composer/submission/model";
 import { RewindComposerRestoreProvider } from "@/components/rewind/composer-restore";
 import { useProviderIcon } from "@/components/provider-icons";
-import { useToastHost, type ToastApi, type ToastState } from "@/components/toast-host";
 import { AgentProfileGlyph, resolveAgentProfileIdentity, useAgentProfiles } from "@/agent-profiles";
+import { useToastHost, type ToastApi, type ToastState } from "@/components/toast-host";
 import { useToast } from "@/contexts/toast-context";
 import type { WorkspaceComposerAttachment } from "@/attachments/types";
 import { useWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";

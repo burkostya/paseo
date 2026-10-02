@@ -1004,6 +1004,26 @@ export class MockLoadTestAgentSession implements AgentSession {
     this.pendingPermissions.delete(requestId);
 
     const turn = this.activeTurn;
+    // Real plan providers persist an outcome so a later timeline subscription can replay it.
+    if (request.kind === "plan" && typeof request.input?.plan === "string") {
+      this.emit({
+        type: "timeline",
+        provider: this.provider,
+        ...(turn ? { turnId: turn.turnId } : {}),
+        item: {
+          type: "tool_call",
+          callId: requestId,
+          name: "plan_approval",
+          status: "completed",
+          error: null,
+          detail: { type: "plan", text: request.input.plan },
+          metadata: {
+            approved: response.behavior === "allow",
+            planResolution: response.behavior === "allow" ? "approved" : "rejected",
+          },
+        },
+      });
+    }
     this.emit({
       type: "permission_resolved",
       provider: this.provider,

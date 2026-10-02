@@ -455,7 +455,7 @@ function parseConfigDocument(filePath: string, repairPermissions: boolean): Json
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    parsed = parseConfigText(raw);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`[Config] Invalid JSON in ${filePath}: ${message}`, {
