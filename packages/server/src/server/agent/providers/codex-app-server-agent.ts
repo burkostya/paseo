@@ -4926,7 +4926,10 @@ export class CodexAppServerAgentSession implements AgentSession {
           status: outcome === "canceled" ? "canceled" : "completed",
           error: null,
           detail: { type: "plan", text: plan.text },
-          metadata: outcome === "canceled" ? {} : { approved: outcome === "approved" },
+          metadata:
+            outcome === "canceled"
+              ? {}
+              : { approved: outcome === "approved", planResolution: outcome },
         },
       });
     }
