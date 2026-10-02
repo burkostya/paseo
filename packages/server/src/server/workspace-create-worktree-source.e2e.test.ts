@@ -1,11 +1,108 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, onTestFinished, test } from "vitest";
 
 import { DaemonClient } from "./test-utils/index.js";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
+
+test("imports external worktrees without setup, deduplicates, and preserves files across archive and restore", async () => {
+  const daemon = await createTestPaseoDaemon();
+  const { repoDir, tempRoot } = createGitRepoWithBranch();
+  const worktreePath = path.join(tempRoot, "external worktree");
+  const detachedPath = path.join(tempRoot, "detached worktree");
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.11.0",
+  });
+  try {
+    execFileSync("git", ["worktree", "add", worktreePath, "feature/existing-branch"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+    execFileSync("git", ["worktree", "add", "--detach", detachedPath], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+    writeFileSync(
+      path.join(worktreePath, "paseo.json"),
+      JSON.stringify({
+        worktree: { setup: "touch setup-must-not-run", teardown: "touch teardown-must-not-run" },
+      }),
+    );
+    writeFileSync(path.join(worktreePath, "keep.txt"), "local changes");
+    await client.connect();
+    const added = await client.addProject(repoDir);
+    expect(added.error).toBeNull();
+    const projectId = added.project!.projectId;
+    const listed = await client.listProjectWorktrees(projectId);
+    expect(listed.error).toBeNull();
+    expect(listed.worktrees).toHaveLength(2);
+    expect(listed.worktrees).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: worktreePath,
+          branch: "feature/existing-branch",
+          workspaceId: null,
+          unavailable: false,
+        }),
+        expect.objectContaining({ path: detachedPath, branch: null, workspaceId: null }),
+      ]),
+    );
+    expect((await client.importProjectWorktree(projectId, repoDir)).error).toBeTruthy();
+    const results = await Promise.all([
+      client.importProjectWorktree(projectId, worktreePath),
+      client.importProjectWorktree(projectId, worktreePath),
+    ]);
+    expect(results[0].error).toBeNull();
+    expect(results[1]).toMatchObject({ error: null, workspaceId: results[0].workspaceId });
+    const workspaceId = results[0].workspaceId!;
+    const records = JSON.parse(
+      readFileSync(path.join(daemon.paseoHome, "projects", "workspaces.json"), "utf8"),
+    );
+    expect(records.filter((record: { cwd: string }) => record.cwd === worktreePath)).toHaveLength(
+      1,
+    );
+    expect(
+      records.find((record: { workspaceId: string }) => record.workspaceId === workspaceId),
+    ).toMatchObject({ kind: "worktree", isPaseoOwnedWorktree: false, projectId });
+    expect(existsSync(path.join(worktreePath, "setup-must-not-run"))).toBe(false);
+    expect((await client.archiveWorkspace(workspaceId)).error).toBeNull();
+    expect(readFileSync(path.join(worktreePath, "keep.txt"), "utf8")).toBe("local changes");
+    expect(existsSync(path.join(worktreePath, "teardown-must-not-run"))).toBe(false);
+    expect(
+      (await client.listProjectWorktrees(projectId)).worktrees.find(
+        (row) => row.path === worktreePath,
+      ),
+    ).toMatchObject({ workspaceId, archived: true });
+    expect(await client.importProjectWorktree(projectId, worktreePath)).toMatchObject({
+      workspaceId,
+      error: null,
+    });
+    expect(
+      (await client.listProjectWorktrees(projectId)).worktrees.find(
+        (row) => row.path === worktreePath,
+      ),
+    ).toMatchObject({ workspaceId, archived: false });
+    expect(existsSync(path.join(worktreePath, "setup-must-not-run"))).toBe(false);
+    expect((await client.importProjectWorktree(projectId, detachedPath)).error).toBeNull();
+    rmSync(detachedPath, { recursive: true });
+    expect(
+      (await client.listProjectWorktrees(projectId)).worktrees.find(
+        (row) => row.path === detachedPath,
+      )?.unavailable,
+    ).toBe(true);
+    expect((await client.importProjectWorktree(projectId, detachedPath)).error).toBeTruthy();
+    mkdirSync(detachedPath);
+    execFileSync("git", ["init", "-b", "main", detachedPath], { stdio: "pipe" });
+    expect((await client.importProjectWorktree(projectId, detachedPath)).error).toBeTruthy();
+  } finally {
+    await client.close().catch(() => undefined);
+    await daemon.close();
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+}, 180000);
 
 // The reshaped workspace.create.request forwards its worktree `source`
 // (action/refName/branchName/githubPrNumber/worktreeSlug) into createWorktreeCore.

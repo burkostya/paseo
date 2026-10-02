@@ -2,6 +2,19 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ar: TranslationResources = {
+  worktreeImport: {
+    title: "إضافة أشجار عمل موجودة…",
+    chooseHost: "اختر مضيفًا",
+    updateHost: "حدّث المضيف لاستيراد أشجار العمل.",
+    preserveFiles: "تبقى أشجار العمل الخارجية على القرص عند أرشفة مساحات عملها.",
+    refresh: "تحديث",
+    empty: "لم يتم العثور على أشجار عمل مرتبطة.",
+    detached: "HEAD منفصل · {{commit}}",
+    unavailable: "غير متاح على القرص",
+    restore: "مؤرشف · حدد للاستعادة",
+    open: "فتح",
+    add: "إضافة المحدد ({{count}})",
+  },
   diffComparison: en.diffComparison,
   paneFind: {
     connectionFailure: "تعذر البحث في هذه المحادثة. تحقق من الاتصال بالمضيف وأعد المحاولة.",

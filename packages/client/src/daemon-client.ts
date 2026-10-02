@@ -4569,6 +4569,20 @@ export class DaemonClient {
     });
   }
 
+  async listProjectWorktrees(projectId: string) {
+    return this.sendCorrelatedSessionRequest({
+      message: { type: "project.worktree.list.request", projectId },
+      responseType: "project.worktree.list.response",
+    });
+  }
+
+  async importProjectWorktree(projectId: string, path: string) {
+    return this.sendCorrelatedSessionRequest({
+      message: { type: "project.worktree.import.request", projectId, path },
+      responseType: "project.worktree.import.response",
+    });
+  }
+
   async getPaseoWorktreeList(
     input: { cwd?: string; repoRoot?: string },
     requestId?: string,

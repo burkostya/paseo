@@ -1,4 +1,17 @@
 export const en = {
+  worktreeImport: {
+    title: "Add existing worktrees…",
+    chooseHost: "Choose a host",
+    updateHost: "Update the host to import worktrees.",
+    preserveFiles: "External worktrees stay on disk when you archive their workspaces.",
+    refresh: "Refresh",
+    empty: "No linked worktrees found.",
+    detached: "Detached HEAD · {{commit}}",
+    unavailable: "Unavailable on disk",
+    restore: "Archived · select to restore",
+    open: "Open",
+    add: "Add selected ({{count}})",
+  },
   diffComparison: {
     title: "Compare changes",
     uncommitted: "Uncommitted changes",
