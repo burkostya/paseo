@@ -21,6 +21,23 @@ import { expectWorkspaceAgentConfiguration } from "../support/helpers/command-ce
 import { expectComposerVisible } from "../support/helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 
+// This picker contract uses the mock catalog, independent of installed provider binaries.
+test.use({
+  e2eDaemonConfig: {
+    version: 1,
+    agents: {
+      providers: {
+        claude: { enabled: false },
+        codex: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+        omp: { enabled: false },
+      },
+    },
+  },
+});
+
 const PROFILE = {
   id: "agent_profile_e2e_ui_work",
   name: "UI work",
@@ -89,7 +106,7 @@ test.describe("Agent profiles in the model picker", () => {
 
       await test.step("applying it writes its model and mode into the composer", async () => {
         await applyProfileFromPicker(page, PROFILE.name);
-        await expectComposerModel(page, "One minute stream");
+        await expectComposerModel(page, `${PROFILE.name} · One minute stream`);
         await expectComposerMode(page, "Approval test");
         await expectWorkspaceAgentConfiguration(workspace, {
           id: workspace.agentId,

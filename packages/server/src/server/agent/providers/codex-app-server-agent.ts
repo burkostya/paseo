@@ -3919,6 +3919,28 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.emitEvent({ type: "permission_requested", provider: CODEX_PROVIDER, request });
   }
 
+  private dismissSupersededPlanApprovals(): void {
+    for (const [requestId, pending] of this.pendingPermissionHandlers) {
+      if (pending.kind !== "plan") {
+        continue;
+      }
+      const pendingRequest = this.pendingPermissions.get(requestId) ?? null;
+      if (pendingRequest?.metadata?.source !== "codex_plan_approval") {
+        continue;
+      }
+      this.handlePlanPermissionResponse({
+        requestId,
+        response: {
+          behavior: "deny",
+          selectedActionId: "superseded",
+          message: "Superseded by a later prompt.",
+        },
+        pending,
+        pendingRequest,
+      });
+    }
+  }
+
   /**
    * Prepare the session for plan implementation by disabling plan mode
    * and returning the implementation prompt. The caller is responsible for
@@ -4354,7 +4376,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     };
     this.pendingForegroundStart = pendingStart;
 
-    this.dismissPendingPlanApprovals("Dismissed by a new prompt");
+    this.dismissSupersededPlanApprovals();
 
     try {
       await this.connect();
