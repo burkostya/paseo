@@ -1,3 +1,4 @@
+import { ComparisonMenuTrigger, useComparisonMenuPages } from "@/git/comparison/menu";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   View,
@@ -526,6 +527,14 @@ function ProjectKebabMenu({
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
   const { t } = useTranslation();
+  const comparisonPages = useComparisonMenuPages(
+    settingsTarget
+      ? {
+          serverId: settingsTarget.serverId,
+          target: { kind: "project", projectId: settingsTarget.projectId },
+        }
+      : null,
+  );
   return (
     <DropdownMenu compactMode="sheet">
       <DropdownMenuTrigger
@@ -537,7 +546,12 @@ function ProjectKebabMenu({
       >
         {renderKebabTriggerIcon}
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" width={220} sheetTitle={t("sidebar.project.actions.menu")}>
+      <DropdownMenuContent
+        pages={comparisonPages}
+        align="end"
+        width={220}
+        sheetTitle={t("sidebar.project.actions.menu")}
+      >
         <ProjectMenuItems
           surface="dropdown"
           projectViewKey={projectViewKey}
@@ -601,6 +615,7 @@ function ProjectMenuItems({
 
   return (
     <>
+      {settingsTarget ? <ComparisonMenuTrigger /> : null}
       {settingsTarget ? (
         <ProjectMenuItem
           surface={surface}
@@ -927,6 +942,14 @@ function ProjectHeaderRow({
   const localDaemonServerId = useLocalDaemonServerId();
   const projectPath = resolveSidebarProjectLocalPath(project, localDaemonServerId);
   const settingsTarget = project.hosts[0] ?? null;
+  const comparisonPages = useComparisonMenuPages(
+    settingsTarget
+      ? {
+          serverId: settingsTarget.serverId,
+          target: { kind: "project", projectId: settingsTarget.projectId },
+        }
+      : null,
+  );
   const handleBeginWorkspaceSetup = useCallback(() => {
     if (!worktreeTarget) {
       return;
@@ -1084,6 +1107,7 @@ function ProjectHeaderRow({
         align="start"
         width={220}
         testID={`sidebar-project-context-menu-${project.viewKey}`}
+        pages={comparisonPages}
       >
         <ProjectMenuItems
           surface="context"

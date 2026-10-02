@@ -54,6 +54,8 @@ export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   currentBranch: string | null;
   archivingAt: string | null;
   diffStat: { additions: number; deletions: number } | null;
+  diffComparison?: WorkspaceDescriptor["diffComparison"];
+  diffComparisonError?: string | null;
   prHint: PrHint | null;
   archiveHasUncommittedChanges: boolean | null;
   archiveUnpushedCommitCount: number | null;
@@ -177,7 +179,9 @@ export function createSidebarWorkspaceEntry(input: {
     statusBucket: effectiveStatus.status,
     statusEnteredAt: effectiveStatus.enteredAt,
     archivingAt: input.workspace.archivingAt,
-    diffStat: input.workspace.diffStat,
+    diffStat: visibleDiffStat(input.workspace.diffStat),
+    diffComparison: input.workspace.diffComparison,
+    diffComparisonError: input.workspace.diffComparisonError,
     prHint: selectPrHintFromStatus(
       input.workspace.githubRuntime?.pullRequest,
       input.workspace.forge,
@@ -618,4 +622,8 @@ export function deriveSidebarLoadingState(input: {
   const isLoading = input.isActive && hasRegisteredHosts && !allHydrated;
   const isInitialLoad = isLoading && !input.hasProjects;
   return { isLoading, isInitialLoad, isRevalidating: false };
+}
+
+function visibleDiffStat(stat: WorkspaceDescriptor["diffStat"]): WorkspaceDescriptor["diffStat"] {
+  return stat && (stat.additions > 0 || stat.deletions > 0) ? stat : null;
 }

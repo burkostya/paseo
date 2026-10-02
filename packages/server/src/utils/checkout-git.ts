@@ -311,6 +311,23 @@ function sortBranchSuggestions(
   });
 }
 
+export async function listComparisonBranches(
+  cwd: string,
+  query = "",
+  limit = 200,
+): Promise<string[]> {
+  await requireGitRepo(cwd);
+  const { stdout } = await runGitCommand(
+    ["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"],
+    { cwd, envOverlay: READ_ONLY_GIT_ENV },
+  );
+  const search = query.trim().toLowerCase();
+  return stdout
+    .split("\n")
+    .filter((ref) => ref && !ref.endsWith("/HEAD") && ref.toLowerCase().includes(search))
+    .slice(0, limit);
+}
+
 export async function listBranchSuggestions(
   cwd: string,
   options?: { query?: string; limit?: number },
@@ -656,7 +673,7 @@ const EMPTY_TREE_OBJECT_ID = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 function isUnbornHeadDiffError(error: unknown): boolean {
   return (
     error instanceof Error &&
-    error.message.includes("--name-status HEAD") &&
+    (error.message.includes("--name-status HEAD") || error.message.includes("--shortstat HEAD")) &&
     error.message.includes("ambiguous argument 'HEAD'")
   );
 }
@@ -911,6 +928,7 @@ export type CheckoutDiffResult =
   | { diff: ""; structured: []; diffTooLarge: true };
 
 export interface CheckoutDiffCompare {
+  includeWorkingTree?: boolean;
   mode: "uncommitted" | "base" | "all";
   baseRef?: string;
   ignoreWhitespace?: boolean;
@@ -3473,6 +3491,14 @@ async function resolveCheckoutDiffRefs(
   if (compare.mode === "uncommitted") {
     return { baseRef: "HEAD", includeUntracked: true };
   }
+  if (compare.includeWorkingTree) {
+    if (!compare.baseRef) throw new Error("A comparison branch is required");
+    const { stdout } = await getRunGitCommand(context)(["merge-base", "HEAD", compare.baseRef], {
+      cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+    });
+    return { baseRef: stdout.trim(), includeUntracked: true };
+  }
   const { resolvedBaseRef } = await resolveBaseRefForCwd(cwd, context);
   const baseRef = compare.baseRef ?? resolvedBaseRef;
   if (!baseRef) {
@@ -3486,51 +3512,11 @@ async function resolveCheckoutDiffRefs(
   };
 }
 
-// Git's working-tree diff ignores files absent from the index, even when they
-// exist in the comparison tree. Restore those entries only in a private index.
-async function prepareAllChangesIndex(cwd: string, baseRef: string) {
-  const untracked = await runGitCommand(["ls-files", "-z", "--others", "--exclude-standard"], {
-    cwd,
-    envOverlay: READ_ONLY_GIT_ENV,
-  });
-  const paths = untracked.stdout.split("\0").filter(Boolean);
-  if (paths.length === 0) return null;
-  let entries = "";
-  for (let start = 0; start < paths.length; start += TRACKED_DIFF_BATCH_SIZE) {
-    const result = await runGitCommand(
-      [
-        "ls-tree",
-        "-r",
-        "-z",
-        baseRef,
-        "--",
-        ...paths.slice(start, start + TRACKED_DIFF_BATCH_SIZE).map((path) => `:(literal)${path}`),
-      ],
-      { cwd, envOverlay: READ_ONLY_GIT_ENV },
-    );
-    entries += result.stdout;
-  }
-  if (!entries) return null;
-  const directory = await mkdtemp(resolve(tmpdir(), "paseo-all-changes-"));
-  const indexFile = resolve(directory, "index");
-  try {
-    const index = await runGitCommand(["rev-parse", "--git-path", "index"], {
-      cwd,
-      envOverlay: READ_ONLY_GIT_ENV,
-    });
-    const indexPath = resolveGitRevParsePath(cwd, index.stdout);
-    if (!indexPath) throw new Error("Git did not return an index path");
-    await copyFile(indexPath, indexFile);
-    await runGitCommand(["update-index", "-z", "--index-info"], {
-      cwd,
-      input: entries,
-      envOverlay: { ...READ_ONLY_GIT_ENV, GIT_INDEX_FILE: indexFile },
-    });
-    return { indexFile, cleanup: () => rm(directory, { recursive: true, force: true }) };
-  } catch (error) {
-    await rm(directory, { recursive: true, force: true });
-    throw error;
-  }
+  mode: "uncommitted" | "base" | "all";
+}
+
+  includeWorkingTree?: boolean;
+  mode: "uncommitted" | "base";
 }
 
 export async function getCheckoutDiff(

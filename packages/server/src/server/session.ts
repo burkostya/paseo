@@ -3,6 +3,7 @@ import type { AgentMessageDelivery } from "./agent/agent-messages/index.js";
 import { AgentDirectory } from "./agent/directory.js";
 import { ConnectedHostSession } from "./connected-hosts/index.js";
 import type { ConnectedHosts } from "./connected-hosts/index.js";
+import { describeWorkspaceComparison } from "./git-comparison/snapshot.js";
 import { searchTimeline } from "./agent/chat-search/index.js";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { BrowserAutomationHostCapabilitySchema } from "@getpaseo/protocol/browser-automation/capabilities";
@@ -2969,6 +2970,7 @@ export class Session {
 
   // eslint-disable-next-line complexity
   private dispatchCheckoutMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    if (msg.type === "git.comparison.set.request") return this.handleDiffComparisonSetRequest(msg);
     switch (msg.type) {
       case "checkout_status_request":
         return this.checkoutSession.handleStatusRequest(msg);
@@ -3612,6 +3614,53 @@ export class Session {
           agentId,
           accepted: false,
           error: getErrorMessageOr(error, "Failed to update agent"),
+        },
+      });
+    }
+  }
+
+  private async handleDiffComparisonSetRequest(
+    request: Extract<SessionInboundMessage, { type: "git.comparison.set.request" }>,
+  ): Promise<void> {
+    try {
+      const comparison = request.comparison ?? undefined;
+      if (
+        comparison?.mode === "base" &&
+        (!comparison.baseRef.trim() || comparison.baseRef.startsWith("-"))
+      ) {
+        throw new SessionRequestError("invalid_comparison_branch", "Invalid comparison branch");
+      }
+      const updatedAt = new Date().toISOString();
+      if (request.target.kind === "project") {
+        const updated = await this.projectRegistry.update(request.target.projectId, (record) => ({
+          ...record,
+          diffComparison: comparison,
+          updatedAt,
+        }));
+        if (!updated) throw new SessionRequestError("project_not_found", "Project not found");
+        await this.emitProjectUpdate({ kind: "upsert", project: updated });
+      } else {
+        const updated = await this.workspaceRegistry.update(
+          request.target.workspaceId,
+          (record) => ({
+            ...record,
+            diffComparison: comparison,
+            updatedAt,
+          }),
+        );
+        if (!updated) throw new SessionRequestError("workspace_not_found", "Workspace not found");
+      }
+      this.emit({
+        type: "git.comparison.set.response",
+        payload: { requestId: request.requestId, accepted: true, error: null },
+      });
+    } catch (error) {
+      this.emit({
+        type: "git.comparison.set.response",
+        payload: {
+          requestId: request.requestId,
+          accepted: false,
+          error: getErrorMessageOr(error, "Failed to save comparison"),
         },
       });
     }
@@ -6070,6 +6119,13 @@ export class Session {
     }
   }
 
+  private readonly onComparisonReady = (cwd: string): void => {
+    if (this.isCleanedUp) return;
+    void this.emitWorkspaceUpdateForCwd(cwd).catch((error) => {
+      this.sessionLogger.warn({ err: error, cwd }, "Failed to publish comparison");
+    });
+  };
+
   private async describeWorkspaceRecord(
     workspace: PersistedWorkspaceRecord,
     projectRecord?: PersistedProjectRecord | null,
@@ -6077,11 +6133,13 @@ export class Session {
     const resolvedProjectRecord =
       projectRecord ?? (await this.projectRegistry.get(workspace.projectId));
 
-    let diffStat: { additions: number; deletions: number } | null = null;
-    const snapshot = this.workspaceRuntimeStore.get(workspace.cwd);
-    if (snapshot?.git.diffStat) {
-      diffStat = snapshot.git.diffStat;
-    }
+    const comparison = describeWorkspaceComparison({
+      workspace,
+      project: resolvedProjectRecord,
+      snapshot: this.workspaceRuntimeStore.get(workspace.cwd),
+      owner: this,
+      onReady: this.onComparisonReady,
+    });
 
     const worktreeSlug =
       workspace.isPaseoOwnedWorktree && workspace.worktreeRoot
@@ -6113,7 +6171,7 @@ export class Session {
       statusEnteredAt: null,
       activityAt: null,
       createdAt: workspace.createdAt,
-      diffStat,
+      ...comparison,
       scripts: this.buildWorkspaceScriptPayloadSnapshot(workspace, resolvedProjectRecord),
       ...(resolvedProjectRecord
         ? {
@@ -6167,7 +6225,6 @@ export class Session {
     return {
       ...base,
       name: resolveWorkspaceName({ title: workspace.title, derivedDisplayName: displayName }),
-      diffStat: snapshot.git.diffStat ?? null,
       gitRuntime: this.buildWorkspaceGitRuntimePayload(snapshot) ?? undefined,
       githubRuntime: this.buildWorkspaceGitHubRuntimePayload(snapshot),
       // Reuse the forge already resolved on the snapshot (probe-aware; GitHub-only
@@ -6181,7 +6238,12 @@ export class Session {
     result: CreatePaseoWorktreeResult,
   ): Promise<WorkspaceDescriptorPayload> {
     const projectRecord = await this.projectRegistry.get(result.workspace.projectId);
+    const comparisonDescriptor = await this.describeWorkspaceRecord(
+      result.workspace,
+      projectRecord,
+    );
     return {
+      ...comparisonDescriptor,
       id: result.workspace.workspaceId,
       projectId: result.workspace.projectId,
       projectDisplayName: projectRecord
@@ -6212,7 +6274,7 @@ export class Session {
       activityAt: null,
       createdAt: result.workspace.createdAt,
       lastUserMessageAt: null,
-      diffStat: { additions: 0, deletions: 0 },
+      diffStat: comparisonDescriptor.diffStat,
       scripts: [],
       gitRuntime: {
         currentBranch: result.worktree.branchName || null,
@@ -6377,6 +6439,7 @@ export class Session {
       ...(project.projectKey ? { projectKey: project.projectKey } : {}),
       projectDisplayName: resolveProjectDisplayName(project),
       projectCustomName: project.customName ?? null,
+      diffComparison: project.diffComparison,
       projectCustomIconRevision: project.customIconRevision ?? null,
       projectIconRevision: icon.revision,
       projectRootPath: project.rootPath,

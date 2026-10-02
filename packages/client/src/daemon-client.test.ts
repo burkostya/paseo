@@ -4395,7 +4395,10 @@ test("logs configured runtime generation in connection transition events", async
   }
 });
 
-test("subscribes to checkout diff updates via RPC handshake", async () => {
+test.each([
+  { mode: "uncommitted" as const },
+  { mode: "base" as const, baseRef: "refs/heads/main", includeWorkingTree: true },
+])("subscribes to checkout diff updates via RPC handshake: $mode", async (compare) => {
   const logger = createMockLogger();
   const mock = createMockTransport();
 
@@ -4412,7 +4415,7 @@ test("subscribes to checkout diff updates via RPC handshake", async () => {
   mock.triggerOpen();
   await connectPromise;
 
-  const subscription = client.observeCheckoutDiff("/tmp/project", { mode: "uncommitted" });
+  const subscription = client.observeCheckoutDiff("/tmp/project", compare);
   const promise = subscription.ready;
   await vi.waitFor(() => expect(mock.sent).toHaveLength(1));
 
@@ -4421,7 +4424,7 @@ test("subscribes to checkout diff updates via RPC handshake", async () => {
   expect(request.type).toBe("subscribe_checkout_diff_request");
   expect(request.subscriptionId).toBeUndefined();
   expect(request.cwd).toBe("/tmp/project");
-  expect(request.compare).toEqual({ mode: "uncommitted" });
+  expect(request.compare).toEqual(compare);
 
   mock.triggerMessage(
     JSON.stringify({
@@ -4465,7 +4468,11 @@ test("getCheckoutDiff reads a snapshot without creating a subscription", async (
   mock.triggerOpen();
   await connectPromise;
 
-  const promise = client.getCheckoutDiff("/tmp/project", { mode: "base", baseRef: "main" });
+  const promise = client.getCheckoutDiff("/tmp/project", {
+    mode: "base",
+    baseRef: "main",
+    includeWorkingTree: true,
+  });
 
   expect(mock.sent).toHaveLength(1);
   const subscribeRequest = parseSentFrame(mock.sent[0]);
@@ -4474,6 +4481,7 @@ test("getCheckoutDiff reads a snapshot without creating a subscription", async (
   expect(subscribeRequest.compare).toEqual({
     mode: "base",
     baseRef: "main",
+    includeWorkingTree: true,
   });
 
   mock.triggerMessage(

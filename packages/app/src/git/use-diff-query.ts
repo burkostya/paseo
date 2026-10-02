@@ -14,6 +14,7 @@ interface UseCheckoutDiffQueryOptions {
   mode: "uncommitted" | "base" | "all";
   baseRef?: string;
   ignoreWhitespace?: boolean;
+  includeWorkingTree?: boolean;
   enabled?: boolean;
   queryScope?: string;
 }
@@ -30,15 +31,17 @@ function normalizeCheckoutDiffCompare(compare: {
   mode: "uncommitted" | "base" | "all";
   baseRef?: string;
   ignoreWhitespace?: boolean;
-}): { mode: "uncommitted" | "base" | "all"; baseRef?: string; ignoreWhitespace?: boolean } {
+  includeWorkingTree?: boolean;
+}): { mode: "uncommitted" | "base" | "all"; baseRef?: string; ignoreWhitespace?: boolean; includeWorkingTree?: boolean } {
   const ignoreWhitespace = compare.ignoreWhitespace === true;
+  const includeWorkingTree = compare.includeWorkingTree === true;
   if (compare.mode === "uncommitted") {
     return { mode: "uncommitted", ignoreWhitespace };
   }
   const trimmedBaseRef = compare.baseRef?.trim();
   return trimmedBaseRef
-    ? { mode: compare.mode, baseRef: trimmedBaseRef, ignoreWhitespace }
-    : { mode: compare.mode, ignoreWhitespace };
+    ? { mode: compare.mode, baseRef: trimmedBaseRef, ignoreWhitespace, includeWorkingTree }
+    : { mode: compare.mode, ignoreWhitespace, includeWorkingTree };
 }
 
 export function useCheckoutDiffQuery({
@@ -47,6 +50,7 @@ export function useCheckoutDiffQuery({
   mode,
   baseRef,
   ignoreWhitespace,
+  includeWorkingTree,
   enabled = true,
   queryScope,
 }: UseCheckoutDiffQueryOptions) {
@@ -59,8 +63,8 @@ export function useCheckoutDiffQuery({
   const queryEnabled = enabled && retainedPanelActive;
   const isConnected = useHostRuntimeIsConnected(serverId);
   const normalizedCompare = useMemo(
-    () => normalizeCheckoutDiffCompare({ mode, baseRef, ignoreWhitespace }),
-    [mode, baseRef, ignoreWhitespace],
+    () => normalizeCheckoutDiffCompare({ mode, baseRef, ignoreWhitespace, includeWorkingTree }),
+    [mode, baseRef, ignoreWhitespace, includeWorkingTree],
   );
   const compareMode = normalizedCompare.mode;
   const compareBaseRef = normalizedCompare.baseRef;
@@ -72,10 +76,19 @@ export function useCheckoutDiffQuery({
       compareMode,
       compareBaseRef,
       compareIgnoreWhitespace,
+      includeWorkingTree,
     );
     const normalizedScope = queryScope?.trim();
     return normalizedScope ? [...comparisonKey, "scope", normalizedScope] : comparisonKey;
-  }, [serverId, cwd, compareMode, compareBaseRef, compareIgnoreWhitespace, queryScope]);
+  }, [
+    serverId,
+    cwd,
+    compareMode,
+    compareBaseRef,
+    compareIgnoreWhitespace,
+    includeWorkingTree,
+    queryScope,
+  ]);
   const subscriptionId = useMemo(() => `checkoutDiff:${JSON.stringify(queryKey)}`, [queryKey]);
   const routeEnabled = Boolean(queryEnabled && isConnected && cwd && !requiresUpdate);
 
@@ -93,6 +106,7 @@ export function useCheckoutDiffQuery({
         mode: compareMode,
         ...(compareBaseRef ? { baseRef: compareBaseRef } : {}),
         ignoreWhitespace: compareIgnoreWhitespace,
+        includeWorkingTree,
       },
     }),
   });

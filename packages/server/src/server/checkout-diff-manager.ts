@@ -153,13 +153,14 @@ export class CheckoutDiffManager {
 
   private normalizeCompare(compare: CheckoutDiffCompareInput): CheckoutDiffCompareInput {
     const ignoreWhitespace = compare.ignoreWhitespace === true;
+    const includeWorkingTree = compare.includeWorkingTree === true;
     if (compare.mode === "uncommitted") {
       return { mode: "uncommitted", ignoreWhitespace };
     }
     const trimmedBaseRef = compare.baseRef?.trim();
     return trimmedBaseRef
-      ? { mode: compare.mode, baseRef: trimmedBaseRef, ignoreWhitespace }
-      : { mode: compare.mode, ignoreWhitespace };
+      ? { mode: compare.mode, baseRef: trimmedBaseRef, ignoreWhitespace, includeWorkingTree }
+      : { mode: compare.mode, ignoreWhitespace, includeWorkingTree };
   }
 
   private buildTargetKey(cwd: string, compare: CheckoutDiffCompareInput): string {
@@ -168,6 +169,7 @@ export class CheckoutDiffManager {
       compare.mode,
       compare.mode !== "uncommitted" ? (compare.baseRef ?? "") : "",
       compare.ignoreWhitespace === true,
+      compare.includeWorkingTree === true,
     ]);
   }
 
@@ -263,6 +265,7 @@ export class CheckoutDiffManager {
           mode: compare.mode,
           baseRef: compare.baseRef,
           ignoreWhitespace: compare.ignoreWhitespace,
+          includeWorkingTree: compare.includeWorkingTree,
           includeStructured: true,
         },
         options?.force
@@ -382,7 +385,7 @@ export class CheckoutDiffManager {
         return;
       }
       target.workspaceGitUnsubscribe = workspaceSubscription.unsubscribe;
-      if (target.compare.mode === "base") return;
+      if (target.compare.mode === "base" && !target.compare.includeWorkingTree) return;
     }
 
     const { repoRoot, unsubscribe } = await this.workspaceGitService.requestWorkingTreeWatch(
