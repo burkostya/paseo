@@ -1,4 +1,18 @@
 export const en = {
+  diffComparison: {
+    title: "Compare changes",
+    uncommitted: "Uncommitted changes",
+    branch: "Against {{branch}}",
+    inherit: "Use project setting",
+    chooseBranch: "Against branch…",
+    search: "Search branches",
+    saving: "Saving…",
+    saved: "Saved",
+    retry: "Retry",
+    updateHost: "Update the host to choose a comparison.",
+    unavailable: "Comparison unavailable",
+  },
+
   paneFind: {
     connectionFailure: "Could not search this chat. Check the host connection and retry.",
     historyChangedFailure: "The chat changed while searching. Search again.",

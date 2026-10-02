@@ -38,6 +38,7 @@ export class CheckoutDiffCache {
       compare.mode === "base" ? (compare.baseRef ?? null) : null,
       compare.ignoreWhitespace === true,
       compare.includeStructured === true,
+      compare.includeWorkingTree === true,
     ]);
     const cached = this.values.get(key);
     const now = this.now();
@@ -82,8 +83,9 @@ export class CheckoutDiffCache {
 
   invalidate(cwd: string, mode: CheckoutDiffCompare["mode"]): void {
     for (const key of new Set([...this.values.keys(), ...this.active.keys()])) {
-      const [cachedCwd, cachedMode] = JSON.parse(key) as string[];
-      if (cachedCwd !== cwd || cachedMode !== mode) continue;
+      const [cachedCwd, cachedMode, , , , includeWorkingTree]: unknown[] = JSON.parse(key);
+      const workingBaseInvalidated = mode === "uncommitted" && includeWorkingTree === true;
+      if (cachedCwd !== cwd || (cachedMode !== mode && !workingBaseInvalidated)) continue;
       this.values.delete(key);
       const pending = this.active.get(key);
       if (pending) pending.invalidated = true;

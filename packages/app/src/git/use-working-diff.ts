@@ -1,3 +1,4 @@
+import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useCallback, useEffect, useMemo } from "react";
 import {
   buildWorkspaceAttachmentScopeKey,
@@ -23,6 +24,7 @@ interface UseWorkingDiffOptions {
   queryScope?: string;
 }
 
+// COMPAT(workspaceDiffComparison): added in v0.11.0, remove after 2027-04-02 when the host floor supports shared comparisons.
 function useDiffBaseSelection(input: {
   serverId: string;
   workspaceId?: string;
@@ -60,6 +62,62 @@ function useDiffBaseSelection(input: {
   };
 }
 
+function useComparisonSelection({
+  serverId,
+  workspaceId,
+  cwd,
+  baseRef,
+  isDirty,
+}: {
+  serverId: string;
+  workspaceId?: string;
+  cwd: string;
+  baseRef?: string;
+  isDirty: boolean;
+}) {
+  const {
+    canSelectBase,
+    effectiveBaseRef: legacyBaseRef,
+    selectedBaseRef,
+    selectBaseRef,
+  } = useDiffBaseSelection({
+    serverId,
+    workspaceId,
+    cwd,
+    defaultBaseRef: baseRef,
+  });
+
+  const { comparison: legacyMode, selectComparison } = useWorkingDiffComparison({
+    serverId,
+    workspaceId,
+    cwd,
+    isDirty,
+  });
+  const unifiedComparison =
+    useHostFeature(serverId, "workspaceDiffComparison") && Boolean(workspaceId);
+  const hostComparison = useWorkspaceFields(
+    serverId,
+    workspaceId ?? null,
+    (workspace) => workspace.diffComparison,
+  );
+  const diffMode = unifiedComparison ? (hostComparison?.mode ?? "uncommitted") : legacyMode;
+  const hostBaseRef = hostComparison?.mode === "base" ? hostComparison.baseRef : undefined;
+  const effectiveBaseRef = unifiedComparison ? hostBaseRef : legacyBaseRef;
+  const selectUncommitted = useCallback(() => selectComparison("uncommitted"), [selectComparison]);
+  const selectBase = useCallback(() => selectComparison("base"), [selectComparison]);
+  return {
+    canSelectBase,
+    effectiveBaseRef,
+    selectedBaseRef,
+    selectBaseRef,
+    diffMode,
+    unifiedComparison,
+    hostComparison,
+    selectUncommitted,
+    selectBase,
+  };
+}
+
 export function useWorkingDiff({
   serverId,
   workspaceId,
@@ -84,21 +142,23 @@ export function useWorkingDiff({
   const hasUncommittedChanges = Boolean(gitStatus?.isDirty);
   const currentBranchName =
     gitStatus?.currentBranch && gitStatus.currentBranch !== "HEAD" ? gitStatus.currentBranch : null;
-  const { canSelectBase, effectiveBaseRef, selectedBaseRef, selectBaseRef } = useDiffBaseSelection({
+  const {
+    canSelectBase,
+    effectiveBaseRef,
+    selectedBaseRef,
+    selectBaseRef,
+    diffMode,
+    unifiedComparison,
+    hostComparison,
+    selectUncommitted,
+    selectBase,
+  } = useComparisonSelection({
     serverId,
     workspaceId,
     cwd,
-    defaultBaseRef: baseRef,
-  });
-
-  const { comparison: diffMode, selectComparison } = useWorkingDiffComparison({
-    serverId,
-    workspaceId,
-    cwd,
+    baseRef,
     isDirty: hasUncommittedChanges,
   });
-  const selectUncommitted = useCallback(() => selectComparison("uncommitted"), [selectComparison]);
-  const selectBase = useCallback(() => selectComparison("base"), [selectComparison]);
   const reviewBaseRef = diffMode === "base" ? effectiveBaseRef : baseRef;
 
   const {
@@ -112,7 +172,8 @@ export function useWorkingDiff({
     mode: diffMode,
     baseRef: reviewBaseRef,
     ignoreWhitespace,
-    enabled: enabled && isGit,
+    enabled: enabled && isGit && (!unifiedComparison || Boolean(hostComparison)),
+    includeWorkingTree: unifiedComparison,
     queryScope,
   });
   const reviewDraftKey = useMemo(
@@ -145,6 +206,7 @@ export function useWorkingDiff({
     baseRef,
     effectiveBaseRef,
     canSelectBase,
+    unifiedComparison,
     selectedBaseRef,
     selectBaseRef,
     currentBranchName,

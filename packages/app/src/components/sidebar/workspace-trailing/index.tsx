@@ -1,4 +1,12 @@
-import { Text } from "react-native";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { comparisonLabel } from "@/git/comparison/label";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { openWorkspaceChanges } from "@/workspace-tabs/open-supporting-view";
+import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
+import { useSettings } from "@/hooks/use-settings";
+import { useCallback } from "react";
+import { useTranslation } from "react-i18next";
+import { Pressable, Text } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { DiffStat } from "@/components/diff-stat";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
@@ -31,7 +39,8 @@ export function hasSidebarWorkspaceTrailing({
   workspace: SidebarWorkspaceEntry;
   trailing: SidebarWorkspaceTrailing;
 }): boolean {
-  if (trailing === "diff") return workspace.diffStat !== null;
+  if (trailing === "diff")
+    return workspace.diffStat !== null || Boolean(workspace.diffComparisonError);
   if (trailing === "timestamp") return workspace.statusEnteredAt !== null;
   return false;
 }
@@ -43,15 +52,59 @@ export function SidebarWorkspaceTrailingContent({
   workspace: SidebarWorkspaceEntry;
   trailing: SidebarWorkspaceTrailing;
 }) {
-  if (trailing === "diff" && workspace.diffStat) {
-    return (
-      <DiffStat additions={workspace.diffStat.additions} deletions={workspace.diffStat.deletions} />
-    );
+  if (trailing === "diff" && (workspace.diffStat || workspace.diffComparisonError)) {
+    return <WorkspaceComparisonStat workspace={workspace} />;
   }
   if (trailing === "timestamp" && workspace.statusEnteredAt) {
     return <WorkspaceTimestamp enteredAt={workspace.statusEnteredAt} />;
   }
   return null;
+}
+
+function WorkspaceComparisonStat({ workspace }: { workspace: SidebarWorkspaceEntry }) {
+  const { t } = useTranslation();
+  const isCompact = useIsCompactFormFactor();
+  const preferences = useSettings((settings) => settings.openInSidePane);
+  const open = useCallback(
+    (event: import("react-native").GestureResponderEvent) => {
+      event.stopPropagation();
+      navigateToWorkspace({ serverId: workspace.serverId, workspaceId: workspace.workspaceId });
+      openWorkspaceChanges({
+        isCompact,
+        workspaceKey: workspace.workspaceKey,
+        checkout: { serverId: workspace.serverId, cwd: workspace.workspaceDirectory, isGit: true },
+        preferences,
+      });
+    },
+    [isCompact, preferences, workspace],
+  );
+  const label = comparisonLabel(workspace.diffComparison, t);
+  const description = workspace.diffComparisonError
+    ? `${t("diffComparison.unavailable")}: ${label}`
+    : label;
+  return (
+    <Tooltip enabledOnDesktop enabledOnMobile={false}>
+      <TooltipTrigger asChild>
+        <Pressable
+          onPress={open}
+          accessibilityRole="button"
+          accessibilityLabel={description}
+          testID={`workspace-comparison-stat-${workspace.workspaceId}`}
+        >
+          {workspace.diffComparisonError ? <Text style={styles.timestamp}>!</Text> : null}
+          {workspace.diffStat ? (
+            <DiffStat
+              additions={workspace.diffStat.additions}
+              deletions={workspace.diffStat.deletions}
+            />
+          ) : null}
+        </Pressable>
+      </TooltipTrigger>
+      <TooltipContent>
+        <Text style={styles.tooltip}>{description}</Text>
+      </TooltipContent>
+    </Tooltip>
+  );
 }
 
 /**
@@ -69,6 +122,7 @@ function WorkspaceTimestamp({ enteredAt }: { enteredAt: Date }) {
 }
 
 const styles = StyleSheet.create((theme) => ({
+  tooltip: { color: theme.colors.foreground, fontSize: theme.fontSize.sm },
   // A step below the project title it shares the row with. The timestamp is the one thing here
   // you never came looking for, so it sits at the bottom of the muted ramp rather than tying
   // with the label naming the group.

@@ -54,6 +54,25 @@ opening a file leaves that dock visible. Both presentations keep their selection
 and reuse the layout store's per-workspace Explorer width. They do not create a second Explorer
 lifecycle.
 
+## Changes comparison
+
+Choose **Compare changes** in the project menu to set its default. Workspace menus and Changes
+can override it or return to **Use project setting**. The sidebar and composer counters use the
+same comparison as Changes; opening a counter opens that comparison.
+
+Uncommitted changes is the default and includes staged, unstaged, and untracked files. Comparing
+against a branch includes commits and current working-tree changes since their merge base. Local
+and remote-tracking branches are separate choices. A commit never switches the selected mode.
+
+If a selected branch disappears or has no common ancestor, show comparison unavailable and let
+the user select another comparison. Do not substitute the repository default branch. While a new
+comparison is being calculated, hide the previous counters. Detailed diffs remain demand-driven;
+listing workspaces must not load their full patches.
+
+The setting is [persisted on the host](data-model.md#changes-comparison), including across archive
+and restore. Older hosts keep their existing Changes behavior and offer an update prompt for the
+shared setting. Device-local choices from those hosts are not promoted into shared preferences.
+
 ## Side pane
 
 `packages/app/src/workspace-tabs/open-beside.ts` owns content opened beside the user's work. The

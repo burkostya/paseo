@@ -1,3 +1,4 @@
+import { listComparisonBranches } from "../../../utils/checkout-git.js";
 import type pino from "pino";
 import type { SessionDelivery } from "../owned-subscriptions/index.js";
 import { isAbsolute } from "node:path";
@@ -380,6 +381,14 @@ export class CheckoutSession {
 
     try {
       const resolvedCwd = expandTilde(cwd);
+      if (msg.exactRefs) {
+        const branches = await listComparisonBranches(resolvedCwd, query, limit);
+        this.host.emit({
+          type: "branch_suggestions_response",
+          payload: { branches, error: null, requestId },
+        });
+        return;
+      }
       const branchDetails = await this.workspaceGitService.suggestBranchesForCwd(resolvedCwd, {
         query,
         limit,

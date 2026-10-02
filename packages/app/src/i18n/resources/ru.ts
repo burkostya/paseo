@@ -2,6 +2,19 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ru: TranslationResources = {
+  diffComparison: {
+    title: "Сравнение изменений",
+    uncommitted: "Незакоммиченные изменения",
+    branch: "Относительно {{branch}}",
+    inherit: "Как в проекте",
+    chooseBranch: "Относительно ветки…",
+    search: "Поиск веток",
+    saving: "Сохранение…",
+    saved: "Сохранено",
+    retry: "Повторить",
+    updateHost: "Обновите хост, чтобы выбрать сравнение.",
+    unavailable: "Сравнение недоступно",
+  },
   paneFind: {
     connectionFailure:
       "Не удалось выполнить поиск в чате. Проверьте подключение к хосту и повторите попытку.",

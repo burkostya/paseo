@@ -437,6 +437,32 @@ describe("CheckoutDiffManager", () => {
     expect(getCheckoutDiff).toHaveBeenCalledTimes(1);
   });
 
+  test("working branch diffs watch edits and retain their working-tree comparison", async () => {
+    const { manager, workspaceGitService, getOnChange } = createManager();
+    const subscription = await manager.subscribe(
+      {
+        cwd: "/tmp/repo",
+        compare: { mode: "base", baseRef: "refs/heads/main", includeWorkingTree: true },
+      },
+      () => {},
+    );
+    expect(workspaceGitService.registerWorkspace).toHaveBeenCalledTimes(1);
+    expect(workspaceGitService.requestWorkingTreeWatch).toHaveBeenCalledTimes(1);
+    expect(workspaceGitService.getCheckoutDiff).toHaveBeenCalledWith(
+      "/tmp/repo",
+      expect.objectContaining({
+        mode: "base",
+        baseRef: "refs/heads/main",
+        includeWorkingTree: true,
+      }),
+      undefined,
+    );
+    getOnChange()?.();
+    await vi.advanceTimersByTimeAsync(150);
+    expect(workspaceGitService.getCheckoutDiff).toHaveBeenCalledTimes(2);
+    subscription.unsubscribe();
+  });
+
   test("base diff subscriptions refresh for structural workspace changes", async () => {
     const getCheckoutDiff = vi.fn(async () => ({ diff: "", structured: [] }));
     const { manager, getOnWorkspaceSnapshot, workspaceGitService } = createManager({

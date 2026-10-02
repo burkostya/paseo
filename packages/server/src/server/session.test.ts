@@ -4123,7 +4123,7 @@ describe("session workspace descriptors", () => {
     });
   });
 
-  test("reads descriptor diff stat from the workspace git service snapshot", async () => {
+  test("does not reuse automatic base stats for the workspace comparison", async () => {
     const workspaceGitService = {
       getSnapshot: vi.fn(),
       peekSnapshot: vi.fn(() =>
@@ -4158,7 +4158,9 @@ describe("session workspace descriptors", () => {
     expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
     expect(checkoutGitMocks.getCachedCheckoutShortstat).not.toHaveBeenCalled();
     expect(checkoutGitMocks.warmCheckoutShortstatInBackground).not.toHaveBeenCalled();
-    expect(descriptor.diffStat).toEqual({ additions: 7, deletions: 2 });
+    expect(descriptor.diffStat).toBeNull();
+    expect(descriptor.diffComparison).toEqual({ mode: "uncommitted" });
+    expect(descriptor.diffComparisonOverride).toBeNull();
   });
 
   test("does not cold-load git data while describing a workspace", async () => {
