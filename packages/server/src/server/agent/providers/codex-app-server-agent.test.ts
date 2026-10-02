@@ -6715,6 +6715,18 @@ describe("Codex app-server provider", () => {
       ),
     );
     expect(isSystemInjectedEnvelope(result!.followUpPrompt as string)).toBe(true);
+    expect(events.at(-2)).toMatchObject({
+      type: "timeline",
+      provider: "codex",
+      item: {
+        type: "tool_call",
+        callId: request.request.id,
+        name: "plan_approval",
+        status: "completed",
+        detail: { type: "plan", text: "- Implement the new flow" },
+        metadata: { approved: true, planResolution: "approved" },
+      },
+    });
     expect(events.at(-1)).toEqual({
       type: "permission_resolved",
       provider: "codex",
