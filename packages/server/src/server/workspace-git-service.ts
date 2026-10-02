@@ -1,3 +1,4 @@
+import { hasComparisonSnapshot } from "./git-comparison/snapshot.js";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
@@ -821,6 +822,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         : {}),
       ...(options.ignoreWhitespace === true ? { ignoreWhitespace: true } : {}),
       ...(options.includeStructured === true ? { includeStructured: true } : {}),
+      ...(options.includeWorkingTree === true ? { includeWorkingTree: true } : {}),
     };
   }
 
@@ -3179,11 +3181,16 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         if (!admittedSnapshot) {
           break;
         }
+        const comparisonChanged =
+          hasComparisonSnapshot(target.latestSnapshot) &&
+          (request.refreshWorktree || request.refreshStructure || request.movedRemoteRefs.size > 0);
         snapshot = admittedSnapshot;
         this.rememberSnapshot(target, snapshot, {
           notify: request.notify,
           forceEmit:
-            request.force || (request.emitUnchanged === true && request.movedRemoteRefs.size > 0),
+            request.force ||
+            comparisonChanged ||
+            (request.emitUnchanged === true && request.movedRemoteRefs.size > 0),
         });
         failure = null;
       } catch (error) {

@@ -942,3 +942,23 @@ describe("deriveProjectStatusBucket", () => {
     ).toBe("done");
   });
 });
+
+describe("workspace comparison counters", () => {
+  it("hides zero counts after a commit while retaining the selected comparison", () => {
+    const descriptor = workspaceWithForge("github", "https://github.com/acme/repo/pull/42");
+    descriptor.diffComparison = { mode: "uncommitted" };
+    descriptor.diffStat = { additions: 0, deletions: 0 };
+    const entry = createSidebarWorkspaceEntry({ serverId: "host", workspace: descriptor });
+    expect(entry.diffStat).toBeNull();
+    expect(entry.diffComparison).toEqual({ mode: "uncommitted" });
+  });
+  it("keeps unavailable branch comparisons distinguishable from empty diffs", () => {
+    const descriptor = workspaceWithForge("github", "https://github.com/acme/repo/pull/42");
+    descriptor.diffComparison = { mode: "base", baseRef: "refs/heads/deleted" };
+    descriptor.diffComparisonError = "Branch no longer exists";
+    const entry = createSidebarWorkspaceEntry({ serverId: "host", workspace: descriptor });
+    expect(entry.diffStat).toBeNull();
+    expect(entry.diffComparisonError).toBe("Branch no longer exists");
+    expect(entry.diffComparison).toEqual(descriptor.diffComparison);
+  });
+});

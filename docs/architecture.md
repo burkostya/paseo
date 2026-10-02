@@ -393,26 +393,26 @@ Two workspaces can share the same `cwd` (e.g. a `directory` workspace and a `loc
 
 **Directory-backed (shared by same-`cwd` workspaces) — keyed by `(serverId, cwd)`, never by `workspaceId`:**
 
-| Surface                 | Key                                                      | Source                                                  |
-| ----------------------- | -------------------------------------------------------- | ------------------------------------------------------- |
-| Git status              | `checkoutStatusQueryKey(serverId, cwd)`                  | `packages/app/src/git/query-keys.ts`                    |
-| Git diff                | `checkoutDiffQueryKey(serverId, cwd, mode, baseRef, ws)` | `packages/app/src/git/query-keys.ts`                    |
-| Forge change request    | `checkoutPrStatusQueryKey(serverId, cwd)`                | `packages/app/src/git/query-keys.ts`                    |
-| Change request timeline | `prPaneTimelineQueryKey({ serverId, cwd, prNumber })`    | `packages/app/src/git/pull-request-panel/query-keys.ts` |
-| File preview content    | `["workspaceFile", serverId, cwd, path]`                 | `packages/app/src/components/file-pane.tsx`             |
-| File explorer listings  | fetched via `listDirectory(workspaceRoot, path)`         | `packages/app/src/hooks/use-file-explorer-actions.ts`   |
+| Surface                 | Key                                                                   | Source                                                  |
+| ----------------------- | --------------------------------------------------------------------- | ------------------------------------------------------- |
+| Git status              | `checkoutStatusQueryKey(serverId, cwd)`                               | `packages/app/src/git/query-keys.ts`                    |
+| Git diff                | `checkoutDiffQueryKey(serverId, cwd, mode, baseRef, ws, workingTree)` | `packages/app/src/git/query-keys.ts`                    |
+| Forge change request    | `checkoutPrStatusQueryKey(serverId, cwd)`                             | `packages/app/src/git/query-keys.ts`                    |
+| Change request timeline | `prPaneTimelineQueryKey({ serverId, cwd, prNumber })`                 | `packages/app/src/git/pull-request-panel/query-keys.ts` |
+| File preview content    | `["workspaceFile", serverId, cwd, path]`                              | `packages/app/src/components/file-pane.tsx`             |
+| File explorer listings  | fetched via `listDirectory(workspaceRoot, path)`                      | `packages/app/src/hooks/use-file-explorer-actions.ts`   |
 
 **Workspace-owned (independent per workspace) — keyed by `workspaceId` (falling back to `cwd` only when no `workspaceId` exists):**
 
 | State                        | Key builder / store                                | Source                                                        |
 | ---------------------------- | -------------------------------------------------- | ------------------------------------------------------------- |
 | Review draft comments        | `buildReviewDraftKey`                              | `packages/app/src/review/store.ts`                            |
-| Working diff comparison      | `workingDiffComparisonKey` (in-memory)             | `packages/app/src/git/working-diff-comparison/state.ts`       |
+| Working diff comparison      | Host project default + workspace override          | [Changes comparison](explorer-sidebar.md#changes-comparison)  |
 | Composer attachments         | `buildWorkspaceAttachmentScopeKey`                 | `packages/app/src/attachments/workspace-attachments-store.ts` |
 | File explorer nav/open state | `fileExplorer` map keyed `workspace:{workspaceId}` | `packages/app/src/hooks/use-file-explorer-actions.ts`         |
 | File explorer expanded paths | `expandedPathsByWorkspace[workspaceStateKey]`      | `packages/app/src/stores/panel-store/state.ts`                |
 
-`diff-pane.tsx` is the canonical wiring site: it passes `{ serverId, cwd }` to the git queries and `{ serverId, workspaceId, cwd }` to the draft/comparison/attachment scope keys.
+`diff-pane.tsx` is the canonical wiring site: it passes `{ serverId, cwd }` to the git queries and `{ serverId, workspaceId, cwd }` to the draft/attachment scope keys. The host resolves the workspace comparison before the diff query is keyed; matching comparisons still share content.
 
 **Do not "fix" the sharing away.** Re-keying a directory-backed query by `workspaceId` makes same-`cwd` workspaces diverge (two windows onto the same git tree showing different diffs). Re-keying owned state (drafts, expanded paths) by `cwd` makes them leak between distinct workspaces on the same folder. The `workspaceId`-keyed builders carry a `// workspaceId is opaque; do not parse this key back into a path.` comment — the opaque-id fallback to `cwd` exists only for old payloads without a `workspaceId`, not as a content-sharing mechanism.
 

@@ -114,3 +114,22 @@ test("active reads survive completed-payload eviction and failed reads can retry
     }),
   ).toEqual({ diff: "retry" });
 });
+
+test("working-tree branch comparisons have separate caches and expire on edits", async () => {
+  const cache = new CheckoutDiffCache(() => 0);
+  const committed = { mode: "base" as const, baseRef: "refs/heads/main" };
+  const working = { ...committed, includeWorkingTree: true };
+  await cache.read({ cwd: "repo", compare: committed, load: async () => ({ diff: "committed" }) });
+  await cache.read({ cwd: "repo", compare: working, load: async () => ({ diff: "working" }) });
+  cache.invalidate("repo", "uncommitted");
+  expect(
+    await cache.read({
+      cwd: "repo",
+      compare: committed,
+      load: async () => ({ diff: "unexpected" }),
+    }),
+  ).toEqual({ diff: "committed" });
+  expect(
+    await cache.read({ cwd: "repo", compare: working, load: async () => ({ diff: "edited" }) }),
+  ).toEqual({ diff: "edited" });
+});

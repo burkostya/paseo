@@ -1,3 +1,4 @@
+import { ComparisonMenuTrigger, useComparisonMenuPages } from "@/git/comparison/menu";
 import {
   useCallback,
   useMemo,
@@ -468,6 +469,7 @@ function SidebarWorkspaceMenuItems({
           {isPinned ? t("sidebar.workspace.actions.unpin") : t("sidebar.workspace.actions.pin")}
         </WorkspaceMenuItem>
       ) : null}
+      {serverId && workspaceId ? <ComparisonMenuTrigger /> : null}
       {serverId && workspaceId && onSetParent ? (
         <DropdownMenuSubTrigger
           id={WORKSPACE_HIERARCHY_PAGE_ID}
@@ -542,6 +544,14 @@ export function SidebarWorkspaceMenu({
     [serverId, workspaceId, workspaceLabels],
   );
   const pages = useWorkspaceLabelMenuPages(workspaceTarget);
+  const comparisonPages = useComparisonMenuPages(
+    workspaceTarget
+      ? {
+          serverId: workspaceTarget.serverId,
+          target: { kind: "workspace", workspaceId: workspaceTarget.workspaceId },
+        }
+      : null,
+  );
   const hierarchyPages = useWorkspaceHierarchyMenuPages({
     workspaceKey,
     serverId,
@@ -566,7 +576,7 @@ export function SidebarWorkspaceMenu({
       <DropdownMenuContent
         align="end"
         width={260}
-        pages={[...pages, ...hierarchyPages]}
+        pages={[...pages, ...hierarchyPages, ...comparisonPages]}
         sheetTitle={t("sidebar.workspace.actions.menu")}
       >
         <SidebarWorkspaceMenuItems
@@ -675,6 +685,14 @@ export function SidebarWorkspaceContextMenu({
     [workspace],
   );
   const pages = useWorkspaceLabelMenuPages(workspaceTarget);
+  const comparisonPages = useComparisonMenuPages(
+    workspaceTarget
+      ? {
+          serverId: workspaceTarget.serverId,
+          target: { kind: "workspace", workspaceId: workspaceTarget.workspaceId },
+        }
+      : null,
+  );
   const hierarchyPages = useWorkspaceHierarchyMenuPages({
     workspaceKey,
     serverId: workspace.serverId,
@@ -700,7 +718,7 @@ export function SidebarWorkspaceContextMenu({
         align="start"
         width={260}
         testID={`sidebar-workspace-context-menu-${workspaceKey}`}
-        pages={[...pages, ...hierarchyPages]}
+        pages={[...pages, ...hierarchyPages, ...comparisonPages]}
       >
         <SidebarWorkspaceMenuItems
           surface="context"

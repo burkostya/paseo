@@ -3009,6 +3009,20 @@ export class DaemonClient {
     }
   }
 
+  async setDiffComparison(
+    target: Extract<SessionInboundMessage, { type: "git.comparison.set.request" }>["target"],
+    comparison: Extract<
+      SessionInboundMessage,
+      { type: "git.comparison.set.request" }
+    >["comparison"],
+  ): Promise<void> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"git.comparison.set.response">({
+        message: { type: "git.comparison.set.request", target, comparison },
+      });
+    if (!payload.accepted) throw new Error(payload.error ?? "Comparison update failed");
+  }
+
   async renameProject(
     projectId: string,
     customName: string | null,
@@ -4167,30 +4181,21 @@ export class DaemonClient {
     return responsePromise;
   }
 
-  private normalizeCheckoutDiffCompare(compare: {
-    mode: "uncommitted" | "base";
-    baseRef?: string;
-    ignoreWhitespace?: boolean;
-  }): { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean } {
-    if (compare.mode === "uncommitted") {
-      return compare.ignoreWhitespace === true
-        ? { mode: "uncommitted", ignoreWhitespace: true }
-        : { mode: "uncommitted" };
-    }
-    const trimmedBaseRef = compare.baseRef?.trim();
-    if (!trimmedBaseRef) {
-      return compare.ignoreWhitespace === true
-        ? { mode: "base", ignoreWhitespace: true }
-        : { mode: "base" };
-    }
-    return compare.ignoreWhitespace === true
-      ? { mode: "base", baseRef: trimmedBaseRef, ignoreWhitespace: true }
-      : { mode: "base", baseRef: trimmedBaseRef };
+  private normalizeCheckoutDiffCompare(
+    compare: Extract<SessionInboundMessage, { type: "checkout.diff.get.request" }>["compare"],
+  ): Extract<SessionInboundMessage, { type: "checkout.diff.get.request" }>["compare"] {
+    const baseRef = compare.mode === "base" ? compare.baseRef?.trim() : undefined;
+    return {
+      mode: compare.mode,
+      ...(baseRef ? { baseRef } : {}),
+      ...(compare.ignoreWhitespace === true ? { ignoreWhitespace: true } : {}),
+      ...(compare.includeWorkingTree === true ? { includeWorkingTree: true } : {}),
+    };
   }
 
   async getCheckoutDiff(
     cwd: string,
-    compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean },
+    compare: Extract<SessionInboundMessage, { type: "checkout.diff.get.request" }>["compare"],
     requestId?: string,
   ): Promise<CheckoutDiffPayload> {
     return this.sendCorrelatedSessionRequest({
@@ -4206,7 +4211,7 @@ export class DaemonClient {
 
   observeCheckoutDiff(
     cwd: string,
-    compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean },
+    compare: Extract<SessionInboundMessage, { type: "checkout.diff.get.request" }>["compare"],
     options?: { requestId?: string; signal?: AbortSignal },
   ): OwnedSubscription<SubscribeCheckoutDiffPayload> {
     return this.observe(
@@ -4689,13 +4694,14 @@ export class DaemonClient {
   }
 
   async getBranchSuggestions(
-    options: { cwd: string; query?: string; limit?: number },
+    options: { cwd: string; query?: string; limit?: number; exactRefs?: boolean },
     requestId?: string,
   ): Promise<BranchSuggestionsPayload> {
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {
         type: "branch_suggestions_request",
+        exactRefs: options.exactRefs,
         cwd: options.cwd,
         query: options.query,
         limit: options.limit,

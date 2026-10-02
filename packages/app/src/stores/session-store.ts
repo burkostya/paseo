@@ -104,6 +104,10 @@ export interface Agent {
 }
 
 export interface WorkspaceDescriptor {
+  diffComparison?: WorkspaceDescriptorPayload["diffComparison"];
+  diffComparisonOverride?: WorkspaceDescriptorPayload["diffComparisonOverride"];
+  projectDiffComparison?: WorkspaceDescriptorPayload["projectDiffComparison"];
+  diffComparisonError?: string | null;
   id: string;
   projectId: string;
   projectDisplayName: string;
@@ -163,6 +167,10 @@ export function normalizeWorkspaceDescriptor(
     statusEnteredAt,
     archivingAt: payload.archivingAt ?? null,
     diffStat: payload.diffStat ?? null,
+    diffComparison: payload.diffComparison,
+    diffComparisonOverride: payload.diffComparisonOverride,
+    projectDiffComparison: payload.projectDiffComparison,
+    diffComparisonError: payload.diffComparisonError,
     scripts: (payload.scripts ?? []).map((s) => Object.assign({}, s)),
     gitRuntime: payload.gitRuntime,
     githubRuntime: payload.githubRuntime,
@@ -172,6 +180,7 @@ export function normalizeWorkspaceDescriptor(
 }
 
 export interface ProjectDescriptor {
+  diffComparison?: WorkspaceProjectDescriptorPayload["diffComparison"];
   projectId: string;
   projectKey?: string | null;
   projectDisplayName: string;
@@ -192,6 +201,7 @@ export function normalizeProjectDescriptor(
     projectCustomName: payload.projectCustomName ?? null,
     projectCustomIconRevision: payload.projectCustomIconRevision ?? null,
     projectIconRevision: payload.projectIconRevision,
+    diffComparison: payload.diffComparison,
     projectRootPath: payload.projectRootPath,
     projectKind: payload.projectKind,
   };

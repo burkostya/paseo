@@ -950,6 +950,26 @@ export const ProjectIconSourceSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("upload"), data: z.string() }),
 ]);
 
+export const DiffComparisonSchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("uncommitted") }),
+  z.object({ mode: z.literal("base"), baseRef: z.string().min(1) }),
+]);
+export type DiffComparison = z.infer<typeof DiffComparisonSchema>;
+
+export const DiffComparisonSetRequestSchema = z.object({
+  type: z.literal("git.comparison.set.request"),
+  target: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("project"), projectId: z.string() }),
+    z.object({ kind: z.literal("workspace"), workspaceId: z.string() }),
+  ]),
+  comparison: DiffComparisonSchema.nullable(),
+  requestId: z.string(),
+});
+export const DiffComparisonSetResponseSchema = z.object({
+  type: z.literal("git.comparison.set.response"),
+  payload: z.object({ requestId: z.string(), accepted: z.boolean(), error: z.string().nullable() }),
+});
+
 export const ProjectRenameRequestSchema = z.object({
   type: z.literal("project.rename.request"),
   projectId: z.string(),
@@ -2268,6 +2288,7 @@ const CheckoutErrorSchema = z.object({
 });
 
 const CheckoutDiffCompareSchema = z.object({
+  includeWorkingTree: z.boolean().optional(),
   mode: z.enum(["uncommitted", "base"]),
   baseRef: z.string().optional(),
   ignoreWhitespace: z.boolean().optional(),
@@ -2513,6 +2534,7 @@ export const StashListRequestSchema = z.object({
 });
 
 export const BranchSuggestionsRequestSchema = z.object({
+  exactRefs: z.boolean().optional(),
   type: z.literal("branch_suggestions_request"),
   cwd: z.string(),
   query: z.string().optional(),
@@ -3300,6 +3322,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ArchiveAgentRequestMessageSchema,
   CloseItemsRequestMessageSchema,
   UpdateAgentRequestMessageSchema,
+  DiffComparisonSetRequestSchema,
   ProjectRenameRequestSchema,
   ProjectIconSetRequestSchema,
   ProjectRemoveRequestSchema,
@@ -3835,6 +3858,7 @@ export const ServerInfoStatusPayloadSchema = z
         agentProfileIdentity: z.boolean().optional(),
         // COMPAT(checkoutDiffBaseSelection): added in the v0.1.109 fork, remove after 2027-01-16.
         checkoutDiffBaseSelection: z.boolean().optional(),
+        workspaceDiffComparison: z.boolean().optional(),
       })
       .optional(),
   })
@@ -4116,6 +4140,10 @@ export const WorkspaceDescriptorPayloadSchema = z
     // value (customName) and projectCustomName mirrors the raw override so the
     // settings UI can prefill its input and offer a "reset" action.
     projectCustomName: z.string().nullable().optional(),
+    projectDiffComparison: DiffComparisonSchema.optional(),
+    diffComparisonOverride: DiffComparisonSchema.nullable().optional(),
+    diffComparison: DiffComparisonSchema.optional(),
+    diffComparisonError: z.string().nullable().optional(),
     // Identifies the project's stored custom icon; null means automatic.
     // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
     projectCustomIconRevision: z.string().nullable().optional(),
@@ -4309,6 +4337,7 @@ export const WorkspaceProjectDescriptorPayloadSchema = z.object({
   projectKey: z.string().optional(),
   projectDisplayName: z.string(),
   projectCustomName: z.string().nullable().optional(),
+  diffComparison: DiffComparisonSchema.optional(),
   // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
   projectCustomIconRevision: z.string().nullable().optional(),
   // Fingerprints the effective icon, including automatic discovery and the
@@ -7049,6 +7078,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentDetachResponseMessageSchema,
   AgentRewindResponseMessageSchema,
   UpdateAgentResponseMessageSchema,
+  DiffComparisonSetResponseSchema,
   ProjectRenameResponseSchema,
   ProjectIconSetResponseSchema,
   ProjectRemoveResponseSchema,

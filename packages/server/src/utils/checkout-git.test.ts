@@ -1,3 +1,9 @@
+import { describeWorkspaceComparison } from "../server/git-comparison/snapshot.js";
+import { createNoGitWorkspaceRuntimeSnapshot } from "../server/test-utils/workspace-git-service-stub.js";
+import {
+  createPersistedProjectRecord,
+  createPersistedWorkspaceRecord,
+} from "../server/workspace-registry.js";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { execFileSync, execSync, spawnSync } from "child_process";
 import {
@@ -28,6 +34,8 @@ import {
   getCurrentBranch,
   getCheckoutDiff,
   getCheckoutShortstat,
+  getComparisonShortstat,
+  listComparisonBranches,
   getPullRequestStatus,
   getCheckoutStatus,
   checkoutResolvedBranch,
@@ -4020,6 +4028,136 @@ describe("discardChanges", () => {
       expect(readTextFile(join(repoDir, "fooa.txt"))).toBe("sibling changed\n");
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("workspace comparison shortstat", () => {
+  it("matches the working diff and keeps explicit branches separate from uncommitted changes", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "paseo-comparison-"));
+    const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" });
+    try {
+      git("init", "-b", "main");
+      git("config", "user.email", "test@example.com");
+      git("config", "user.name", "Test");
+      writeFileSync(join(cwd, "file.txt"), "original\n");
+      expect(await getComparisonShortstat(cwd, { mode: "uncommitted" })).toEqual({
+        additions: 1,
+        deletions: 0,
+      });
+      git("add", ".");
+      git("commit", "-m", "initial");
+      git("checkout", "-b", "task");
+      writeFileSync(join(cwd, "file.txt"), "original\ncommitted\n");
+      git("commit", "-am", "task");
+      writeFileSync(join(cwd, "file.txt"), "original\ncommitted\nstaged\n");
+      git("add", ".");
+      writeFileSync(join(cwd, "file.txt"), "original\ncommitted\nstaged\nunstaged\n");
+      writeFileSync(join(cwd, "new.txt"), "untracked\n");
+      expect(await getComparisonShortstat(cwd, { mode: "uncommitted" })).toEqual({
+        additions: 3,
+        deletions: 0,
+      });
+      expect(
+        await getComparisonShortstat(cwd, { mode: "base", baseRef: "refs/heads/main" }),
+      ).toEqual({ additions: 4, deletions: 0 });
+      const diff = await getCheckoutDiff(cwd, {
+        mode: "base",
+        baseRef: "refs/heads/main",
+        includeWorkingTree: true,
+      });
+      expect(diff.diff).toContain("+untracked");
+      expect(diff.diff).toContain("+unstaged");
+      git("update-ref", "refs/remotes/team/main", "main");
+      expect(await listComparisonBranches(cwd, "main")).toEqual([
+        "refs/heads/main",
+        "refs/remotes/team/main",
+      ]);
+      const snapshot = createNoGitWorkspaceRuntimeSnapshot(cwd);
+      snapshot.git.isGit = true;
+      const timestamp = "2026-10-02T00:00:00.000Z";
+      const project = createPersistedProjectRecord({
+        projectId: "project",
+        rootPath: cwd,
+        kind: "git",
+        displayName: "project",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      const workspace = createPersistedWorkspaceRecord({
+        workspaceId: "one",
+        projectId: project.projectId,
+        cwd,
+        kind: "local_checkout",
+        displayName: "task",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      const owner = {};
+      const ready = Promise.withResolvers<void>();
+      const input = { workspace, project, snapshot, owner, onReady: () => ready.resolve() };
+      expect(describeWorkspaceComparison(input)).toMatchObject({
+        diffComparison: { mode: "uncommitted" },
+        diffStat: null,
+      });
+      const otherReady = Promise.withResolvers<void>();
+      const otherInput = {
+        ...input,
+        project: {
+          ...project,
+          diffComparison: { mode: "base" as const, baseRef: "refs/heads/main" },
+        },
+        owner: {},
+        onReady: () => otherReady.resolve(),
+      };
+      expect(describeWorkspaceComparison(otherInput).diffStat).toBeNull();
+      await Promise.all([ready.promise, otherReady.promise]);
+      expect(describeWorkspaceComparison(input).diffStat).toEqual({ additions: 3, deletions: 0 });
+      expect(describeWorkspaceComparison(otherInput).diffStat).toEqual({
+        additions: 4,
+        deletions: 0,
+      });
+      expect(
+        describeWorkspaceComparison({
+          ...otherInput,
+          workspace: { ...workspace, diffComparison: { mode: "uncommitted" } },
+        }).diffStat,
+      ).toEqual({ additions: 3, deletions: 0 });
+
+      git("add", ".");
+      git("commit", "-m", "save");
+      expect(await getComparisonShortstat(cwd, { mode: "uncommitted" })).toEqual({
+        additions: 0,
+        deletions: 0,
+      });
+      await expect(
+        getComparisonShortstat(cwd, { mode: "base", baseRef: "refs/heads/missing" }),
+      ).rejects.toThrow();
+      await expect(
+        getCheckoutDiff(cwd, {
+          mode: "base",
+          baseRef: "refs/heads/missing",
+          includeWorkingTree: true,
+        }),
+      ).rejects.toThrow();
+      git("checkout", "--detach");
+      expect(
+        await getComparisonShortstat(cwd, { mode: "base", baseRef: "refs/heads/main" }),
+      ).toEqual({ additions: 4, deletions: 0 });
+      git("checkout", "--orphan", "unrelated");
+      git("commit", "-m", "Independent history");
+      await expect(
+        getComparisonShortstat(cwd, { mode: "base", baseRef: "refs/heads/main" }),
+      ).rejects.toThrow();
+      await expect(
+        getCheckoutDiff(cwd, {
+          mode: "base",
+          baseRef: "refs/heads/main",
+          includeWorkingTree: true,
+        }),
+      ).rejects.toThrow();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
     }
   });
 });

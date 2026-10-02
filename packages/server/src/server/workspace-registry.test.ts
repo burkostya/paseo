@@ -66,6 +66,67 @@ describe("workspace registries", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  test("persists comparison choices independently of worktree bases across archive and reload", async () => {
+    await projectRegistry.initialize();
+    await workspaceRegistry.initialize();
+    const timestamp = "2026-10-02T00:00:00.000Z";
+    const project = createPersistedProjectRecord({
+      projectId: "comparison-project",
+      rootPath: tmpDir,
+      kind: "git",
+      displayName: "comparison",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    const workspace = createPersistedWorkspaceRecord({
+      workspaceId: "comparison-workspace",
+      projectId: project.projectId,
+      cwd: tmpDir,
+      kind: "worktree",
+      displayName: "task",
+      baseBranch: "main",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    await projectRegistry.upsert(project);
+    await workspaceRegistry.upsert(workspace);
+    await projectRegistry.update(project.projectId, (record) => ({
+      ...record,
+      diffComparison: { mode: "base", baseRef: "refs/remotes/team/develop" },
+    }));
+    await workspaceRegistry.update(workspace.workspaceId, (record) => ({
+      ...record,
+      diffComparison: { mode: "uncommitted" },
+    }));
+    await workspaceRegistry.archive(workspace.workspaceId, timestamp);
+    const reloadedProjects = new FileBackedProjectRegistry(
+      path.join(tmpDir, "projects", "projects.json"),
+      logger,
+    );
+    const reloadedWorkspaces = new FileBackedWorkspaceRegistry(
+      path.join(tmpDir, "projects", "workspaces.json"),
+      logger,
+    );
+    await reloadedProjects.initialize();
+    await reloadedWorkspaces.initialize();
+    expect((await reloadedProjects.get(project.projectId))?.diffComparison).toEqual({
+      mode: "base",
+      baseRef: "refs/remotes/team/develop",
+    });
+    expect(await reloadedWorkspaces.get(workspace.workspaceId)).toMatchObject({
+      baseBranch: "main",
+      archivedAt: timestamp,
+      diffComparison: { mode: "uncommitted" },
+    });
+    await reloadedWorkspaces.update(workspace.workspaceId, (record) => ({
+      ...record,
+      archivedAt: null,
+      diffComparison: undefined,
+    }));
+    expect((await reloadedWorkspaces.get(workspace.workspaceId))?.diffComparison).toBeUndefined();
+    expect((await reloadedWorkspaces.get(workspace.workspaceId))?.baseBranch).toBe("main");
+  });
+
   test("creates, updates, archives, deletes, and lists project records", async () => {
     await projectRegistry.initialize();
     await projectRegistry.upsert(

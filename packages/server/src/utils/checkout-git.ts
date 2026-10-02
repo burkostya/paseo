@@ -307,6 +307,23 @@ function sortBranchSuggestions(
   });
 }
 
+export async function listComparisonBranches(
+  cwd: string,
+  query = "",
+  limit = 200,
+): Promise<string[]> {
+  await requireGitRepo(cwd);
+  const { stdout } = await runGitCommand(
+    ["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"],
+    { cwd, envOverlay: READ_ONLY_GIT_ENV },
+  );
+  const search = query.trim().toLowerCase();
+  return stdout
+    .split("\n")
+    .filter((ref) => ref && !ref.endsWith("/HEAD") && ref.toLowerCase().includes(search))
+    .slice(0, limit);
+}
+
 export async function listBranchSuggestions(
   cwd: string,
   options?: { query?: string; limit?: number },
@@ -647,7 +664,7 @@ const EMPTY_TREE_OBJECT_ID = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 function isUnbornHeadDiffError(error: unknown): boolean {
   return (
     error instanceof Error &&
-    error.message.includes("--name-status HEAD") &&
+    (error.message.includes("--name-status HEAD") || error.message.includes("--shortstat HEAD")) &&
     error.message.includes("ambiguous argument 'HEAD'")
   );
 }
@@ -878,6 +895,7 @@ export type CheckoutDiffResult =
   | { diff: ""; structured: []; diffTooLarge: true };
 
 export interface CheckoutDiffCompare {
+  includeWorkingTree?: boolean;
   mode: "uncommitted" | "base";
   baseRef?: string;
   ignoreWhitespace?: boolean;
@@ -3366,6 +3384,14 @@ async function resolveCheckoutDiffRefs(
   if (compare.mode === "uncommitted") {
     return { baseRef: "HEAD", includeUntracked: true };
   }
+  if (compare.includeWorkingTree) {
+    if (!compare.baseRef) throw new Error("A comparison branch is required");
+    const { stdout } = await getRunGitCommand(context)(["merge-base", "HEAD", compare.baseRef], {
+      cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+    });
+    return { baseRef: stdout.trim(), includeUntracked: true };
+  }
   const { resolvedBaseRef } = await resolveBaseRefForCwd(cwd, context);
   const baseRef = compare.baseRef ?? resolvedBaseRef;
   if (!baseRef) {
@@ -3377,6 +3403,34 @@ async function resolveCheckoutDiffRefs(
     targetRef: "HEAD",
     includeUntracked: false,
   };
+}
+
+export async function getComparisonShortstat(
+  cwd: string,
+  comparison: import("@getpaseo/protocol/messages").DiffComparison,
+): Promise<CheckoutShortstat> {
+  const refs = await resolveCheckoutDiffRefs(
+    cwd,
+    { ...comparison, includeWorkingTree: true },
+    undefined,
+  );
+  if (!refs) throw new Error("Comparison is unavailable");
+  let stdout: string;
+  try {
+    ({ stdout } = await runGitCommand(["diff", "--shortstat", refs.baseRef], {
+      cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+    }));
+  } catch (error) {
+    if (comparison.mode !== "uncommitted" || !isUnbornHeadDiffError(error)) throw error;
+    ({ stdout } = await runGitCommand(["diff", "--shortstat", EMPTY_TREE_OBJECT_ID], {
+      cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+    }));
+  }
+  const tracked = parseCheckoutShortstat(stdout);
+  const untracked = await countUntrackedAdditions(cwd, undefined, true);
+  return { additions: (tracked?.additions ?? 0) + untracked, deletions: tracked?.deletions ?? 0 };
 }
 
 export async function getCheckoutDiff(

@@ -1950,6 +1950,7 @@ export class VoiceAssistantWebSocketServer {
         agentProfileIdentity: true,
         // COMPAT(checkoutDiffBaseSelection): added in the v0.1.109 fork, remove after 2027-01-16.
         checkoutDiffBaseSelection: true,
+        workspaceDiffComparison: true,
       },
     };
   }

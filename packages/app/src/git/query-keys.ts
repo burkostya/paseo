@@ -27,8 +27,17 @@ export function checkoutDiffQueryKey(
   mode: "uncommitted" | "base",
   baseRef?: string,
   ignoreWhitespace?: boolean,
+  includeWorkingTree?: boolean,
 ) {
-  return ["checkoutDiff", serverId, cwd, mode, baseRef ?? "", ignoreWhitespace === true] as const;
+  const key = [
+    "checkoutDiff",
+    serverId,
+    cwd,
+    mode,
+    baseRef ?? "",
+    ignoreWhitespace === true,
+  ] as const;
+  return includeWorkingTree ? ([...key, "workingTree"] as const) : key;
 }
 
 export function checkoutPrStatusQueryKey(serverId: string, cwd: string) {

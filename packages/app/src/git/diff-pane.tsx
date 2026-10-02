@@ -1,3 +1,4 @@
+import { WorkspaceComparisonDropdown } from "@/git/comparison/menu";
 import { useState, useCallback, useMemo, type ReactElement, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -467,6 +468,7 @@ interface ChangesRepositoryToolbarModel {
 
 interface ChangesComparisonToolbarModel {
   basePicker: ReactElement | null;
+  comparisonPicker?: ReactElement | null;
   committedDescription?: string;
   diffMode: "uncommitted" | "base";
   mode: ChangesToolbarMode;
@@ -484,6 +486,7 @@ interface ChangesHeaderProps {
 
 interface BuildChangesHeaderModelInput {
   basePicker: ReactElement | null;
+  comparisonPicker?: ReactElement | null;
   branchName: string | null;
   committedDescription?: string;
   compact: boolean;
@@ -517,6 +520,7 @@ function buildChangesHeaderModel(input: BuildChangesHeaderModelInput): {
     },
     comparison: {
       basePicker: input.basePicker,
+      comparisonPicker: input.comparisonPicker,
       committedDescription: input.committedDescription,
       diffMode: input.diffMode,
       mode: input.mode,
@@ -535,6 +539,7 @@ function ChangesHeader({ compact, repository, comparison, sidebarSurface }: Chan
       <ChangesDiffOnlyToolbar
         compact={compact}
         mode={comparison.mode}
+        comparisonPicker={comparison.comparisonPicker}
         sidebarSurface={sidebarSurface}
       />
     );
@@ -556,12 +561,14 @@ function ChangesHeader({ compact, repository, comparison, sidebarSurface }: Chan
 }
 
 function ChangesDiffOnlyToolbar({
+  comparisonPicker,
   compact,
   mode,
   sidebarSurface,
 }: {
   compact: boolean;
   mode: Extract<ChangesToolbarMode, { kind: "diff" }>;
+  comparisonPicker?: ReactElement | null;
   sidebarSurface: boolean;
 }) {
   return (
@@ -571,7 +578,7 @@ function ChangesDiffOnlyToolbar({
       testID="changes-header"
       trailing="glyph"
     >
-      <ChangesToolbarLeading />
+      <ChangesToolbarLeading>{comparisonPicker}</ChangesToolbarLeading>
       <ChangesToolbarTrailing>
         <ChangesToolbarActions mode={mode} compact={compact} />
       </ChangesToolbarTrailing>
@@ -733,12 +740,14 @@ function ChangesComparisonToolbar({
       trailing="glyph"
     >
       <ChangesToolbarLeading>
-        <DiffModeMenu
-          diffMode={model.diffMode}
-          committedDescription={model.committedDescription}
-          onSelectUncommitted={model.onSelectUncommitted}
-          onSelectBase={model.onSelectBase}
-        />
+        {model.comparisonPicker ?? (
+          <DiffModeMenu
+            diffMode={model.diffMode}
+            committedDescription={model.committedDescription}
+            onSelectUncommitted={model.onSelectUncommitted}
+            onSelectBase={model.onSelectBase}
+          />
+        )}
         {model.basePicker}
         {model.selectedDiffStat ? (
           <DiffStat
@@ -1156,6 +1165,7 @@ interface ChangesEmptyAction {
 }
 
 function computeChangesEmptyAction(input: {
+  unifiedComparison?: boolean;
   hideWhitespace: boolean;
   diffMode: "uncommitted" | "base";
   status: CheckoutStatusPayload | null;
@@ -1164,7 +1174,7 @@ function computeChangesEmptyAction(input: {
   selectUncommitted: () => void;
   selectBase: () => void;
 }): ChangesEmptyAction | null {
-  if (input.hideWhitespace || !input.status?.isGit) {
+  if (input.unifiedComparison || input.hideWhitespace || !input.status?.isGit) {
     return null;
   }
   if (input.diffMode === "base" && input.status.isDirty) {
@@ -1545,6 +1555,7 @@ export function ChangesSurface({
     baseRef,
     effectiveBaseRef,
     canSelectBase,
+    unifiedComparison,
     selectedBaseRef,
     selectBaseRef,
     currentBranchName,
@@ -1781,6 +1792,7 @@ export function ChangesSurface({
   );
   const emptyMessage = t("diffViewer.empty");
   const emptyAction = computeChangesEmptyAction({
+    unifiedComparison,
     hideWhitespace: preferences.hideWhitespace,
     diffMode,
     status,
@@ -1882,8 +1894,12 @@ export function ChangesSurface({
   const changesHeaderModel = useMemo(
     () =>
       buildChangesHeaderModel({
+        comparisonPicker:
+          unifiedComparison && workspaceId ? (
+            <WorkspaceComparisonDropdown serverId={serverId} workspaceId={workspaceId} cwd={cwd} />
+          ) : null,
         basePicker:
-          canSelectBase && diffMode === "base" ? (
+          !unifiedComparison && canSelectBase && diffMode === "base" ? (
             <DiffBasePicker
               serverId={serverId}
               workspaceId={workspaceId}
@@ -1913,6 +1929,7 @@ export function ChangesSurface({
       committedDiffDescription,
       baseRefLabel,
       canSelectBase,
+      unifiedComparison,
       currentBranchName,
       cwd,
       diffMode,
