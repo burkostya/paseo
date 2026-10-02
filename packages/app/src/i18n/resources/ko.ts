@@ -2,6 +2,19 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ko: TranslationResources = {
+  worktreeImport: {
+    title: "기존 워크트리 추가…",
+    chooseHost: "호스트 선택",
+    updateHost: "워크트리를 가져오려면 호스트를 업데이트하세요.",
+    preserveFiles: "워크스페이스를 보관해도 외부 워크트리는 디스크에 남습니다.",
+    refresh: "새로고침",
+    empty: "연결된 워크트리가 없습니다.",
+    detached: "분리된 HEAD · {{commit}}",
+    unavailable: "디스크에서 사용할 수 없음",
+    restore: "보관됨 · 선택하여 복원",
+    open: "열기",
+    add: "선택 항목 추가 ({{count}})",
+  },
   diffComparison: en.diffComparison,
   paneFind: {
     connectionFailure: "이 채팅을 검색할 수 없습니다. 호스트 연결을 확인하고 다시 시도하세요.",

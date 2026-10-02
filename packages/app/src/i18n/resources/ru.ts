@@ -2,6 +2,19 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ru: TranslationResources = {
+  worktreeImport: {
+    title: "Добавить существующие worktree…",
+    chooseHost: "Выберите хост",
+    updateHost: "Обновите хост для импорта worktree.",
+    preserveFiles: "Внешние worktree остаются на диске при архивации workspace.",
+    refresh: "Обновить",
+    empty: "Связанные worktree не найдены.",
+    detached: "Detached HEAD · {{commit}}",
+    unavailable: "Недоступен на диске",
+    restore: "В архиве · выберите для восстановления",
+    open: "Открыть",
+    add: "Добавить выбранные ({{count}})",
+  },
   diffComparison: {
     title: "Сравнение изменений",
     uncommitted: "Незакоммиченные изменения",

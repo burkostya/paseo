@@ -1,4 +1,5 @@
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { test, expect, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
@@ -16,6 +17,54 @@ import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
 function workspaceRowTestId(workspaceId: string): string {
   return `sidebar-workspace-row-${getServerId()}:${workspaceId}`;
+}
+
+for (const compact of [false, true]) {
+  test(`imports an external worktree from the project menu (${compact ? "compact" : "desktop"})`, async ({
+    page,
+  }, testInfo) => {
+    if (compact) await page.setViewportSize({ width: 390, height: 844 });
+    const workspace = await seedWorkspace({ repoPrefix: "import-worktree-" });
+    const externalPath = path.join(workspace.repoPath, "external worktree");
+    try {
+      execFileSync("git", ["worktree", "add", "-b", "feature/external", externalPath], {
+        cwd: workspace.repoPath,
+        stdio: "pipe",
+      });
+      await gotoAppShell(page);
+      if (compact) await page.getByRole("button", { name: "Open menu", exact: true }).click();
+      await waitForSidebarHydration(page);
+      const key = projectEquivalenceViewKey(workspace.projectKey);
+      await page.getByTestId(`sidebar-project-row-${key}`).hover();
+      await page.getByTestId(`sidebar-project-kebab-${key}`).click();
+      await page.getByTestId(`sidebar-project-menu-import-worktrees-${key}`).click();
+      const choice = page.getByRole("checkbox", {
+        name: `feature/external, ${externalPath}`,
+        exact: true,
+      });
+      await expect(choice).toBeVisible();
+      await choice.click();
+      await page.screenshot({ path: testInfo.outputPath("worktree-import-selected.png") });
+      await page.getByTestId("import-worktrees-submit").click();
+      await expect(choice).toHaveAttribute("aria-checked", "true");
+      const open = page.getByRole("button", { name: "Open", exact: true });
+      await expect(open).toBeVisible();
+      await expect
+        .poll(async () => {
+          const listed = await workspace.client.fetchWorkspaces({
+            filter: { projectId: workspace.projectId },
+          });
+          return listed.entries.filter((entry) => entry.workspaceDirectory === externalPath).length;
+        })
+        .toBe(1);
+      await page.screenshot({ path: testInfo.outputPath("worktree-import-added.png") });
+      await open.click();
+      await expect(page.getByTestId("import-worktrees-submit")).toHaveCount(0);
+      expect(existsSync(externalPath)).toBe(true);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
 }
 
 async function archiveWorkspaceFromSidebar(page: Page, workspaceId: string): Promise<void> {
