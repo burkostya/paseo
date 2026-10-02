@@ -2,6 +2,20 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
+  worktreeImport: {
+    title: "Ajouter des worktrees existants…",
+    chooseHost: "Choisissez un hôte",
+    updateHost: "Mettez à jour l’hôte pour importer des worktrees.",
+    preserveFiles:
+      "Les worktrees externes restent sur le disque lorsque vous archivez leurs espaces de travail.",
+    refresh: "Actualiser",
+    empty: "Aucun worktree lié trouvé.",
+    detached: "HEAD détachée · {{commit}}",
+    unavailable: "Indisponible sur le disque",
+    restore: "Archivé · sélectionner pour restaurer",
+    open: "Ouvrir",
+    add: "Ajouter la sélection ({{count}})",
+  },
   diffComparison: en.diffComparison,
   paneFind: {
     connectionFailure:

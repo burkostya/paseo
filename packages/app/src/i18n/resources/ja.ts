@@ -2,6 +2,19 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ja: TranslationResources = {
+  worktreeImport: {
+    title: "既存のワークツリーを追加…",
+    chooseHost: "ホストを選択",
+    updateHost: "ワークツリーをインポートするにはホストを更新してください。",
+    preserveFiles: "ワークスペースをアーカイブしても、外部のワークツリーはディスクに残ります。",
+    refresh: "更新",
+    empty: "リンクされたワークツリーが見つかりません。",
+    detached: "切り離された HEAD · {{commit}}",
+    unavailable: "ディスク上で利用できません",
+    restore: "アーカイブ済み · 選択して復元",
+    open: "開く",
+    add: "選択項目を追加 ({{count}})",
+  },
   diffComparison: en.diffComparison,
   paneFind: {
     connectionFailure:

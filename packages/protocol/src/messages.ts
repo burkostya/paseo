@@ -2613,6 +2613,19 @@ export const PaseoWorktreeListRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const ProjectWorktreeListRequestSchema = z.object({
+  type: z.literal("project.worktree.list.request"),
+  projectId: z.string(),
+  requestId: z.string(),
+});
+
+export const ProjectWorktreeImportRequestSchema = z.object({
+  type: z.literal("project.worktree.import.request"),
+  projectId: z.string(),
+  path: z.string(),
+  requestId: z.string(),
+});
+
 export const PaseoWorktreeArchiveRequestSchema = z.object({
   type: z.literal("paseo_worktree_archive_request"),
   worktreePath: z.string().optional(),
@@ -3443,6 +3456,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   GitHubSearchRequestSchema,
   DirectorySuggestionsRequestSchema,
   PaseoWorktreeListRequestSchema,
+  ProjectWorktreeListRequestSchema,
+  ProjectWorktreeImportRequestSchema,
   PaseoWorktreeArchiveRequestSchema,
   CreatePaseoWorktreeRequestSchema,
   WorkspaceSetupStatusRequestSchema,
@@ -3768,6 +3783,7 @@ export const ServerInfoStatusPayloadSchema = z
         checkoutRefresh: z.boolean().optional(),
         // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
         workspaceMultiplicity: z.boolean().optional(),
+        projectWorktreeImport: z.boolean().optional(),
         // COMPAT(projectRemove): added in v0.1.97, drop the gate when floor >= v0.1.97.
         projectRemove: z.boolean().optional(),
         // COMPAT(projectAdd): added in v0.1.97, drop the gate when floor >= v0.1.97.
@@ -6074,6 +6090,34 @@ export const PaseoWorktreeListResponseSchema = z.object({
   }),
 });
 
+export const ProjectWorktreeCandidateSchema = z.object({
+  path: z.string(),
+  branch: z.string().nullable(),
+  head: z.string(),
+  unavailable: z.boolean(),
+  workspaceId: z.string().nullable(),
+  archived: z.boolean(),
+});
+export type ProjectWorktreeCandidate = z.infer<typeof ProjectWorktreeCandidateSchema>;
+
+export const ProjectWorktreeListResponseSchema = z.object({
+  type: z.literal("project.worktree.list.response"),
+  payload: z.object({
+    worktrees: z.array(ProjectWorktreeCandidateSchema),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+});
+
+export const ProjectWorktreeImportResponseSchema = z.object({
+  type: z.literal("project.worktree.import.response"),
+  payload: z.object({
+    workspaceId: z.string().nullable(),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+});
+
 export const PaseoWorktreeArchiveResponseSchema = z.object({
   type: z.literal("paseo_worktree_archive_response"),
   payload: z.object({
@@ -7129,6 +7173,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   GitHubSearchResponseSchema,
   DirectorySuggestionsResponseSchema,
   PaseoWorktreeListResponseSchema,
+  ProjectWorktreeListResponseSchema,
+  ProjectWorktreeImportResponseSchema,
   PaseoWorktreeArchiveResponseSchema,
   CreatePaseoWorktreeResponseSchema,
   FileExplorerResponseSchema,

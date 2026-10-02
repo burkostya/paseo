@@ -2,6 +2,19 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const zhCN: TranslationResources = {
+  worktreeImport: {
+    title: "添加现有工作树…",
+    chooseHost: "选择主机",
+    updateHost: "请更新主机以导入工作树。",
+    preserveFiles: "归档工作区时，外部工作树会保留在磁盘上。",
+    refresh: "刷新",
+    empty: "未找到关联的工作树。",
+    detached: "分离的 HEAD · {{commit}}",
+    unavailable: "磁盘上不可用",
+    restore: "已归档 · 选择以恢复",
+    open: "打开",
+    add: "添加所选项（{{count}}）",
+  },
   diffComparison: en.diffComparison,
   paneFind: {
     connectionFailure: "无法搜索此聊天。请检查主机连接后重试。",

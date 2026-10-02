@@ -1,4 +1,5 @@
 import { describeWorkspaceComparison } from "./git-comparison/snapshot.js";
+import { listProjectWorktrees, importProjectWorktree } from "./project-worktree-import.js";
 import { searchTimeline } from "./agent/chat-search/index.js";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { BrowserAutomationHostCapabilitySchema } from "@getpaseo/protocol/browser-automation/capabilities";
@@ -2921,6 +2922,9 @@ export class Session {
         return this.handleProjectListRequest(msg);
       case "paseo_worktree_list_request":
         return this.handlePaseoWorktreeListRequest(msg);
+      case "project.worktree.list.request":
+      case "project.worktree.import.request":
+        return this.handleProjectWorktreeRequest(msg);
       case "paseo_worktree_archive_request":
         return this.handlePaseoWorktreeArchiveRequest(msg);
       case "create_paseo_worktree_request":
@@ -7161,6 +7165,57 @@ export class Session {
     return creationRequest.source.kind === "directory"
       ? this.handleWorkspaceCreateLocal(creationRequest, workspaceId)
       : this.handleWorkspaceCreateWorktree(creationRequest, workspaceId);
+  }
+
+  private async handleProjectWorktreeRequest(
+    request: Extract<
+      SessionInboundMessage,
+      { type: "project.worktree.list.request" | "project.worktree.import.request" }
+    >,
+  ): Promise<void> {
+    const deps = { projects: this.projectRegistry, workspaces: this.workspaceRegistry };
+    if (request.type === "project.worktree.list.request") {
+      try {
+        const worktrees = await listProjectWorktrees(deps, request.projectId);
+        this.emit({
+          type: "project.worktree.list.response",
+          payload: { worktrees, error: null, requestId: request.requestId },
+        });
+      } catch (error) {
+        this.emit({
+          type: "project.worktree.list.response",
+          payload: { worktrees: [], error: getErrorMessage(error), requestId: request.requestId },
+        });
+      }
+      return;
+    }
+    try {
+      const workspaceId = await importProjectWorktree(
+        {
+          ...deps,
+          create: async (path) => {
+            const workspace = await this.handleWorkspaceCreateLocal({
+              type: "workspace.create.request",
+              requestId: request.requestId,
+              source: { kind: "directory", path, projectId: request.projectId },
+            });
+            return workspace.id;
+          },
+          restore: (existingWorkspaceId) => this.restoreWorkspaceAndEmit(existingWorkspaceId),
+        },
+        request.projectId,
+        request.path,
+      );
+      this.emit({
+        type: "project.worktree.import.response",
+        payload: { workspaceId, error: null, requestId: request.requestId },
+      });
+    } catch (error) {
+      this.emit({
+        type: "project.worktree.import.response",
+        payload: { workspaceId: null, error: getErrorMessage(error), requestId: request.requestId },
+      });
+    }
   }
 
   private async handleWorkspaceCreateLocal(

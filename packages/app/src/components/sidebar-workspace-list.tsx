@@ -1,3 +1,4 @@
+import { ProjectWorktreeImportSheet } from "@/components/project-worktree-import-sheet";
 import { ComparisonMenuTrigger, useComparisonMenuPages } from "@/git/comparison/menu";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
@@ -450,6 +451,7 @@ function ProjectRowTrailingActions({
   isMobileBreakpoint,
   isProjectActive,
   onBeginWorkspaceSetup,
+  onImportWorktrees,
   onRemoveProject,
   removeProjectStatus,
 }: {
@@ -462,6 +464,7 @@ function ProjectRowTrailingActions({
   isMobileBreakpoint: boolean;
   isProjectActive: boolean;
   onBeginWorkspaceSetup: () => void;
+  onImportWorktrees?: () => void;
   onRemoveProject?: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
@@ -486,6 +489,7 @@ function ProjectRowTrailingActions({
             projectViewKey={projectViewKey}
             settingsTarget={settingsTarget}
             projectPath={projectPath}
+            onImportWorktrees={onImportWorktrees}
             onRemoveProject={onRemoveProject}
             removeProjectStatus={removeProjectStatus}
           />
@@ -514,12 +518,14 @@ function ProjectKebabMenu({
   projectViewKey,
   settingsTarget,
   projectPath,
+  onImportWorktrees,
   onRemoveProject,
   removeProjectStatus,
 }: {
   projectViewKey: string;
   settingsTarget: { serverId: string; projectId: string } | null;
   projectPath: string;
+  onImportWorktrees?: () => void;
   onRemoveProject: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
@@ -554,6 +560,7 @@ function ProjectKebabMenu({
           projectViewKey={projectViewKey}
           settingsTarget={settingsTarget}
           projectPath={projectPath}
+          onImportWorktrees={onImportWorktrees}
           onRemoveProject={onRemoveProject}
           removeProjectStatus={removeProjectStatus}
         />
@@ -582,6 +589,7 @@ function ProjectMenuItems({
   projectViewKey,
   settingsTarget,
   projectPath,
+  onImportWorktrees,
   onRemoveProject,
   removeProjectStatus,
 }: {
@@ -589,6 +597,7 @@ function ProjectMenuItems({
   projectViewKey: string;
   settingsTarget: { serverId: string; projectId: string } | null;
   projectPath: string;
+  onImportWorktrees?: () => void;
   onRemoveProject: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
@@ -612,6 +621,15 @@ function ProjectMenuItems({
 
   return (
     <>
+      {onImportWorktrees ? (
+        <ProjectMenuItem
+          surface={surface}
+          onSelect={onImportWorktrees}
+          testID={`sidebar-project-menu-import-worktrees-${projectViewKey}`}
+        >
+          {t("worktreeImport.title")}
+        </ProjectMenuItem>
+      ) : null}
       {settingsTarget ? <ComparisonMenuTrigger /> : null}
       {settingsTarget ? (
         <ProjectMenuItem
@@ -931,6 +949,13 @@ function ProjectHeaderRow({
   removeProjectStatus = "idle",
   dragHandleProps,
 }: ProjectHeaderRowProps) {
+  const [importOpen, setImportOpen] = useState(false);
+  const handleImportWorktrees = useCallback(() => setImportOpen(true), []);
+  const handleCloseImport = useCallback(() => setImportOpen(false), []);
+  const importWorktreesAction = useMemo(
+    () => (project.projectKind === "non_git" ? undefined : handleImportWorktrees),
+    [project.projectKind, handleImportWorktrees],
+  );
   const [isHovered, setIsHovered] = useState(false);
   const [isPressed, setIsPressed] = useState(false);
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
@@ -1040,6 +1065,7 @@ function ProjectHeaderRow({
         isMobileBreakpoint={isMobileBreakpoint}
         isProjectActive={isProjectActive}
         onBeginWorkspaceSetup={handleBeginWorkspaceSetup}
+        onImportWorktrees={importWorktreesAction}
         onRemoveProject={onRemoveProject}
         removeProjectStatus={removeProjectStatus}
       />
@@ -1078,6 +1104,13 @@ function ProjectHeaderRow({
 
   return (
     <ContextMenu open={contextMenuOpen} onOpenChange={handleContextMenuOpenChange}>
+      {importOpen ? (
+        <ProjectWorktreeImportSheet
+          projectName={displayName}
+          hosts={project.hosts}
+          onClose={handleCloseImport}
+        />
+      ) : null}
       <View
         {...dragAttributes}
         {...dragHandleProps?.listeners}
@@ -1110,6 +1143,7 @@ function ProjectHeaderRow({
           projectViewKey={project.viewKey}
           settingsTarget={settingsTarget}
           projectPath={projectPath}
+          onImportWorktrees={importWorktreesAction}
           onRemoveProject={onRemoveProject}
           removeProjectStatus={removeProjectStatus}
         />
