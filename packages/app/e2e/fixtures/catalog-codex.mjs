@@ -1,6 +1,13 @@
 import readline from "node:readline";
 import { randomUUID } from "node:crypto";
 
+const planApproval = process.argv.includes("--plan-approval");
+const collaborationModes = planApproval
+  ? [
+      { name: "Plan", mode: "plan" },
+      { name: "Default", mode: "default" },
+    ]
+  : [];
 const fast = { id: "priority", name: "Fast", description: "Faster processing, increased usage" };
 const ultra = {
   id: "ultrafast",
@@ -30,7 +37,7 @@ function respond(method, params) {
     case "config/read":
       return { config: { model: models[0].id, model_reasoning_effort: "medium" } };
     case "collaborationMode/list":
-      return { data: [] };
+      return { data: collaborationModes };
     case "skills/list":
       return { data: [] };
     case "thread/list":
@@ -44,6 +51,11 @@ function respond(method, params) {
       return { thread: { id: params.threadId, turns: [] } };
     case "turn/start": {
       const turnId = randomUUID();
+      const isPlanTurn = planApproval && params.collaborationMode?.mode === "plan";
+      const itemType = isPlanTurn ? "plan" : "agentMessage";
+      const text = isPlanTurn
+        ? "1. Implement the proposed changes.\n2. Verify the result."
+        : "Ready to work on this project.";
       setTimeout(() => {
         send({
           method: "turn/started",
@@ -56,8 +68,8 @@ function respond(method, params) {
             turnId,
             item: {
               id: randomUUID(),
-              type: "agentMessage",
-              text: "Ready to work on this project.",
+              type: itemType,
+              text,
             },
           },
         });

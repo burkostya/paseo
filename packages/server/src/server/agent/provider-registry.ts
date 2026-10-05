@@ -7,6 +7,7 @@ import type {
   AgentMode,
   AgentModelDefinition,
   AgentPersistenceHandle,
+  AgentPermissionRequest,
   AgentProvider,
   AgentRuntimeInfo,
   AgentSession,
@@ -343,10 +344,24 @@ function mapRuntimeInfo(provider: AgentProvider, runtimeInfo: AgentRuntimeInfo):
 }
 
 function mapStreamEvent(provider: AgentProvider, event: AgentStreamEvent): AgentStreamEvent {
+  if (event.type === "permission_requested") {
+    return {
+      ...event,
+      provider,
+      request: mapPermissionRequest(provider, event.request),
+    };
+  }
   return {
     ...event,
     provider,
   };
+}
+
+function mapPermissionRequest(
+  provider: AgentProvider,
+  request: AgentPermissionRequest,
+): AgentPermissionRequest {
+  return { ...request, provider };
 }
 
 function mapModel(
@@ -463,7 +478,8 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     getAvailableModes: () => inner.getAvailableModes(),
     getCurrentMode: () => inner.getCurrentMode(),
     setMode: (modeId) => inner.setMode(modeId),
-    getPendingPermissions: () => inner.getPendingPermissions(),
+    getPendingPermissions: () =>
+      inner.getPendingPermissions().map((request) => mapPermissionRequest(provider, request)),
     respondToPermission: (requestId, response) => inner.respondToPermission(requestId, response),
     describePersistence: () => mapPersistenceHandle(provider, inner.describePersistence()),
     interrupt: () => inner.interrupt(),
