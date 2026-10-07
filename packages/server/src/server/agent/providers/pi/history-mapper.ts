@@ -6,6 +6,7 @@ import {
   type PiExtensionHost,
 } from "./extensions/index.js";
 import type { PiAgentMessage, PiImageContent, PiTextContent } from "./rpc-types.js";
+import type { PiContextCommandCheckpoint } from "./command-checkpoints.js";
 import {
   extractTextFromToolResult,
   mapToolDetail,
@@ -21,6 +22,7 @@ export interface PiCapturedUserMessageEntry {
 }
 
 export interface PiHistoryMapperHooks {
+  commandCheckpoints?: readonly PiContextCommandCheckpoint[];
   mapCustomMessage?: (
     text: string,
     provider: string,
@@ -74,7 +76,23 @@ export class PiHistoryMapper {
   mapMessages(messages: readonly PiAgentMessage[]): AgentStreamEvent[] {
     const events: AgentStreamEvent[] = [];
 
-    for (const message of messages) {
+    const checkpoints = this.hooks.commandCheckpoints ?? [];
+    let checkpointIndex = 0;
+    const emitCheckpoints = (messageIndex: number): void => {
+      while (checkpointIndex < checkpoints.length) {
+        const checkpoint = checkpoints[checkpointIndex];
+        if (checkpoint.messageIndex !== messageIndex) break;
+        events.push({
+          type: "timeline",
+          provider: this.provider,
+          timestamp: checkpoint.timestamp,
+          item: { type: "user_message", text: checkpoint.text, messageId: checkpoint.id },
+        });
+        checkpointIndex += 1;
+      }
+    };
+    for (const [messageIndex, message] of messages.entries()) {
+      emitCheckpoints(messageIndex);
       switch (message.role) {
         case "user":
           events.push(...this.mapUserMessage(message));
@@ -93,6 +111,11 @@ export class PiHistoryMapper {
           events.push(this.mapBashExecutionMessage(message));
           break;
       }
+    }
+
+    emitCheckpoints(messages.length);
+    if (checkpointIndex !== checkpoints.length) {
+      throw new Error("Pi command checkpoints did not match the captured conversation");
     }
 
     return events;
