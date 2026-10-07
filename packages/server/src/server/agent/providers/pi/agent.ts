@@ -2,7 +2,7 @@ import { mapCustomMessageToToolCall } from "../custom-message.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join, resolve as resolvePath } from "node:path";
+import { join } from "node:path";
 import type { Logger } from "pino";
 import stripAnsi from "strip-ansi";
 import { z } from "zod";
@@ -66,6 +66,7 @@ import {
 } from "./history-mapper.js";
 import { materializeProviderImage } from "../provider-image-output.js";
 import { PiCliRuntime } from "./cli-runtime.js";
+import { resolvePiAgentDir } from "./runtime.js";
 import {
   createPiExtensionHost,
   piExtensionRuntimeBridge,
@@ -86,6 +87,17 @@ import type {
 } from "./rpc-types.js";
 import { PiUsagePoller, type PiUsagePollScheduler } from "./usage-poller.js";
 import {
+  PiCommandCheckpointSchema,
+  PiCheckpointCaptureSchema,
+  resolveLegacyCommandLeaf,
+  type PiCommandCheckpoint,
+  type PiContextCommandCheckpoint,
+  type PiCheckpointCommand,
+  type PiOutOfBandCommandInput,
+  type PiBranchNode,
+  type ResolvePiRewindTargetInput,
+} from "./command-checkpoints.js";
+import {
   mapToolDetail,
   parseToolArgs,
   parseToolResult,
@@ -98,6 +110,10 @@ const DEFAULT_PI_THINKING_LEVEL: PiThinkingLevel = "medium";
 const PI_BINARY_COMMAND = process.env.PI_COMMAND ?? process.env.PI_ACP_PI_COMMAND ?? "pi";
 const PASEO_PI_TREE_EXTENSION_COMMAND = "paseo_tree";
 const PASEO_PI_CAPTURE_EXTENSION_COMMAND = "paseo_capture_entries";
+const PASEO_PI_CHECKPOINT_EXTENSION_COMMAND = "paseo_command_checkpoint";
+const PASEO_PI_CHECKPOINT_ENTRY_TYPE = "paseo_command_checkpoint";
+const PASEO_PI_NATIVE_COMMAND_ENTRY_TYPE = "paseo_command_native_prompt";
+const PASEO_PI_DISCARDED_CHECKPOINT_ENTRY_TYPE = "paseo_command_discarded";
 const PASEO_PI_REWIND_ENTRY_TYPE = "paseo_rewind";
 const PASEO_PI_ENTRY_CAPTURE_MARKER = "PASEO_ENTRY_CAPTURE";
 const PASEO_PI_SUBMITTED_USER_ENTRY_MARKER = "PASEO_SUBMITTED_USER_ENTRY";
@@ -144,6 +160,7 @@ function mapPiSlashCommands(
     handledCommands.map((command) => [command.name, { ...command }]),
   );
   for (const command of commands) {
+    if (command.name === PASEO_PI_CHECKPOINT_EXTENSION_COMMAND) continue;
     const knownCommand = mappedCommands.get(command.name);
     mappedCommands.set(command.name, {
       name: command.name,
@@ -544,20 +561,6 @@ function toPiBuiltinMcpServers(
   return piServers;
 }
 
-function resolvePiAgentDir(env: Record<string, string> | undefined): string {
-  const configured = env?.PI_CODING_AGENT_DIR?.trim() || process.env.PI_CODING_AGENT_DIR?.trim();
-  if (!configured) {
-    return join(homedir(), ".pi", "agent");
-  }
-  if (configured === "~") {
-    return homedir();
-  }
-  if (configured.startsWith("~/")) {
-    return resolvePath(homedir(), configured.slice(2));
-  }
-  return resolvePath(configured);
-}
-
 function readPiGlobalMcpConfig(env: Record<string, string> | undefined): Record<string, unknown> {
   const globalConfigPath = join(resolvePiAgentDir(env), "mcp.json");
   if (!existsSync(globalConfigPath)) {
@@ -654,6 +657,28 @@ function createPiPaseoExtensionFile({
 	}
 
 	function emitEntryCapture(ctx, reason, requestId) {
+	  const entries = ctx.sessionManager.getEntries();
+	  const branch = ctx.sessionManager.getBranch();
+	  const excluded = new Set(entries
+	    .filter((entry) => entry.type === "custom" && (entry.customType === "${PASEO_PI_NATIVE_COMMAND_ENTRY_TYPE}" || entry.customType === "${PASEO_PI_DISCARDED_CHECKPOINT_ENTRY_TYPE}"))
+	    .map((entry) => entry.data.checkpointId));
+	  for (const entry of branch) {
+	    if (entry.type === "custom" && entry.customType === "${PASEO_PI_REWIND_ENTRY_TYPE}") {
+	      excluded.add(entry.data.targetId);
+	    }
+	  }
+	  function checkpoint(entry) {
+	    return { id: entry.id, parentId: entry.parentId ?? null, timestamp: entry.timestamp, ...entry.data };
+	  }
+	  const contextCheckpoints = [];
+	  let messageIndex = 0;
+	  for (const projected of ctx.sessionManager.buildSessionProjection().entries) {
+	    const entry = projected.sourceEntry;
+	    if (entry.type === "custom" && entry.customType === "${PASEO_PI_CHECKPOINT_ENTRY_TYPE}" && !excluded.has(entry.id)) {
+	      contextCheckpoints.push({ ...checkpoint(entry), messageIndex });
+	    }
+	    messageIndex += projected.messages.length;
+	  }
 	  ctx.ui.notify(
 	    "${PASEO_PI_ENTRY_CAPTURE_MARKER} " +
 	      JSON.stringify({
@@ -663,6 +688,9 @@ function createPiPaseoExtensionFile({
 	        treeEntries: toCapturedUserEntries(ctx.sessionManager.getEntries()),
 	        // The entries getMessages() replays, so the nth one is the nth replayed user message.
 	        contextEntries: toCapturedUserEntries(ctx.sessionManager.buildContextEntries()),
+	        treeCheckpoints: entries.filter((entry) => entry.type === "custom" && entry.customType === "${PASEO_PI_CHECKPOINT_ENTRY_TYPE}").map(checkpoint),
+	        contextCheckpoints,
+	        branchNodes: branch.map((entry) => ({ id: entry.id, parentId: entry.parentId ?? null, timestamp: entry.timestamp, type: entry.type, role: entry.message?.role })),
 	      }),
 	    "info",
 	  );
@@ -680,6 +708,8 @@ function createPiPaseoExtensionFile({
 	    pi.registerMcpServer(name, config);
 	  }
 	  const submittedUserMessages = [];
+	  const submittedCommandCheckpoints = new WeakMap();
+	  let activeCommandCheckpoint = null;
 	  ${piExtensionRuntimeBridge}
 
 	  function emitSubmittedUserEntries(ctx) {
@@ -696,6 +726,11 @@ function createPiPaseoExtensionFile({
 	      }
 	      submittedUserMessages.splice(index, 1);
 	      index -= 1;
+	      const checkpointId = submittedCommandCheckpoints.get(message);
+	      if (checkpointId) {
+	        pi.appendEntry("${PASEO_PI_NATIVE_COMMAND_ENTRY_TYPE}", { checkpointId, messageId: entry.id });
+	        submittedCommandCheckpoints.delete(message);
+	      }
 	      ctx.ui.notify(
 	        "${PASEO_PI_SUBMITTED_USER_ENTRY_MARKER} " +
 	          JSON.stringify({ entry: toCapturedUserEntry(entry) }),
@@ -719,6 +754,10 @@ function createPiPaseoExtensionFile({
 	  pi.on("message_end", async (event) => {
 	    if (event.message?.role === "user") {
 	      submittedUserMessages.push(event.message);
+	      if (activeCommandCheckpoint) {
+	        submittedCommandCheckpoints.set(event.message, activeCommandCheckpoint);
+	        activeCommandCheckpoint = null;
+	      }
 	    }
 	  });
 
@@ -730,7 +769,25 @@ function createPiPaseoExtensionFile({
 
 	  pi.on("turn_end", async (_event, ctx) => {
 	    emitSubmittedUserEntries(ctx);
+	    activeCommandCheckpoint = null;
 	    emitEntryCapture(ctx, "turn_end");
+	  });
+
+	  pi.registerCommand("${PASEO_PI_CHECKPOINT_EXTENSION_COMMAND}", {
+	    description: "Internal Paseo command checkpoint bridge",
+	    handler: async (args, ctx) => {
+	      const payload = decodePayload(args.trim());
+	      if (payload.operation === "clear") {
+	        if (activeCommandCheckpoint === payload.checkpointId) activeCommandCheckpoint = null;
+	        if (payload.discard) pi.appendEntry("${PASEO_PI_DISCARDED_CHECKPOINT_ENTRY_TYPE}", { checkpointId: payload.checkpointId });
+	        emitCommandResult(ctx, payload.requestId, { ok: true, result: null });
+	        return;
+	      }
+	      pi.appendEntry("${PASEO_PI_CHECKPOINT_ENTRY_TYPE}", { text: payload.text, ...(payload.clientMessageId ? { clientMessageId: payload.clientMessageId } : {}) });
+	      const entry = ctx.sessionManager.getLeafEntry();
+	      activeCommandCheckpoint = payload.trackPrompt ? entry.id : null;
+	      emitCommandResult(ctx, payload.requestId, { ok: true, result: { id: entry.id, parentId: entry.parentId ?? null, timestamp: entry.timestamp, ...entry.data } });
+	    },
 	  });
 
 	  pi.registerCommand("${PASEO_PI_CAPTURE_EXTENSION_COMMAND}", {
@@ -747,6 +804,7 @@ function createPiPaseoExtensionFile({
 	      const payload = decodePayload(args.trim());
 	      try {
 	        const result = await ctx.navigateTree(payload.targetId, { summarize: false });
+	        if (result.cancelled) throw new Error("Pi tree navigation was cancelled");
 	        // Pi reopens a session at its last entry, so record the rewind on the new branch to keep it.
 	        pi.appendEntry("${PASEO_PI_REWIND_ENTRY_TYPE}", { targetId: payload.targetId });
 	        emitEntryCapture(ctx, "tree_navigation");
@@ -1179,6 +1237,7 @@ export class PiRpcAgentSession implements AgentSession {
   private activeTurnStartedEmitted = false;
   private pendingSettledMessages: PiAgentMessage[] | null = null;
   private activeNoTurnPromptText: string | null = null;
+  private activeCommandCheckpoint: PiCommandCheckpoint | null = null;
   private readonly pendingNoTurnOutputs: Array<{ turnId: string; message: string }> = [];
   private activePromptRequestId: string | null = null;
   private readonly pendingPromptResults = new Map<string, boolean>();
@@ -1186,6 +1245,10 @@ export class PiRpcAgentSession implements AgentSession {
   currentLeafOverrideId: string | null | undefined;
   private readonly contextUserEntries: PiCapturedEntry[] = [];
   private readonly treeUserEntriesById = new Map<string, PiCapturedEntry>();
+  private readonly treeCheckpointsById = new Map<string, PiCommandCheckpoint>();
+  private contextCheckpoints: PiContextCommandCheckpoint[] = [];
+  private branchNodes: PiBranchNode[] = [];
+  private readonly pendingOutOfBandCommands = new Set<string>();
   private readonly pendingExtensionResults = new Map<string, PendingExtensionResult>();
   private outOfBandCompactionEmit: ((event: AgentStreamEvent) => void) | null = null;
   private outOfBandCompactionStarted = false;
@@ -1278,6 +1341,7 @@ export class PiRpcAgentSession implements AgentSession {
     }
 
     const payload = convertPromptInput(prompt, { model: this.state.model });
+    const shouldProbeForNoTurnPrompt = this.parseSlashCommandInput(payload.text) !== null;
     const turnId = randomUUID();
     this.activeTurnId = turnId;
     this.usagePoller.startTurn();
@@ -1290,7 +1354,34 @@ export class PiRpcAgentSession implements AgentSession {
     this.pendingSteerSubmissions.length = 0;
     this.clearNoTurnBuffers();
     this.activeNoTurnPromptText = payload.text;
-    const shouldProbeForNoTurnPrompt = this.parseSlashCommandInput(payload.text) !== null;
+    let commandCheckpoint: PiCommandCheckpoint | null = null;
+    try {
+      if (shouldProbeForNoTurnPrompt) {
+        commandCheckpoint = await this.createCommandCheckpoint({
+          operation: "create",
+          text: payload.text,
+          clientMessageId: options?.clientMessageId,
+          trackPrompt: true,
+        });
+        if (this.activeTurnId !== turnId) {
+          await this.runCheckpointCommand({
+            operation: "clear",
+            checkpointId: commandCheckpoint.id,
+            discard: true,
+          });
+          return { turnId };
+        }
+      }
+    } catch (error) {
+      if (this.activeTurnId === turnId) {
+        this.usagePoller.stopTurn();
+        this.activeTurnId = null;
+        this.activeClientMessageId = null;
+        this.clearNoTurnBuffers();
+      }
+      throw error;
+    }
+    this.activeCommandCheckpoint = commandCheckpoint;
 
     void (async () => {
       try {
@@ -1311,6 +1402,17 @@ export class PiRpcAgentSession implements AgentSession {
           await this.completePromptIfHandledWithoutTurn(turnId);
         }
       } catch (error) {
+        if (commandCheckpoint) {
+          void this.runCheckpointCommand({
+            operation: "clear",
+            checkpointId: commandCheckpoint.id,
+          }).catch((cleanupError) =>
+            this.logger.warn(
+              { err: cleanupError },
+              "Failed to clear Pi command checkpoint tracking",
+            ),
+          );
+        }
         if (this.activeTurnId !== turnId) {
           return;
         }
@@ -1414,7 +1516,7 @@ export class PiRpcAgentSession implements AgentSession {
       this.provider,
       await this.runtimeSession.getMessages(),
       this.contextUserEntries,
-      {},
+      { commandCheckpoints: this.contextCheckpoints },
       // At most eight 2 MiB child files per replay; later cards retain their summaries.
       createPiExtensionHost(this.logger, undefined, 16 * 1024 * 1024),
       this.closeController.signal,
@@ -1555,20 +1657,59 @@ export class PiRpcAgentSession implements AgentSession {
     if (this.activeTurnId) {
       throw new Error("Cannot rewind the Pi conversation while a turn is active");
     }
+    if (this.pendingOutOfBandCommands.size > 0) {
+      throw new Error("Cannot rewind the Pi conversation while a command is still running");
+    }
     await this.refreshState().catch(() => undefined);
     await this.requestEntryCapture("rewind");
-    const targetEntry = this.treeUserEntriesById.get(input.messageId);
-    if (!targetEntry) {
+    const legacyLeafId = input.messageId.startsWith("paseo-leaf:")
+      ? input.messageId.slice("paseo-leaf:".length)
+      : null;
+    const targetId = legacyLeafId ?? input.messageId;
+    const userEntry = this.treeUserEntriesById.get(targetId);
+    const checkpoint = this.treeCheckpointsById.get(targetId);
+    const legacyNode = legacyLeafId
+      ? this.branchNodes.find((node) => node.id === legacyLeafId)
+      : null;
+    if (!userEntry && !checkpoint && !legacyNode) {
       throw new Error(`Pi rewind target ${input.messageId} was not found in captured tree entries`);
     }
     await revertPiConversation({
-      messageId: input.messageId,
+      messageId: targetId,
       navigator: {
         navigateTree: (treeEntryId) => this.runPiTreeExtensionCommand(treeEntryId),
       },
     });
-    this.currentLeafOverrideId = targetEntry.parentId;
+    this.currentLeafOverrideId = userEntry ? userEntry.parentId : targetId;
     this.activeToolCalls.clear();
+  }
+
+  async resolveRewindTarget(input: ResolvePiRewindTargetInput): Promise<string | null> {
+    const command = this.parseSlashCommandInput(input.text);
+    if (!command) return null;
+    if (this.pendingOutOfBandCommands.size > 0) return null;
+    await this.refreshState();
+    if (this.state.isStreaming || this.state.isCompacting) return null;
+    const isBuiltin = PI_HANDLED_BUILTIN_SLASH_COMMANDS.some(
+      (candidate) => candidate.name === command.commandName,
+    );
+    const commands = await this.runtimeSession.getCommands();
+    const isExtension = commands.some(
+      (candidate) => candidate.name === command.commandName && candidate.source === "extension",
+    );
+    if (!isBuiltin && !isExtension) return null;
+    await this.requestEntryCapture("legacy_command_rewind");
+    const checkpoint = [...this.treeCheckpointsById.values()].find(
+      (entry) => entry.clientMessageId === input.messageId,
+    );
+    if (checkpoint) return checkpoint.id;
+    const target = resolveLegacyCommandLeaf(input, this.branchNodes);
+    if (!target) {
+      throw new Error(
+        "The rewind checkpoint for this older Pi command was not saved and cannot be restored unambiguously",
+      );
+    }
+    return target;
   }
 
   private async runPiTreeExtensionCommand(targetId: string): Promise<unknown> {
@@ -1607,7 +1748,7 @@ export class PiRpcAgentSession implements AgentSession {
 
   tryHandleOutOfBand(
     prompt: AgentPromptInput,
-  ): { run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void> } | null {
+  ): ReturnType<NonNullable<AgentSession["tryHandleOutOfBand"]>> {
     if (typeof prompt !== "string") {
       return null;
     }
@@ -1618,15 +1759,25 @@ export class PiRpcAgentSession implements AgentSession {
     const commandName = parsed.commandName.toLowerCase();
     if (commandName === "compact") {
       return {
-        run: async ({ emit }) => {
-          await this.executeCompactCommand(parsed.args, emit);
+        run: async ({ emit, clientMessageId }) => {
+          await this.runOutOfBandCommand({
+            text: prompt,
+            clientMessageId,
+            emit,
+            run: () => this.executeCompactCommand(parsed.args, emit),
+          });
         },
       };
     }
     if (commandName === "autocompact") {
       return {
-        run: async ({ emit }) => {
-          await this.executeAutoCompactCommand(parsed.args, emit);
+        run: async ({ emit, clientMessageId }) => {
+          await this.runOutOfBandCommand({
+            text: prompt,
+            clientMessageId,
+            emit,
+            run: () => this.executeAutoCompactCommand(parsed.args, emit),
+          });
         },
       };
     }
@@ -1688,6 +1839,11 @@ export class PiRpcAgentSession implements AgentSession {
     if (this.activeTurnId !== turnId || this.activeTurnStarted) {
       return;
     }
+    const checkpoint = this.activeCommandCheckpoint;
+    if (checkpoint) {
+      await this.runCheckpointCommand({ operation: "clear", checkpointId: checkpoint.id });
+      if (this.activeTurnId !== turnId || this.activeTurnStarted) return;
+    }
     this.emitBufferedNoTurnOutputs(turnId);
     this.completeTurn(turnId, []);
   }
@@ -1711,19 +1867,19 @@ export class PiRpcAgentSession implements AgentSession {
     if (this.activeTurnId !== turnId || this.activeTurnStarted || runtimeState.isStreaming) {
       return;
     }
-
-    this.emitBufferedNoTurnOutputs(turnId);
-    this.completeTurn(turnId, []);
+    await this.completeNoTurnPrompt(turnId);
   }
 
   private clearNoTurnBuffers(): void {
     this.activeNoTurnPromptText = null;
+    this.activeCommandCheckpoint = null;
     this.activePromptRequestId = null;
     this.pendingNoTurnOutputs.splice(0, this.pendingNoTurnOutputs.length);
   }
 
   private emitBufferedNoTurnOutputs(turnId: string): void {
     const promptText = this.activeNoTurnPromptText;
+    const checkpoint = this.activeCommandCheckpoint;
     const outputs = this.pendingNoTurnOutputs.filter((output) => output.turnId === turnId);
     this.clearNoTurnBuffers();
     if (promptText) {
@@ -1734,6 +1890,7 @@ export class PiRpcAgentSession implements AgentSession {
         item: {
           type: "user_message",
           text: promptText,
+          ...(checkpoint ? { messageId: checkpoint.id } : {}),
           ...(this.activeClientMessageId ? { clientMessageId: this.activeClientMessageId } : {}),
         },
       });
@@ -1888,6 +2045,53 @@ export class PiRpcAgentSession implements AgentSession {
     await resultPromise;
   }
 
+  private async runCheckpointCommand(input: PiCheckpointCommand): Promise<unknown> {
+    const requestId = randomUUID();
+    const resultPromise = this.waitForExtensionResult(requestId);
+    const payload = Buffer.from(JSON.stringify({ requestId, ...input })).toString("base64url");
+    try {
+      await this.runtimeSession.prompt(`/${PASEO_PI_CHECKPOINT_EXTENSION_COMMAND} ${payload}`);
+    } catch (error) {
+      this.rejectExtensionResult(
+        requestId,
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    }
+    return await resultPromise;
+  }
+
+  private async createCommandCheckpoint(
+    input: Extract<PiCheckpointCommand, { operation: "create" }>,
+  ): Promise<PiCommandCheckpoint> {
+    const checkpoint = PiCommandCheckpointSchema.parse(await this.runCheckpointCommand(input));
+    this.treeCheckpointsById.set(checkpoint.id, checkpoint);
+    return checkpoint;
+  }
+
+  private async runOutOfBandCommand(input: PiOutOfBandCommandInput): Promise<void> {
+    const { text, clientMessageId, emit, run } = input;
+    const operationId = randomUUID();
+    this.pendingOutOfBandCommands.add(operationId);
+    try {
+      const checkpoint = await this.createCommandCheckpoint({
+        operation: "create",
+        text,
+        clientMessageId,
+        trackPrompt: false,
+      });
+      if (clientMessageId) {
+        emit({
+          type: "timeline",
+          provider: this.provider,
+          item: { type: "user_message", text, clientMessageId, messageId: checkpoint.id },
+        });
+      }
+      await run();
+    } finally {
+      this.pendingOutOfBandCommands.delete(operationId);
+    }
+  }
+
   private waitForExtensionResult(requestId: string): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -1967,10 +2171,23 @@ export class PiRpcAgentSession implements AgentSession {
     if (!payload) {
       return false;
     }
+    const capture = PiCheckpointCaptureSchema.safeParse(payload);
+    if (!capture.success) {
+      const error = new Error("Invalid Pi command checkpoint capture", { cause: capture.error });
+      if (typeof payload.requestId === "string")
+        this.rejectExtensionResult(payload.requestId, error);
+      else this.logger.warn({ err: error }, "Invalid Pi command checkpoint capture");
+      return true;
+    }
     this.recordCapturedUserEntries({
       treeEntries: parseCapturedEntries(payload.treeEntries),
       contextEntries: parseCapturedEntries(payload.contextEntries),
     });
+    this.treeCheckpointsById.clear();
+    for (const checkpoint of capture.data.treeCheckpoints)
+      this.treeCheckpointsById.set(checkpoint.id, checkpoint);
+    this.contextCheckpoints = capture.data.contextCheckpoints;
+    this.branchNodes = capture.data.branchNodes;
     if (typeof payload.requestId === "string") {
       this.resolveExtensionResult(payload.requestId, undefined);
     }
@@ -2514,6 +2731,7 @@ export class PiRpcAgentClient implements AgentClient {
         model: config.model,
         thinkingOptionId: normalizePiThinkingOption(config.thinkingOptionId) ?? undefined,
         noSession: config.internal === true,
+        persistInitialSession: config.internal !== true,
         env: launchContext?.env,
         mcpConfigPath: mcpConfigFile?.path,
         extensionPaths: paseoExtension ? [paseoExtension.path] : undefined,

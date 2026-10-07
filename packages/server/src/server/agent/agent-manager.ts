@@ -2508,13 +2508,22 @@ export class AgentManager {
       return false;
     }
     if (options?.clientMessageId) {
-      this.recordSubmittedPrompt(agent, prompt, options.clientMessageId);
+      this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, {
+        messageId: options.clientMessageId,
+      });
       this.emitState(agent);
     }
     const dispatch = (event: AgentStreamEvent): void => {
       // Persist timeline items so they show up in fetchAgentTimeline; broadcast
       // for live subscribers. Other event types are broadcast only.
       if (event.type === "timeline") {
+        if (
+          event.item.type === "user_message" &&
+          event.item.clientMessageId &&
+          this.reconcileSubmittedPromptEcho(agent, event.item, event.turnId)
+        ) {
+          return;
+        }
         this.touchUpdatedAt(agent);
         const row = this.recordTimeline(agent.id, event.item);
         this.dispatchStream(agent.id, event, {
@@ -2528,7 +2537,7 @@ export class AgentManager {
     };
     void (async () => {
       try {
-        await handler.run({ emit: dispatch });
+        await handler.run({ emit: dispatch, clientMessageId: options?.clientMessageId });
       } catch (error) {
         const text = error instanceof Error ? error.message : "Out-of-band command failed";
         dispatch({
@@ -3287,18 +3296,39 @@ export class AgentManager {
 
   async rewind(agentId: string, messageId: string, mode: RewindMode): Promise<void> {
     const agent = this.requireSessionAgent(agentId);
-    const submittedRow = this.timelineStore
-      .getRows(agentId)
-      .find(
-        (row) =>
-          row.item.type === "user_message" &&
-          row.item.messageId === messageId &&
-          row.item.clientMessageId === messageId,
-      );
-    if (submittedRow && !submittedRow.providerMessageId) {
-      throw new Error("Cannot rewind before the provider acknowledges the submitted prompt");
+    const rows = this.timelineStore.getRows(agentId);
+    const submittedRow = rows.find(
+      (row) =>
+        row.item.type === "user_message" &&
+        (row.item.messageId === messageId || row.item.messageId === undefined) &&
+        row.item.clientMessageId === messageId,
+    );
+    let providerMessageId = submittedRow?.providerMessageId ?? messageId;
+    if (submittedRow?.item.type === "user_message" && !submittedRow.providerMessageId) {
+      const targetIsActive =
+        submittedRow.turnId !== undefined && submittedRow.turnId === agent.activeForegroundTurnId;
+      const resolved =
+        !targetIsActive && agent.session.resolveRewindTarget
+          ? await agent.session.resolveRewindTarget({
+              messageId,
+              text: submittedRow.item.text,
+              timestamp: submittedRow.timestamp,
+              precedingProviderMessageIds: rows.flatMap((row) => {
+                if (row.seq >= submittedRow.seq) return [];
+                const nativeUserId =
+                  row.item.type === "user_message" && !row.item.clientMessageId
+                    ? row.item.messageId
+                    : undefined;
+                const providerId = row.providerMessageId ?? nativeUserId;
+                return providerId ? [providerId] : [];
+              }),
+            })
+          : null;
+      if (!resolved) {
+        throw new Error("Cannot rewind before the provider acknowledges the submitted prompt");
+      }
+      providerMessageId = resolved;
     }
-    const providerMessageId = submittedRow?.providerMessageId ?? messageId;
 
     if (this.hasInFlightRun(agentId)) {
       await this.cancelAgentRunBefore(agentId, "rewind");

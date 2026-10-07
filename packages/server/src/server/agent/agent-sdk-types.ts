@@ -702,6 +702,12 @@ export interface AgentSession {
   revertConversation?(input: { messageId: string }): Promise<void>;
   revertFiles?(input: { messageId: string }): Promise<void>;
   revertBoth?(input: { messageId: string }): Promise<void>;
+  resolveRewindTarget?(input: {
+    messageId: string;
+    text: string;
+    timestamp: string;
+    precedingProviderMessageIds: readonly string[];
+  }): Promise<string | null>;
   /**
    * Out-of-band prompt handler. When non-null, the manager runs the returned
    * handler instead of allocating a turn. The handler emits stream events
@@ -711,7 +717,7 @@ export interface AgentSession {
    * (e.g. /goal pause) reach the provider without canceling the running turn.
    */
   tryHandleOutOfBand?(prompt: AgentPromptInput): {
-    run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void>;
+    run(ctx: { emit: (event: AgentStreamEvent) => void; clientMessageId?: string }): Promise<void>;
   } | null;
 }
 

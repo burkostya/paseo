@@ -14,6 +14,11 @@ import type {
   PiSessionStats,
 } from "../rpc-types.js";
 import { buildPiLaunch } from "../runtime.js";
+import type {
+  PiCommandCheckpoint,
+  PiContextCommandCheckpoint,
+  PiBranchNode,
+} from "../command-checkpoints.js";
 
 type FakePiSubagentSubscriptionLevel = "off" | "progress" | "events";
 type FakePiSubagentStatus = "pending" | "running" | "completed" | "failed" | "aborted";
@@ -122,6 +127,12 @@ export class FakePiSession implements PiRuntimeSession {
   treeUserEntries: FakePiUserEntry[] = [];
   // The user entries on the current branch that getMessages() replays.
   contextUserEntries: FakePiUserEntry[] = [];
+  treeCheckpoints: PiCommandCheckpoint[] = [];
+  contextCheckpoints: PiContextCommandCheckpoint[] = [];
+  branchNodes: PiBranchNode[] = [];
+  checkpointError: Error | null = null;
+  checkpointBarrier: Promise<void> | null = null;
+  private trackedCheckpointId: string | null = null;
   abortRequested = false;
   readonly canceledExtensionUiRequests: string[] = [];
   readonly extensionUiResponses: Array<{
@@ -183,6 +194,11 @@ export class FakePiSession implements PiRuntimeSession {
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
   ): Promise<PiPromptAck> {
+    if (message.startsWith("/paseo_command_checkpoint ")) {
+      if (this.checkpointBarrier) await this.checkpointBarrier;
+      this.handleCheckpointCommand(message);
+      return {};
+    }
     this.prompts.push({ message, imageCount: images?.length ?? 0 });
     const heldPrompt = this.nextHeldPrompt;
     if (heldPrompt) {
@@ -421,6 +437,10 @@ export class FakePiSession implements PiRuntimeSession {
   }
 
   finishSubmittedUserMessage(entry: FakePiUserEntry): void {
+    this.contextCheckpoints = this.contextCheckpoints.filter(
+      (checkpoint) => checkpoint.id !== this.trackedCheckpointId,
+    );
+    this.trackedCheckpointId = null;
     this.emit({
       type: "message_end",
       message: { role: "user", content: entry.text },
@@ -445,8 +465,52 @@ export class FakePiSession implements PiRuntimeSession {
       return;
     }
     this.treeNavigationRequests.push(payload.targetId);
+    const checkpointIndex = this.contextCheckpoints.findIndex(
+      (entry) => entry.id === payload.targetId,
+    );
+    if (checkpointIndex !== -1) {
+      const checkpoint = this.contextCheckpoints[checkpointIndex];
+      this.messages = this.messages.slice(0, checkpoint.messageIndex);
+      this.contextCheckpoints = this.contextCheckpoints.slice(0, checkpointIndex);
+    }
     this.emitEntryCapture(undefined, "tree_navigation");
     this.emitExtensionCommandResult(payload.requestId, { ok: true, result: {} });
+  }
+
+  private handleCheckpointCommand(message: string): void {
+    const prefix = "/paseo_command_checkpoint ";
+    if (!message.startsWith(prefix)) return;
+    const payload = JSON.parse(
+      Buffer.from(message.slice(prefix.length), "base64url").toString("utf8"),
+    );
+    if (this.checkpointError) {
+      this.emitExtensionCommandResult(payload.requestId, {
+        ok: false,
+        error: this.checkpointError.message,
+      });
+      return;
+    }
+    if (payload.operation === "clear") {
+      if (payload.discard)
+        this.contextCheckpoints = this.contextCheckpoints.filter(
+          (checkpoint) => checkpoint.id !== payload.checkpointId,
+        );
+      if (payload.checkpointId === this.trackedCheckpointId) this.trackedCheckpointId = null;
+      this.emitExtensionCommandResult(payload.requestId, { ok: true, result: null });
+      return;
+    }
+    const checkpoint: PiContextCommandCheckpoint = {
+      id: `checkpoint-${this.treeCheckpoints.length + 1}`,
+      parentId: this.treeCheckpoints.at(-1)?.id ?? null,
+      timestamp: "2026-10-07T20:00:00.000Z",
+      text: payload.text,
+      ...(payload.clientMessageId ? { clientMessageId: payload.clientMessageId } : {}),
+      messageIndex: this.messages.length,
+    };
+    this.treeCheckpoints.push(checkpoint);
+    this.trackedCheckpointId = payload.trackPrompt ? checkpoint.id : null;
+    this.contextCheckpoints.push(checkpoint);
+    this.emitExtensionCommandResult(payload.requestId, { ok: true, result: checkpoint });
   }
 
   private handleEntryCaptureCommand(message: string): void {
@@ -476,6 +540,9 @@ export class FakePiSession implements PiRuntimeSession {
         requestId,
         treeEntries: this.treeUserEntries,
         contextEntries: this.contextUserEntries,
+        treeCheckpoints: this.treeCheckpoints,
+        contextCheckpoints: this.contextCheckpoints,
+        branchNodes: this.branchNodes,
       })}`,
     });
   }

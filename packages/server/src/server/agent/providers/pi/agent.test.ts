@@ -122,6 +122,24 @@ function readUtf8File(pathname: string): string {
 
 type PaseoExtensionListener = (event: unknown, context?: unknown) => unknown;
 
+interface PaseoExtensionTestCommand {
+  handler: (args: string, context: unknown) => Promise<void>;
+}
+
+interface PaseoExtensionTestOptions {
+  registerCommand?: (name: string, command: PaseoExtensionTestCommand) => void;
+  appendEntry?: (customType: string, data: unknown) => void;
+}
+
+interface PiTestCustomEntry {
+  type: "custom";
+  customType: string;
+  data: unknown;
+  id: string;
+  parentId: string | null;
+  timestamp: string;
+}
+
 interface PiSessionEntry {
   type: "message";
   id: string;
@@ -161,20 +179,23 @@ function parseEntryCapture(notification: string): unknown {
 async function loadPaseoExtensionListeners(
   extensionPath: string,
   registerMcpServer: (name: string, config: unknown) => void = () => undefined,
+  options: PaseoExtensionTestOptions = {},
 ): Promise<Map<string, PaseoExtensionListener>> {
   const listeners = new Map<string, PaseoExtensionListener>();
   const extension = (await import(pathToFileURL(extensionPath).href)) as {
     default: (piApi: {
       on: (event: string, listener: PaseoExtensionListener) => void;
       events: { on: () => void };
-      registerCommand: () => void;
+      registerCommand: (name: string, command: PaseoExtensionTestCommand) => void;
+      appendEntry: (customType: string, data: unknown) => void;
       registerMcpServer: (name: string, config: unknown) => void;
     }) => void;
   };
   extension.default({
     on: (event, listener) => listeners.set(event, listener),
     events: { on: () => undefined },
-    registerCommand: () => undefined,
+    registerCommand: options.registerCommand ?? (() => undefined),
+    appendEntry: options.appendEntry ?? (() => undefined),
     registerMcpServer,
   });
   return listeners;
@@ -1750,6 +1771,79 @@ describe("PiRpcAgentSession", () => {
     await session.close();
   });
 
+  test("native command echoes supersede checkpoints and cancelled navigation leaves the branch intact", async () => {
+    const { pi } = await createSession();
+    const commands = new Map<string, PaseoExtensionTestCommand>();
+    const entries: Array<PiSessionEntry | PiTestCustomEntry> = [];
+    const notifications: string[] = [];
+    const listeners = await loadPaseoExtensionListeners(
+      pi.recordedLaunches[0]!.extensionPaths[0]!,
+      undefined,
+      {
+        registerCommand: (name, command) => commands.set(name, command),
+        appendEntry: (customType, data) =>
+          entries.push({
+            type: "custom",
+            customType,
+            data,
+            id: `custom-${entries.length + 1}`,
+            parentId: entries.at(-1)?.id ?? null,
+            timestamp: "2026-10-07T20:00:00.000Z",
+          }),
+      },
+    );
+    const context = {
+      sessionManager: {
+        getEntries: () => entries,
+        getLeafEntry: () => entries.at(-1),
+        getBranch: () => entries,
+        buildContextEntries: () => entries,
+        buildSessionProjection: () => ({
+          entries: entries.map((entry) => ({
+            sourceEntry: entry,
+            messages: entry.type === "message" ? [entry.message] : [],
+          })),
+        }),
+      },
+      ui: { notify: (message: string) => notifications.push(message) },
+      navigateTree: async () => ({ cancelled: true }),
+    };
+    const checkpointCommand = commands.get("paseo_command_checkpoint");
+    const treeCommand = commands.get("paseo_tree");
+    if (!checkpointCommand || !treeCommand) throw new Error("Expected registered commands");
+    const encode = (payload: object) => Buffer.from(JSON.stringify(payload)).toString("base64url");
+    await checkpointCommand.handler(
+      encode({
+        operation: "create",
+        requestId: "checkpoint",
+        text: "/template",
+        clientMessageId: "client-template",
+        trackPrompt: true,
+      }),
+      context,
+    );
+    const message = { role: "user", content: "Expanded template" };
+    await listeners.get("message_end")?.({ message }, context);
+    entries.push({ type: "message", id: "native-template", parentId: "custom-1", message });
+    await listeners.get("message_start")?.({ message: { role: "assistant" } }, context);
+    await listeners.get("turn_end")?.({}, context);
+    expect(
+      entries.filter((entry) => entry.type === "custom").map((entry) => entry.customType),
+    ).toEqual(["paseo_command_checkpoint", "paseo_command_native_prompt"]);
+    const capture = notifications.find((notification) =>
+      notification.startsWith("PASEO_ENTRY_CAPTURE "),
+    );
+    if (!capture) throw new Error("Expected entry capture");
+    expect(parseEntryCapture(capture)).toMatchObject({
+      contextCheckpoints: [],
+      contextEntries: [{ id: "native-template", text: "Expanded template" }],
+    });
+    await expect(
+      treeCommand.handler(encode({ targetId: "custom-1", requestId: "rewind" }), context),
+    ).rejects.toThrow("Pi tree navigation was cancelled");
+    expect(entries.map((entry) => entry.id)).toEqual(["custom-1", "native-template", "custom-3"]);
+  });
+
   test("captures the session's user entries apart from the ones on the current branch", async () => {
     const pi = new FakePi();
     const session = await createClient(pi).createSession(createConfig());
@@ -1769,13 +1863,20 @@ describe("PiRpcAgentSession", () => {
       sessionManager: {
         getEntries: () => entries,
         buildContextEntries: () => piBranchTo(entries, "two-reply"),
+        getBranch: () => piBranchTo(entries, "two-reply"),
+        buildSessionProjection: () => ({
+          entries: piBranchTo(entries, "two-reply").map((entry) => ({
+            sourceEntry: entry,
+            messages: [entry.message],
+          })),
+        }),
       },
       ui: { notify: (message: string) => notifications.push(message) },
     };
 
     await listeners.get("session_start")?.({}, context);
 
-    expect(notifications.map(parseEntryCapture)).toEqual([
+    expect(notifications.map(parseEntryCapture)).toMatchObject([
       {
         reason: "session_start",
         treeEntries: [
@@ -2092,7 +2193,10 @@ describe("PiRpcAgentSession", () => {
     const usageCompletion = await events.nextTurnCompletion();
     expect(usageCompletion).toMatchObject({ type: "turn_completed", turnId: usageTurnId });
     expect(events.timelineAndCompletionEvents()).toEqual([
-      { type: "timeline", item: { type: "user_message", text: "/usage" } },
+      {
+        type: "timeline",
+        item: { type: "user_message", text: "/usage", messageId: "checkpoint-1" },
+      },
       { type: "timeline", item: { type: "assistant_message", text: "Usage 12%" } },
       { type: "turn_completed" },
     ]);
@@ -2145,7 +2249,10 @@ describe("PiRpcAgentSession", () => {
         type: "timeline",
         item: { type: "notification", level: "info", message: "Plan mode enabled" },
       },
-      { type: "timeline", item: { type: "user_message", text: "/plan on" } },
+      {
+        type: "timeline",
+        item: { type: "user_message", text: "/plan on", messageId: "checkpoint-1" },
+      },
       { type: "turn_completed" },
     ]);
   });
@@ -2994,6 +3101,233 @@ describe("PiRpcAgentClient", () => {
         kind: "command",
       },
     ]);
+  });
+
+  test("gives a daemon-handled compact command a native rewind checkpoint", async () => {
+    const { pi, session } = await createSession();
+    const emitted: AgentStreamEvent[] = [];
+    const handler = session.tryHandleOutOfBand("/compact");
+    if (!handler) throw new Error("Expected compact handler");
+    let pendingRewind: Promise<string> | undefined;
+    await handler.run({
+      emit: (event) => {
+        emitted.push(event);
+        if (event.type === "timeline" && event.item.type === "user_message") {
+          pendingRewind = session.revertConversation({ messageId: "checkpoint-1" }).then(
+            () => "unexpected success",
+            (error: Error) => error.message,
+          );
+        }
+      },
+      clientMessageId: "compact-client",
+    });
+    await expect(pendingRewind).resolves.toBe(
+      "Cannot rewind the Pi conversation while a command is still running",
+    );
+    expect(emitted[0]).toMatchObject({
+      type: "timeline",
+      item: {
+        type: "user_message",
+        text: "/compact",
+        clientMessageId: "compact-client",
+        messageId: "checkpoint-1",
+      },
+    });
+    await session.revertConversation({ messageId: "checkpoint-1" });
+    expect(pi.latestSession().treeNavigationRequests).toEqual(["checkpoint-1"]);
+  });
+
+  test("rewinds sequential commands without losing earlier commands, including after resume", async () => {
+    const { pi, session, events } = await createSession();
+    const fake = pi.latestSession();
+    fake.promptAck = { agentInvoked: false };
+    await session.startTurn("/session-memory on", { clientMessageId: "command-one" });
+    await events.nextTurnCompletion();
+    await session.startTurn("/status", { clientMessageId: "command-two" });
+    await flushTurnScheduling();
+    expect(events.timelineItems()).toEqual([
+      {
+        type: "user_message",
+        text: "/session-memory on",
+        clientMessageId: "command-one",
+        messageId: "checkpoint-1",
+      },
+      {
+        type: "user_message",
+        text: "/status",
+        clientMessageId: "command-two",
+        messageId: "checkpoint-2",
+      },
+    ]);
+    const history = async (target: PiRpcAgentSession) => {
+      const items = [];
+      for await (const event of target.streamHistory()) {
+        if (event.type === "timeline") items.push(event.item);
+      }
+      return items;
+    };
+    await expect(history(session)).resolves.toEqual([
+      { type: "user_message", text: "/session-memory on", messageId: "checkpoint-1" },
+      { type: "user_message", text: "/status", messageId: "checkpoint-2" },
+    ]);
+    await session.revertConversation({ messageId: "checkpoint-2" });
+    await expect(history(session)).resolves.toEqual([
+      { type: "user_message", text: "/session-memory on", messageId: "checkpoint-1" },
+    ]);
+    const handle = session.describePersistence();
+    if (!handle) throw new Error("Expected persisted session");
+    const resumedPi = new FakePi();
+    resumedPi.queueSessionSetup((runtime) => {
+      runtime.treeCheckpoints = [...fake.treeCheckpoints];
+      runtime.contextCheckpoints = [...fake.contextCheckpoints];
+    });
+    const resumed = await createClient(resumedPi).resumeSession(handle);
+    onTestFinished(() => resumed.close());
+    await expect(history(resumed)).resolves.toEqual([
+      { type: "user_message", text: "/session-memory on", messageId: "checkpoint-1" },
+    ]);
+    await resumed.revertConversation({ messageId: "checkpoint-1" });
+    await expect(history(resumed)).resolves.toEqual([]);
+    const resumedEvents = new SessionEvents(resumed);
+    await resumed.startTurn("continue");
+    resumedPi.latestSession().emit({
+      type: "message_update",
+      message: { role: "assistant", content: [] },
+      assistantMessageEvent: { type: "text_delta", delta: "continued" },
+    });
+    resumedPi
+      .latestSession()
+      .finishTurn({ role: "assistant", content: [{ type: "text", text: "continued" }] });
+    await resumedEvents.nextTurnCompletion();
+    expect(resumedEvents.timelineItems()).toEqual([
+      expect.objectContaining({ type: "assistant_message", text: "continued" }),
+    ]);
+  });
+
+  test("retains a rewind checkpoint when compact fails", async () => {
+    const { pi, session } = await createSession();
+    pi.latestSession().compactError = new Error("Compaction cancelled");
+    const emitted: AgentStreamEvent[] = [];
+    const handler = session.tryHandleOutOfBand("/compact");
+    if (!handler) throw new Error("Expected compact handler");
+    await handler.run({ emit: (event) => emitted.push(event), clientMessageId: "failed-compact" });
+    expect(emitted[0]).toMatchObject({
+      item: { messageId: "checkpoint-1", clientMessageId: "failed-compact" },
+    });
+    expect(emitted.at(-1)).toMatchObject({
+      item: { text: "[Error] Failed to compact context: Compaction cancelled" },
+    });
+    await session.revertConversation({ messageId: "checkpoint-1" });
+    expect(pi.latestSession().treeNavigationRequests).toEqual(["checkpoint-1"]);
+  });
+
+  test("does not execute commands when checkpoint creation fails", async () => {
+    const { pi, session } = await createSession();
+    const fake = pi.latestSession();
+    fake.checkpointError = new Error("checkpoint unavailable");
+    await expect(session.startTurn("/session-memory on")).rejects.toThrow("checkpoint unavailable");
+    expect(fake.prompts).toEqual([]);
+    const handler = session.tryHandleOutOfBand("/compact");
+    if (!handler) throw new Error("Expected compact handler");
+    await expect(handler.run({ emit: () => {}, clientMessageId: "compact" })).rejects.toThrow(
+      "checkpoint unavailable",
+    );
+    expect(fake.compactRequests).toEqual([]);
+  });
+
+  test("stopping while a checkpoint is being saved never submits the command later", async () => {
+    const { pi, session, events } = await createSession();
+    const fake = pi.latestSession();
+    let releaseCheckpoint!: () => void;
+    fake.checkpointBarrier = new Promise<void>((resolve) => {
+      releaseCheckpoint = resolve;
+    });
+    const starting = session.startTurn("/session-memory on", {
+      clientMessageId: "cancelled-command",
+    });
+    await session.interrupt();
+    releaseCheckpoint();
+    await starting;
+    expect(fake.prompts).toEqual([]);
+    expect(events.turnLifecycleEvents()).toEqual([
+      { type: "turn_canceled", turnId: expect.any(String) },
+    ]);
+    const history = [];
+    for await (const event of session.streamHistory())
+      if (event.type === "timeline") history.push(event.item);
+    expect(history).toEqual([]);
+    await session.startTurn("continue");
+    expect(fake.prompts.at(-1)).toEqual({ message: "continue", imageCount: 0 });
+  });
+
+  test("uses the native user entry when a slash command invokes the agent", async () => {
+    const { pi, session, events } = await createSession();
+    const fake = pi.latestSession();
+    fake.promptAck = { agentInvoked: true };
+    await session.startTurn("/template", { clientMessageId: "template-client" });
+    fake.emit({ type: "agent_start" });
+    fake.finishSubmittedUserMessage({
+      id: "native-user",
+      parentId: "checkpoint-1",
+      text: "Expanded template",
+    });
+    fake.messages = [{ role: "user", content: "Expanded template" }];
+    fake.contextUserEntries = [
+      { id: "native-user", parentId: "checkpoint-1", text: "Expanded template" },
+    ];
+    fake.finishTurn();
+    await events.nextTurnCompletion();
+    expect(events.timelineItems()).toEqual([
+      {
+        type: "user_message",
+        text: "Expanded template",
+        messageId: "native-user",
+        clientMessageId: "template-client",
+      },
+    ]);
+    const history = [];
+    for await (const event of session.streamHistory())
+      if (event.type === "timeline") history.push(event.item);
+    expect(history).toEqual([
+      { type: "user_message", text: "Expanded template", messageId: "native-user" },
+    ]);
+  });
+
+  test("restores an old command boundary only when its native branch is unambiguous", async () => {
+    const { pi, session } = await createSession();
+    const fake = pi.latestSession();
+    fake.commands = [{ name: "session-memory", source: "extension" }];
+    fake.branchNodes = [
+      {
+        id: "native-user",
+        parentId: null,
+        timestamp: "2026-10-07T19:57:21.780Z",
+        type: "message",
+        role: "user",
+      },
+      {
+        id: "f57165c1",
+        parentId: "native-user",
+        timestamp: "2026-10-07T19:57:39.387Z",
+        type: "message",
+        role: "assistant",
+      },
+      { id: "state", parentId: "f57165c1", timestamp: "2026-10-07T20:00:33.955Z", type: "custom" },
+    ];
+    const input = {
+      messageId: "old-command",
+      text: "/session-memory on",
+      timestamp: "2026-10-07T20:00:33.940Z",
+      precedingProviderMessageIds: ["native-user"],
+    };
+    await expect(session.resolveRewindTarget(input)).resolves.toBe("paseo-leaf:f57165c1");
+    await session.revertConversation({ messageId: "paseo-leaf:f57165c1" });
+    expect(fake.treeNavigationRequests).toEqual(["f57165c1"]);
+    fake.branchNodes[1].timestamp = input.timestamp;
+    await expect(session.resolveRewindTarget(input)).rejects.toThrow(
+      "cannot be restored unambiguously",
+    );
+    expect(fake.treeNavigationRequests).toEqual(["f57165c1"]);
   });
 
   test("executes Pi compact through RPC instead of prompt text", async () => {

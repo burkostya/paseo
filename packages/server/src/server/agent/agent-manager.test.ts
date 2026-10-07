@@ -10732,13 +10732,17 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
   }
 });
 
-test("authoritative timeline records a daemon-handled submitted prompt before its output", async () => {
+test("daemon-handled prompts reconcile checkpoints without duplicate rows and can rewind", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-daemon-handled-prompt-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
   const commandCompleted = deferred<void>();
 
   class DaemonHandledPromptSession extends TestAgentSession {
+    readonly rewindMessageIds: string[] = [];
+    readonly resolvedTargets: Array<
+      Parameters<NonNullable<AgentSession["resolveRewindTarget"]>>[0]
+    > = [];
     override readonly capabilities = {
       ...TEST_CAPABILITIES,
       supportsRewindConversation: true,
@@ -10747,7 +10751,23 @@ test("authoritative timeline records a daemon-handled submitted prompt before it
     override tryHandleOutOfBand(prompt: AgentPromptInput) {
       if (prompt !== "/handled") return null;
       return {
-        run: async ({ emit }: { emit: (event: AgentStreamEvent) => void }) => {
+        run: async ({
+          emit,
+          clientMessageId,
+        }: {
+          emit: (event: AgentStreamEvent) => void;
+          clientMessageId?: string;
+        }) => {
+          emit({
+            type: "timeline",
+            provider: this.provider,
+            item: {
+              type: "user_message",
+              text: "/handled",
+              messageId: "native-command-checkpoint",
+              clientMessageId,
+            },
+          });
           emit({
             type: "timeline",
             provider: this.provider,
@@ -10757,16 +10777,30 @@ test("authoritative timeline records a daemon-handled submitted prompt before it
         },
       };
     }
-  }
 
-  class DaemonHandledPromptClient extends TestAgentClient {
-    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-      return new DaemonHandledPromptSession(config);
+    override async revertConversation(input: { messageId: string }): Promise<void> {
+      this.rewindMessageIds.push(input.messageId);
+    }
+
+    async resolveRewindTarget(
+      input: Parameters<NonNullable<AgentSession["resolveRewindTarget"]>>[0],
+    ): Promise<string | null> {
+      this.resolvedTargets.push(input);
+      return input.text === "/legacy" ? "paseo-leaf:previous-assistant" : null;
     }
   }
 
+  class DaemonHandledPromptClient extends TestAgentClient {
+    session: DaemonHandledPromptSession | null = null;
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.session = new DaemonHandledPromptSession(config);
+      return this.session;
+    }
+  }
+
+  const client = new DaemonHandledPromptClient();
   const manager = new AgentManager({
-    clients: { codex: new DaemonHandledPromptClient() },
+    clients: { codex: client },
     registry: storage,
     logger,
     idFactory: () => "00000000-0000-4000-8000-000000000403",
@@ -10796,18 +10830,58 @@ test("authoritative timeline records a daemon-handled submitted prompt before it
         type: "user_message",
         text: "/handled",
         clientMessageId: "msg-client-daemon-handled",
+        messageId: "msg-client-daemon-handled",
       },
       { type: "assistant_message", text: "Handled by the daemon" },
     ]);
-
     const timeline = manager.fetchTimeline(snapshot.id, { direction: "tail", limit: 20 }).rows;
     expect(timeline.map((row) => row.item)).toEqual([
       {
         type: "user_message",
         text: "/handled",
         clientMessageId: "msg-client-daemon-handled",
+        messageId: "msg-client-daemon-handled",
       },
       { type: "assistant_message", text: "Handled by the daemon" },
+    ]);
+    expect(timeline[0].providerMessageId).toBe("native-command-checkpoint");
+    await manager.rewind(snapshot.id, "msg-client-daemon-handled", "conversation");
+    expect(client.session?.rewindMessageIds).toEqual(["native-command-checkpoint"]);
+    await manager.appendTimelineItem(snapshot.id, {
+      type: "user_message",
+      messageId: "previous-native-user",
+      text: "Previous turn",
+    });
+    await manager.appendTimelineItem(snapshot.id, {
+      type: "user_message",
+      clientMessageId: "legacy-client",
+      text: "/legacy",
+    });
+    await manager.rewind(snapshot.id, "legacy-client", "conversation");
+    expect(client.session?.resolvedTargets).toEqual([
+      {
+        messageId: "legacy-client",
+        text: "/legacy",
+        timestamp: expect.any(String),
+        precedingProviderMessageIds: ["previous-native-user"],
+      },
+    ]);
+    expect(client.session?.rewindMessageIds).toEqual([
+      "native-command-checkpoint",
+      "paseo-leaf:previous-assistant",
+    ]);
+    await manager.appendTimelineItem(snapshot.id, {
+      type: "user_message",
+      clientMessageId: "unconfirmed-client",
+      messageId: "unconfirmed-client",
+      text: "Ordinary prompt without provider acknowledgement",
+    });
+    await expect(manager.rewind(snapshot.id, "unconfirmed-client", "conversation")).rejects.toThrow(
+      "Cannot rewind before the provider acknowledges the submitted prompt",
+    );
+    expect(client.session?.rewindMessageIds).toEqual([
+      "native-command-checkpoint",
+      "paseo-leaf:previous-assistant",
     ]);
   } finally {
     await manager.flush().catch(() => undefined);

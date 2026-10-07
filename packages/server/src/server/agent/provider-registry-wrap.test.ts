@@ -30,6 +30,7 @@ const OPTIONAL_AGENT_SESSION_METHOD_NAMES = [
   "revertConversation",
   "revertFiles",
   "revertBoth",
+  "resolveRewindTarget",
   "tryHandleOutOfBand",
 ] as const satisfies readonly OptionalAgentSessionMethodName[];
 
@@ -175,6 +176,11 @@ class FakeSession implements AgentSession {
     this.recordedCalls.push("revertBoth");
   }
 
+  async resolveRewindTarget() {
+    this.recordedCalls.push("resolveRewindTarget");
+    return "checkpoint-1";
+  }
+
   tryHandleOutOfBand(_prompt: AgentPromptInput) {
     this.recordedCalls.push("tryHandleOutOfBand");
     return {
@@ -256,6 +262,14 @@ describe("wrapSessionProvider", () => {
     await wrapped.revertConversation?.({ messageId: "message-1" });
     await wrapped.revertFiles?.({ messageId: "message-1" });
     await wrapped.revertBoth?.({ messageId: "message-1" });
+    await expect(
+      wrapped.resolveRewindTarget?.({
+        messageId: "message-1",
+        text: "/command",
+        timestamp: "2026-10-07T20:00:00Z",
+        precedingProviderMessageIds: [],
+      }),
+    ).resolves.toBe("checkpoint-1");
     const handler = wrapped.tryHandleOutOfBand?.("/compact");
     await handler?.run({ emit: () => {} });
 
@@ -271,6 +285,7 @@ describe("wrapSessionProvider", () => {
       "revertConversation",
       "revertFiles",
       "revertBoth",
+      "resolveRewindTarget",
       "tryHandleOutOfBand",
       "tryHandleOutOfBand.run",
     ]);
