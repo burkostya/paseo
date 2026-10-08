@@ -96,7 +96,10 @@ import {
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { asInternals as castInternals, createStub } from "../../test-utils/class-mocks.js";
 import { AgentManager } from "../agent-manager.js";
-import { formatSystemNotificationPrompt, isSystemInjectedEnvelope } from "../agent-prompt.js";
+import {
+  formatSystemNotificationPrompt,
+  isSystemInjectedEnvelope,
+} from "../agent-messages/index.js";
 import { buildProviderRegistry } from "../provider-registry.js";
 
 interface CollaborationModeRecord {

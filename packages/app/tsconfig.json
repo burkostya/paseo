@@ -3,7 +3,10 @@
   "compilerOptions": {
     "strict": true,
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@gorhom/bottom-sheet/src/contexts": [
+        "../../node_modules/@gorhom/bottom-sheet/lib/typescript/contexts/index.d.ts"
+      ]
     }
   },
   "include": [

@@ -1,6 +1,6 @@
 import { memo, useMemo, useCallback, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Pressable, Text, View, type GestureResponderEvent, type ViewStyle } from "react-native";
+import { Text, View, type GestureResponderEvent, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   ChevronDown,
@@ -11,6 +11,7 @@ import {
   Monitor,
 } from "lucide-react-native";
 import { ProjectStatusIndicator } from "@/components/sidebar/project-leading-visual";
+import { PressHighlight } from "@/components/ui/press-highlight";
 import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
 import {
   WorkspaceMetaRow,
@@ -44,11 +45,9 @@ const needsInputColorMapping = (theme: Theme) => ({
   color: theme.colors.surface0,
   fill: getStatusDotColor({ theme, bucket: "needs_input" }) ?? undefined,
 });
+const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 const ThemedCircleAlert = withUnistyles(CircleAlert);
-const ThemedMonitor = withUnistyles(Monitor);
-const ThemedFolder = withUnistyles(Folder);
-const ThemedFolderGit2 = withUnistyles(FolderGit2);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedChevronRight = withUnistyles(ChevronRight);
 
@@ -165,7 +164,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
     <View style={styles.workspaceRowContent}>
       <View style={styles.workspaceRowMain}>
         {hasChildren ? (
-          <Pressable
+          <PressHighlight
             accessibilityRole="button"
             accessibilityLabel={
               expanded
@@ -176,13 +175,14 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
             hitSlop={6}
             onPress={handleTreeTogglePress}
             style={styles.workspaceTreeToggle}
+            highlightStyle={styles.workspaceTreeTogglePressed}
           >
             {expanded ? (
               <ThemedChevronDown size={14} uniProps={foregroundMutedColorMapping} />
             ) : (
               <ThemedChevronRight size={14} uniProps={foregroundMutedColorMapping} />
             )}
-          </Pressable>
+          </PressHighlight>
         ) : (
           <View style={styles.workspaceTreeTogglePlaceholder} />
         )}
@@ -522,6 +522,10 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
+  },
+  workspaceTreeTogglePressed: {
+    backgroundColor: theme.colors.interactionHighlight,
+    borderRadius: theme.borderRadius.sm,
   },
   workspaceTreeTogglePlaceholder: {
     width: theme.iconSize.md,

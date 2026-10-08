@@ -50,7 +50,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
-import { formatSystemNotificationPrompt } from "../agent-prompt.js";
+import { formatSystemNotificationPrompt } from "../agent-messages/index.js";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { composeSystemPromptParts } from "../system-prompt.js";
 import { curateAgentActivity } from "../activity-curator.js";

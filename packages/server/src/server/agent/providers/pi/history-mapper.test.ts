@@ -98,6 +98,50 @@ describe("Pi history mapper", () => {
     ]);
   });
 
+  test("keeps command boundaries around hidden and visible extension context", async () => {
+    const events = await collectHistory(
+      [
+        { role: "custom", customType: "private-context", content: "secret", display: false },
+        { role: "custom", customType: "project-context", content: "instructions", display: true },
+        { role: "user", content: "continue" },
+      ],
+      [{ id: "native-user", text: "continue" }],
+      {
+        commandCheckpoints: [
+          {
+            id: "command-before-context",
+            parentId: null,
+            text: "/compact",
+            timestamp: "2026-10-08T00:00:00.000Z",
+            messageIndex: 0,
+          },
+          {
+            id: "command-after-context",
+            parentId: "command-before-context",
+            text: "/autocompact",
+            timestamp: "2026-10-08T00:01:00.000Z",
+            messageIndex: 2,
+          },
+        ],
+      },
+    );
+
+    expect(events.map((event) => event.item)).toEqual([
+      { type: "user_message", text: "/compact", messageId: "command-before-context" },
+      {
+        type: "tool_call",
+        callId: "pi-custom-1",
+        name: "project-context",
+        status: "completed",
+        detail: { type: "plain_text", text: "instructions" },
+        metadata: { synthetic: true, customType: "project-context" },
+        error: null,
+      },
+      { type: "user_message", text: "/autocompact", messageId: "command-after-context" },
+      { type: "user_message", text: "continue", messageId: "native-user" },
+    ]);
+  });
+
   test("replays user, assistant, reasoning, and completed tool calls", async () => {
     await expect(
       collectHistory([

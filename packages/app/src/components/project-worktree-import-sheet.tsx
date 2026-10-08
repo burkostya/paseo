@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Square, SquareCheck } from "lucide-react-native";
-import { Pressable, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import type { ProjectWorktreeCandidate } from "@getpaseo/protocol/messages";
@@ -8,6 +8,7 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { PressHighlight } from "@/components/ui/press-highlight";
 import { useHosts, useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useHostFeature } from "@/runtime/host-features";
 import { openWorktreeImportForm } from "@/projects/worktree-import-model";
@@ -225,7 +226,7 @@ function WorktreeRow({
   );
   return (
     <View style={styles.row}>
-      <Pressable
+      <PressHighlight
         style={styles.choice}
         accessibilityRole="checkbox"
         aria-checked={added || selected}
@@ -233,6 +234,7 @@ function WorktreeRow({
         accessibilityState={accessibilityState}
         disabled={accessibilityState.disabled}
         onPress={toggle}
+        highlightStyle={styles.choicePressed}
       >
         {added || selected ? <ThemedSquareCheck size={16} /> : <ThemedSquare size={16} />}
         <View style={styles.details}>
@@ -249,7 +251,7 @@ function WorktreeRow({
             <Text style={styles.muted}>{t("worktreeImport.restore")}</Text>
           ) : null}
         </View>
-      </Pressable>
+      </PressHighlight>
       {added ? (
         <Button variant="ghost" size="sm" disabled={busy || row.unavailable} onPress={open}>
           {t("worktreeImport.open")}
@@ -267,6 +269,10 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     gap: theme.spacing[3],
     paddingVertical: theme.spacing[2],
+  },
+  choicePressed: {
+    backgroundColor: theme.colors.interactionHighlight,
+    borderRadius: theme.borderRadius.sm,
   },
   details: { flex: 1, gap: theme.spacing[1] },
   text: { color: theme.colors.foreground, fontSize: theme.fontSize.base },

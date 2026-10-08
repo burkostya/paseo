@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { GitBranch } from "lucide-react-native";
-import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
+import { Text, View, type PressableStateCallbackType } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
@@ -9,6 +9,7 @@ import {
   type ComboboxOption,
   type ComboboxProps,
 } from "@/components/ui/combobox";
+import { PressHighlight } from "@/components/ui/press-highlight";
 import { useFetchQuery } from "@/data/query";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
@@ -139,7 +140,7 @@ export function DiffBasePicker({
 
   return (
     <View ref={anchorRef} collapsable={false} style={styles.anchor}>
-      <Pressable
+      <PressHighlight
         testID="changes-diff-base-trigger"
         accessibilityRole="button"
         accessibilityLabel={t("workspace.git.diff.basePicker.accessibility", {
@@ -147,11 +148,12 @@ export function DiffBasePicker({
         })}
         onPress={handleOpen}
         style={triggerStyle}
+        highlightStyle={styles.triggerPressed}
       >
         <Text style={styles.triggerText} numberOfLines={1}>
           {t("workspace.git.diff.basePicker.trigger", { baseRef: effectiveBaseRefLabel })}
         </Text>
-      </Pressable>
+      </PressHighlight>
       <Combobox
         options={options}
         value={selectedBaseRef ? branchOptionId(selectedBaseRef) : DEFAULT_OPTION_ID}
@@ -192,6 +194,10 @@ const styles = StyleSheet.create((theme) => ({
   },
   triggerHovered: {
     backgroundColor: theme.colors.surface2,
+  },
+  triggerPressed: {
+    backgroundColor: theme.colors.interactionHighlight,
+    borderRadius: theme.borderRadius.base,
   },
   triggerText: {
     color: theme.colors.foregroundMuted,

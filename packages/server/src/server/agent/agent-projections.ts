@@ -206,6 +206,14 @@ function buildStoredPersistenceHandle(
   return toAgentPersistenceHandle(validProviders, record.persistence);
 }
 
+function buildStoredAgentConditionalFields(record: StoredAgentRecord, providerAvailable: boolean) {
+  return {
+    ...(record.internal ? { internal: true as const } : {}),
+    ...(typeof record.lastError === "string" ? { lastError: record.lastError } : {}),
+    ...(providerAvailable ? {} : { providerUnavailable: true as const }),
+  };
+}
+
 export function buildStoredAgentPayload(
   record: StoredAgentRecord,
   validProviders: Iterable<AgentProvider>,
@@ -259,10 +267,8 @@ export function buildStoredAgentPayload(
     attentionReason: record.attentionReason ?? null,
     attentionTimestamp: record.attentionTimestamp ?? null,
     archivedAt: record.archivedAt ?? null,
-    ...(record.internal ? { internal: true } : {}),
     labels: normalizeLabels(record.labels),
-    ...(typeof record.lastError === "string" ? { lastError: record.lastError } : {}),
-    ...(providerAvailable ? {} : { providerUnavailable: true }),
+    ...buildStoredAgentConditionalFields(record, providerAvailable),
   };
 }
 

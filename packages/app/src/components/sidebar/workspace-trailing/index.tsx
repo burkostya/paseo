@@ -6,8 +6,9 @@ import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store"
 import { useSettings } from "@/hooks/use-settings";
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { Pressable, Text } from "react-native";
+import { Text } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { PressHighlight } from "@/components/ui/press-highlight";
 import { DiffStat } from "@/components/diff-stat";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { useAppSettings } from "@/hooks/use-settings";
@@ -85,11 +86,12 @@ function WorkspaceComparisonStat({ workspace }: { workspace: SidebarWorkspaceEnt
   return (
     <Tooltip enabledOnDesktop enabledOnMobile={false}>
       <TooltipTrigger asChild>
-        <Pressable
+        <PressHighlight
           onPress={open}
           accessibilityRole="button"
           accessibilityLabel={description}
           testID={`workspace-comparison-stat-${workspace.workspaceId}`}
+          highlightStyle={styles.comparisonStatPressed}
         >
           {workspace.diffComparisonError ? <Text style={styles.timestamp}>!</Text> : null}
           {workspace.diffStat ? (
@@ -98,7 +100,7 @@ function WorkspaceComparisonStat({ workspace }: { workspace: SidebarWorkspaceEnt
               deletions={workspace.diffStat.deletions}
             />
           ) : null}
-        </Pressable>
+        </PressHighlight>
       </TooltipTrigger>
       <TooltipContent>
         <Text style={styles.tooltip}>{description}</Text>
@@ -123,6 +125,10 @@ function WorkspaceTimestamp({ enteredAt }: { enteredAt: Date }) {
 
 const styles = StyleSheet.create((theme) => ({
   tooltip: { color: theme.colors.foreground, fontSize: theme.fontSize.sm },
+  comparisonStatPressed: {
+    backgroundColor: theme.colors.interactionHighlight,
+    borderRadius: theme.borderRadius.sm,
+  },
   // A step below the project title it shares the row with. The timestamp is the one thing here
   // you never came looking for, so it sits at the bottom of the muted ramp rather than tying
   // with the label naming the group.

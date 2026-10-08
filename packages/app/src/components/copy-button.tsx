@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, type StyleProp, type ViewStyle } from "react-native";
+import { type StyleProp, type ViewStyle } from "react-native";
 import { useTranslation } from "react-i18next";
 import { Check, Copy } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { ToolbarButton } from "@/components/ui/pane-content-toolbar";
 import { ICON_SIZE } from "@/styles/theme";
 
 interface CopyButtonProps {
@@ -55,29 +56,25 @@ export const CopyButton = React.memo(function CopyButton({
     };
   }, []);
 
-  const pressableStyle = useMemo(() => [styles.container, containerStyle], [containerStyle]);
+  const buttonStyle = useMemo(() => [styles.container, containerStyle], [containerStyle]);
 
   return (
-    <Pressable
+    <ToolbarButton
       testID={testID}
       onPress={handleCopy}
-      style={pressableStyle}
-      accessibilityRole="button"
-      accessibilityLabel={
+      style={buttonStyle}
+      label={
         copied
           ? (copiedAccessibilityLabel ?? t("message.actions.copied"))
           : (accessibilityLabel ?? t("message.actions.copyTurn"))
       }
     >
-      {({ hovered }) => {
-        const iconColor = hovered ? styles.iconHoveredColor.color : styles.iconColor.color;
-        return copied ? (
-          <Check size={ICON_SIZE.sm} color={iconColor} />
-        ) : (
-          <Copy size={ICON_SIZE.sm} color={iconColor} />
-        );
-      }}
-    </Pressable>
+      {copied ? (
+        <Check size={ICON_SIZE.sm} color={styles.iconColor.color} />
+      ) : (
+        <Copy size={ICON_SIZE.sm} color={styles.iconColor.color} />
+      )}
+    </ToolbarButton>
   );
 });
 
@@ -87,8 +84,5 @@ const styles = StyleSheet.create((theme) => ({
   },
   iconColor: {
     color: theme.colors.foregroundMuted,
-  },
-  iconHoveredColor: {
-    color: theme.colors.foreground,
   },
 }));
