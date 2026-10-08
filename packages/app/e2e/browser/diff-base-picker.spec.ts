@@ -6,6 +6,7 @@ import { gotoAppShell } from "../support/helpers/app";
 import { openChangesPanel } from "../support/helpers/branch-switcher";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
+import { closeSidebarDisplayPreferences, openSidebarDisplayPage } from "../support/helpers/sidebar";
 import {
   switchWorkspaceViaSidebar,
   waitForSidebarHydration,
@@ -45,6 +46,9 @@ test("shares comparison settings, persists overrides, and matches sidebar counts
     await gotoAppShell(page);
     await waitForSidebarHydration(page);
     await switchWorkspaceViaSidebar({ page, serverId, workspaceId: workspace.workspaceId });
+    await openSidebarDisplayPage(page, "sidebar-display-show");
+    await page.getByTestId("sidebar-workspace-trailing-diff").click();
+    await closeSidebarDisplayPreferences(page);
     await openChangesPanel(page);
     await expect(trigger).toHaveText("Uncommitted changes");
     await expect(stat).toContainText("+1");

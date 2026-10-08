@@ -366,14 +366,14 @@ function commitFile(cwd: string, name: string, content: string): void {
 }
 
 test.each([
-  ["refs/heads/main", "refs/remotes/origin/main"],
-  ["refs/remotes/origin/main", "refs/heads/main"],
-])(
+  ["refs/heads/main", "refs/remotes/origin/main", ["feature.txt", "local.txt"]],
+  ["refs/remotes/origin/main", "refs/heads/main", ["feature.txt", "origin.txt"]],
+] as const)(
   "restore preserves %s through comparison, update and local merge",
-  async (baseRef, conflictingRef) => {
+  async (baseRef, alternateRef, alternateFiles) => {
     const workspace = await createRestorableWorkspace(baseRef);
     await archiveAndRestoreWorkspace(workspace);
-    await expectRestoredComparison(workspace, conflictingRef);
+    await expectRestoredComparison(workspace, alternateRef, alternateFiles);
     await updateFromOriginalBase(workspace);
     await expectMergeIntoLocalBase(workspace);
   },
@@ -383,7 +383,7 @@ test.each([
 test("restore preserves upstream comparison and update but rejects a missing local merge target", async () => {
   const workspace = await createRestorableWorkspace("refs/remotes/upstream/main");
   await archiveAndRestoreWorkspace(workspace);
-  await expectRestoredComparison(workspace, "refs/heads/main");
+  await expectRestoredComparison(workspace, "refs/heads/main", ["feature.txt", "upstream.txt"]);
   await updateFromOriginalBase(workspace);
   await expectMissingLocalMergeTarget(workspace);
 }, 180000);
@@ -415,7 +415,7 @@ async function createRestorableWorkspace(baseRef: string) {
   commitFile(cwd, "feature.txt", "feature change\n");
   const head = runGit(cwd, "rev-parse", "HEAD");
   await client.checkoutRefresh(cwd);
-  const before = await client.getCheckoutDiff(cwd, { mode: "base", baseRef: "main" });
+  const before = await client.getCheckoutDiff(cwd, { mode: "base", baseRef });
   expect(before.error).toBeNull();
   expect(before.files.map((file) => file.path)).toEqual(["feature.txt"]);
   expect((await client.getCheckoutStatus(cwd)).baseRef).toBe("main");
@@ -446,13 +446,14 @@ async function archiveAndRestoreWorkspace({ client, workspace, cwd }: Restorable
 
 async function expectRestoredComparison(
   { client, daemon, workspace, cwd, head, before, baseRef }: RestorableWorkspace,
-  conflictingRef: string,
+  alternateRef: string,
+  alternateFiles: readonly string[],
 ) {
-  const restoredStatus = await client.getCheckoutStatus(cwd);
+  await client.getCheckoutStatus(cwd);
   await client.checkoutRefresh(cwd);
   const after = await client.getCheckoutDiff(cwd, {
     mode: "base",
-    baseRef: restoredStatus.baseRef ?? undefined,
+    baseRef,
   });
   expect(after.error).toBeNull();
   expect(after.files).toEqual(before.files);
@@ -475,9 +476,11 @@ async function expectRestoredComparison(
     records.find((record: { workspaceId: string }) => record.workspaceId === workspace.id)
       .baseBranch,
   ).toBe(baseRef);
-  expect(
-    (await client.getCheckoutDiff(cwd, { mode: "base", baseRef: conflictingRef })).error?.message,
-  ).toContain("Base ref mismatch");
+  // Viewing another comparison must not replace the workspace's creation base.
+  const alternate = await client.getCheckoutDiff(cwd, { mode: "base", baseRef: alternateRef });
+  expect(alternate.error).toBeNull();
+  expect(alternate.files.map((file) => file.path)).toEqual(alternateFiles);
+  expect((await client.listCheckoutCommits(cwd)).baseRef).toBe(baseRef);
 }
 
 async function updateFromOriginalBase({ client, repoDir, cwd, baseRef }: RestorableWorkspace) {
@@ -495,9 +498,7 @@ async function updateFromOriginalBase({ client, repoDir, cwd, baseRef }: Restora
   expect(readFileSync(path.join(cwd, "base-update.txt"), "utf8")).toBe(`${baseRef}\n`);
   expect(runGit(cwd, "merge-base", baseUpdate, "HEAD")).toBe(baseUpdate);
   expect(
-    (await client.getCheckoutDiff(cwd, { mode: "base", baseRef: "main" })).files.map(
-      (file) => file.path,
-    ),
+    (await client.getCheckoutDiff(cwd, { mode: "base", baseRef })).files.map((file) => file.path),
   ).toEqual(["feature.txt"]);
 }
 
