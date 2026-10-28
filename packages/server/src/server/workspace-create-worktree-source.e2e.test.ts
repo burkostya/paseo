@@ -5,7 +5,6 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
-  rmSync,
   writeFileSync,
 } from "node:fs";
 import { rm } from "node:fs/promises";
@@ -106,7 +105,7 @@ test("imports external worktrees without setup, deduplicates, and preserves file
     ).toMatchObject({ workspaceId, archived: false });
     expect(existsSync(path.join(worktreePath, "setup-must-not-run"))).toBe(false);
     expect((await client.importProjectWorktree(projectId, detachedPath)).error).toBeNull();
-    rmSync(detachedPath, { recursive: true });
+    await rm(detachedPath, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     expect(
       (await client.listProjectWorktrees(projectId)).worktrees.find(
         (row) => row.path === canonicalDetachedPath,
@@ -119,7 +118,7 @@ test("imports external worktrees without setup, deduplicates, and preserves file
   } finally {
     await client.close().catch(() => undefined);
     await daemon.close();
-    rmSync(tempRoot, { recursive: true, force: true });
+    await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 180000);
 
