@@ -422,6 +422,10 @@ test("keeps an entry visible when deletion fails", async ({ page }) => {
 
 test("hides unsupported file operations and revert actions", async ({ page }) => {
   await hideContextActionCapabilities(page);
+  await workspace.client.setDiffComparisonV2(
+    { kind: "workspace", workspaceId: workspace.workspaceId },
+    { mode: "uncommitted" },
+  );
   await writeFile(path.join(workspace.repoPath, "README.md"), "# Changed while unsupported\n");
   await gotoWorkspace(page, workspace.workspaceId);
   await openFileExplorer(page);

@@ -33,6 +33,7 @@ const test = base.extend<{ projectWithTrailingSpace: string }>({
       expect(added.error).toBeNull();
       const projectId = added.project!.projectId;
       try {
+        await client.setDiffComparisonV2({ kind: "project", projectId }, { mode: "uncommitted" });
         const created = await client.createWorkspace({
           source: { kind: "directory", path: repoPath, projectId },
         });

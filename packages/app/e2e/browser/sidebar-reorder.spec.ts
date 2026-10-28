@@ -37,6 +37,7 @@ async function pressWorkspaceRow(rows: Locator) {
 async function quickDragFirstRowAfterSecond(
   rows: Locator,
   pressRow: (rows: Locator) => Promise<void>,
+  treeDropAfter = false,
 ) {
   await expect(rows).toHaveCount(2);
   const before = await rowTestIds(rows);
@@ -45,7 +46,10 @@ async function quickDragFirstRowAfterSecond(
 
   const page = rows.page();
   const source = { x: sourceBox.x + sourceBox.width / 2, y: sourceBox.y + sourceBox.height / 2 };
-  const target = { x: targetBox.x + targetBox.width / 2, y: targetBox.y + targetBox.height / 2 };
+  const target = {
+    x: targetBox.x + targetBox.width / 2,
+    y: targetBox.y + targetBox.height * (treeDropAfter ? 0.9 : 0.5),
+  };
 
   await page.mouse.move(source.x, source.y);
   const trailingScrim = rows.nth(0).getByTestId("sidebar-workspace-trailing-scrim");
@@ -407,10 +411,10 @@ test("Manual restores pre-beta order and keeps drag order across sorting and rel
     await selectWorkspaceSort(page, "Last prompt");
     await selectWorkspaceSort(page, "Manual");
     await expect.poll(() => rowTestIds(rows)).toEqual(ids);
-    await quickDragFirstRowAfterSecond(rows, pressWorkspaceRow);
+    await quickDragFirstRowAfterSecond(rows, pressWorkspaceRow, true);
     await reconnectSidebar(page);
     await expect.poll(() => rowTestIds(rows)).toEqual([ids[1], ids[0]]);
-    await quickDragFirstRowAfterSecond(rows, pressWorkspaceRow);
+    await quickDragFirstRowAfterSecond(rows, pressWorkspaceRow, true);
     await selectWorkspaceSort(page, "Created");
     await reconnectSidebar(page);
     await selectWorkspaceSort(page, "Manual");

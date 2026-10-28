@@ -3,14 +3,7 @@ import type {
   SidebarWorkspacePlacement,
 } from "@/hooks/use-sidebar-workspaces-list";
 import type { StatusGroup } from "@/hooks/sidebar-status-view-model";
-import {
-  selectSidebarGroupVisibility,
-  WORKSPACE_GROUP_VISIBILITY,
-} from "@/components/sidebar/sidebar-group-visibility";
-import {
-  buildWorkspaceTreeRows,
-  limitWorkspaceTreeRows,
-} from "@/components/sidebar/workspace-hierarchy";
+import { buildWorkspaceTreeRows } from "@/components/sidebar/workspace-hierarchy";
 
 export interface SidebarShortcutWorkspaceTarget {
   serverId: string;
@@ -40,7 +33,6 @@ export function buildSidebarShortcutModel(input: {
   projects: SidebarProjectEntry[];
   collapsedProjectKeys: ReadonlySet<string>;
   collapsedWorkspaceKeys?: ReadonlySet<string>;
-  expandedProjectWorkspaceKeys?: ReadonlySet<string>;
   shortcutLimit?: number;
 }): SidebarShortcutModel {
   return buildSidebarShortcutSections({
@@ -49,9 +41,8 @@ export function buildSidebarShortcutModel(input: {
         workspaces: project.workspaces,
         collapsedKeys: input.collapsedWorkspaceKeys,
       });
-      const expanded = input.expandedProjectWorkspaceKeys?.has(project.viewKey) ?? false;
       return {
-        workspaces: (expanded ? rows : limitWorkspaceTreeRows(rows)).map((row) => row.workspace),
+        workspaces: rows.map((row) => row.workspace),
         collapsed: input.collapsedProjectKeys.has(project.viewKey),
       };
     }),
@@ -62,16 +53,11 @@ export function buildSidebarShortcutModel(input: {
 export function buildStatusSidebarShortcutModel(input: {
   groups: readonly StatusGroup[];
   collapsedStatusGroupKeys?: ReadonlySet<string>;
-  expandedStatusGroupKeys?: ReadonlySet<string>;
   shortcutLimit?: number;
 }): SidebarShortcutModel {
   return buildSidebarShortcutSections({
     sections: input.groups.map((group) => ({
-      workspaces: selectSidebarGroupVisibility(
-        group.rows,
-        input.expandedStatusGroupKeys?.has(group.bucket) ?? false,
-        WORKSPACE_GROUP_VISIBILITY,
-      ).visibleItems,
+      workspaces: group.rows,
       collapsed: input.collapsedStatusGroupKeys?.has(group.bucket),
     })),
     shortcutLimit: input.shortcutLimit,

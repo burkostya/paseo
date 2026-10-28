@@ -2619,7 +2619,9 @@ export class AgentManager {
     }
     if (options?.clientMessageId) {
       this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "accepted", {
-        messageId: options.clientMessageId,
+        // Only providers that can resolve a command checkpoint can rewind an
+        // out-of-band prompt. Other commands have no provider history entry.
+        messageId: agent.session.resolveRewindTarget ? options.clientMessageId : undefined,
       });
       this.emitState(agent);
     }

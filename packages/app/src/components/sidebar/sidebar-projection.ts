@@ -19,17 +19,8 @@ import {
   type SidebarShortcutModel,
   type SidebarShortcutSection,
 } from "@/utils/sidebar-shortcuts";
-import { limitSidebarGroupItems } from "./sidebar-group-limit";
-import {
-  selectSidebarGroupVisibility,
-  WORKSPACE_GROUP_VISIBILITY,
-} from "./sidebar-group-visibility";
 import { statusWorkspaceGroups, type SidebarWorkspaceGroup } from "./sidebar-labels";
-import {
-  buildWorkspaceTreeRows,
-  collapsedWorkspaceStatuses,
-  limitWorkspaceTreeRows,
-} from "./workspace-hierarchy";
+import { buildWorkspaceTreeRows } from "./workspace-hierarchy";
 
 export interface SidebarProjection {
   pinnedGroups: PinnedSidebarGroups;
@@ -59,9 +50,6 @@ export interface SidebarProjectionInput {
   collapsedWorkspaceGroupKeys: ReadonlySet<string>;
   t: TFunction;
   collapsedWorkspaceKeys?: ReadonlySet<string>;
-  expandedProjectWorkspaceKeys?: ReadonlySet<string>;
-  expandedWorkspaceGroupKeys?: ReadonlySet<string>;
-  expandedPinned?: boolean;
   shortcutLimit?: number;
 }
 
@@ -82,9 +70,7 @@ export function buildSidebarProjection(input: SidebarProjectionInput): SidebarPr
 
   const sections: SidebarShortcutSection[] = [];
   if (!input.pinnedCollapsed) {
-    sections.push({
-      workspaces: limitSidebarGroupItems(pinnedGroups.pinnedChats, input.expandedPinned ?? false),
-    });
+    sections.push({ workspaces: pinnedGroups.pinnedChats });
   }
   if (input.groupMode === "project") {
     sections.push(
@@ -95,26 +81,8 @@ export function buildSidebarProjection(input: SidebarProjectionInput): SidebarPr
           workspaceEntriesByKey: hierarchyEntries,
           collapsedKeys: input.collapsedWorkspaceKeys,
         });
-        const expanded = input.expandedProjectWorkspaceKeys?.has(project.viewKey) ?? false;
-        const allRows = buildWorkspaceTreeRows({
-          workspaces: project.workspaces,
-          workspaceEntriesByKey: hierarchyEntries,
-        });
-        const collapsedStatuses = collapsedWorkspaceStatuses(
-          rows,
-          allRows,
-          input.workspaceEntriesByKey,
-        );
         return {
-          workspaces: (expanded
-            ? rows
-            : limitWorkspaceTreeRows(
-                rows,
-                7,
-                (key) =>
-                  collapsedStatuses.get(key) ?? input.workspaceEntriesByKey.get(key)?.statusBucket,
-              )
-          ).map((row) => row.workspace),
+          workspaces: rows.map((row) => row.workspace),
           collapsed: input.collapsedProjectKeys.has(project.viewKey),
         };
       }),
@@ -122,11 +90,7 @@ export function buildSidebarProjection(input: SidebarProjectionInput): SidebarPr
   } else {
     sections.push(
       ...workspaceGroups.map((group) => ({
-        workspaces: selectSidebarGroupVisibility(
-          group.rows,
-          input.expandedWorkspaceGroupKeys?.has(group.key) ?? false,
-          WORKSPACE_GROUP_VISIBILITY,
-        ).visibleItems,
+        workspaces: group.rows,
         collapsed: input.collapsedWorkspaceGroupKeys.has(group.key),
       })),
     );

@@ -85,7 +85,6 @@ describe("buildSidebarShortcutModel", () => {
       const model = buildSidebarShortcutModel({
         projects: [project("p", workspaces)],
         collapsedProjectKeys: new Set<string>(),
-        expandedProjectWorkspaceKeys: new Set(["p"]),
       });
 
       expect(
@@ -167,7 +166,6 @@ describe("buildSidebarShortcutModel", () => {
     const model = buildSidebarShortcutModel({
       projects,
       collapsedProjectKeys: new Set<string>(),
-      expandedProjectWorkspaceKeys: new Set(["p"]),
     });
 
     expect(model.shortcutTargets).toHaveLength(20);

@@ -2,15 +2,11 @@ import { useMemo } from "react";
 import type { SidebarProjectEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { buildSidebarShortcutModel } from "@/utils/sidebar-shortcuts";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
-import { useSidebarExpandedSectionsStore } from "@/stores/sidebar-expanded-sections-store";
 
 export function useSidebarShortcutModel(input: { projects: SidebarProjectEntry[] }) {
   const { projects } = input;
   const collapsedProjectKeys = useSidebarCollapsedSectionsStore(
     (state) => state.collapsedProjectKeys,
-  );
-  const expandedProjectWorkspaceKeys = useSidebarExpandedSectionsStore(
-    (state) => state.expandedProjectWorkspaceKeys,
   );
   const collapsedWorkspaceKeys = useSidebarCollapsedSectionsStore(
     (state) => state.collapsedWorkspaceKeys,
@@ -28,9 +24,8 @@ export function useSidebarShortcutModel(input: { projects: SidebarProjectEntry[]
         projects,
         collapsedProjectKeys,
         collapsedWorkspaceKeys,
-        expandedProjectWorkspaceKeys,
       }),
-    [collapsedProjectKeys, collapsedWorkspaceKeys, expandedProjectWorkspaceKeys, projects],
+    [collapsedProjectKeys, collapsedWorkspaceKeys, projects],
   );
 
   return {

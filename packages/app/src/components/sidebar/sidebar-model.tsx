@@ -15,7 +15,6 @@ import {
   type SidebarGroupMode,
 } from "@/stores/sidebar-view-store";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
-import { useSidebarExpandedSectionsStore } from "@/stores/sidebar-expanded-sections-store";
 import type { SidebarShortcutModel } from "@/utils/sidebar-shortcuts";
 import { buildSidebarProjection } from "./sidebar-projection";
 import type { SidebarProjectIconTarget } from "@/utils/sidebar-project-row-model";
@@ -76,13 +75,6 @@ export function SidebarModelProvider({
   const collapsedWorkspaceKeys = useSidebarCollapsedSectionsStore(
     (state) => state.collapsedWorkspaceKeys,
   );
-  const expandedProjectWorkspaceKeys = useSidebarExpandedSectionsStore(
-    (state) => state.expandedProjectWorkspaceKeys,
-  );
-  const expandedWorkspaceGroupKeys = useSidebarExpandedSectionsStore(
-    (state) => state.expandedWorkspaceGroupKeys,
-  );
-  const expandedPinned = useSidebarExpandedSectionsStore((state) => state.expandedPinned);
   const pinnedCollapsed = useSidebarCollapsedSectionsStore((state) => state.collapsedPinned);
   const pinnedWorkspaceOrder = useSidebarOrderStore((state) => state.pinnedWorkspaceOrder);
   const toggleProjectCollapsed = useSidebarCollapsedSectionsStore(
@@ -189,17 +181,11 @@ export function SidebarModelProvider({
       collapsedWorkspaceGroupKeys,
       t,
       collapsedWorkspaceKeys,
-      expandedProjectWorkspaceKeys,
-      expandedWorkspaceGroupKeys,
-      expandedPinned,
     }),
     [
       collapsedProjectKeys,
       collapsedWorkspaceGroupKeys,
       collapsedWorkspaceKeys,
-      expandedPinned,
-      expandedProjectWorkspaceKeys,
-      expandedWorkspaceGroupKeys,
       groupMode,
       list.projectNamesByViewKey,
       filteredProjects,

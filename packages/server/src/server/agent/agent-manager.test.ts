@@ -11139,6 +11139,15 @@ test("tryRunOutOfBand gives providers the command another agent sent, not its en
     const pasted = prepareAgentMessage(String(fromAgent.prompt));
     expect(manager.tryRunOutOfBand(agent.id, pasted.prompt)).toBe(false);
     expect(seenPrompts.at(-1)).toBe(pasted.prompt);
+
+    expect(manager.tryRunOutOfBand(agent.id, "/handled", { clientMessageId: "command-id" })).toBe(
+      true,
+    );
+    expect(manager.fetchTimeline(agent.id, { direction: "tail", limit: 20 }).rows).toEqual([
+      expect.objectContaining({
+        item: { type: "user_message", text: "/handled", clientMessageId: "command-id" },
+      }),
+    ]);
   } finally {
     await manager.closeAgent(agent.id);
     rmSync(workdir, { recursive: true, force: true });

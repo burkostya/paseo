@@ -1,5 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -33,6 +41,9 @@ test("imports external worktrees without setup, deduplicates, and preserves file
       cwd: repoDir,
       stdio: "pipe",
     });
+    // On Windows the temp directory can use an 8.3 alias while Git returns the long path.
+    const canonicalWorktreePath = realpathSync(worktreePath);
+    const canonicalDetachedPath = realpathSync(detachedPath);
     writeFileSync(
       path.join(worktreePath, "paseo.json"),
       JSON.stringify({
@@ -50,18 +61,18 @@ test("imports external worktrees without setup, deduplicates, and preserves file
     expect(listed.worktrees).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          path: worktreePath,
+          path: canonicalWorktreePath,
           branch: "feature/existing-branch",
           workspaceId: null,
           unavailable: false,
         }),
-        expect.objectContaining({ path: detachedPath, branch: null, workspaceId: null }),
+        expect.objectContaining({ path: canonicalDetachedPath, branch: null, workspaceId: null }),
       ]),
     );
     expect((await client.importProjectWorktree(projectId, repoDir)).error).toBeTruthy();
     const results = await Promise.all([
       client.importProjectWorktree(projectId, worktreePath),
-      client.importProjectWorktree(projectId, worktreePath),
+      client.importProjectWorktree(projectId, canonicalWorktreePath),
     ]);
     expect(results[0].error).toBeNull();
     expect(results[1]).toMatchObject({ error: null, workspaceId: results[0].workspaceId });
@@ -69,9 +80,9 @@ test("imports external worktrees without setup, deduplicates, and preserves file
     const records = JSON.parse(
       readFileSync(path.join(daemon.paseoHome, "projects", "workspaces.json"), "utf8"),
     );
-    expect(records.filter((record: { cwd: string }) => record.cwd === worktreePath)).toHaveLength(
-      1,
-    );
+    expect(
+      records.filter((record: { cwd: string }) => record.cwd === canonicalWorktreePath),
+    ).toHaveLength(1);
     expect(
       records.find((record: { workspaceId: string }) => record.workspaceId === workspaceId),
     ).toMatchObject({ kind: "worktree", isPaseoOwnedWorktree: false, projectId });
@@ -81,7 +92,7 @@ test("imports external worktrees without setup, deduplicates, and preserves file
     expect(existsSync(path.join(worktreePath, "teardown-must-not-run"))).toBe(false);
     expect(
       (await client.listProjectWorktrees(projectId)).worktrees.find(
-        (row) => row.path === worktreePath,
+        (row) => row.path === canonicalWorktreePath,
       ),
     ).toMatchObject({ workspaceId, archived: true });
     expect(await client.importProjectWorktree(projectId, worktreePath)).toMatchObject({
@@ -90,7 +101,7 @@ test("imports external worktrees without setup, deduplicates, and preserves file
     });
     expect(
       (await client.listProjectWorktrees(projectId)).worktrees.find(
-        (row) => row.path === worktreePath,
+        (row) => row.path === canonicalWorktreePath,
       ),
     ).toMatchObject({ workspaceId, archived: false });
     expect(existsSync(path.join(worktreePath, "setup-must-not-run"))).toBe(false);
@@ -98,7 +109,7 @@ test("imports external worktrees without setup, deduplicates, and preserves file
     rmSync(detachedPath, { recursive: true });
     expect(
       (await client.listProjectWorktrees(projectId)).worktrees.find(
-        (row) => row.path === detachedPath,
+        (row) => row.path === canonicalDetachedPath,
       )?.unavailable,
     ).toBe(true);
     expect((await client.importProjectWorktree(projectId, detachedPath)).error).toBeTruthy();

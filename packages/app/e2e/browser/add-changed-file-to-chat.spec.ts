@@ -19,6 +19,10 @@ for (const width of [1400, 390]) {
     const relativePath = "src/changed file.ts";
 
     try {
+      await workspace.client.setDiffComparisonV2(
+        { kind: "workspace", workspaceId: workspace.workspaceId },
+        { mode: "uncommitted" },
+      );
       await mkdir(path.join(workspace.cwd, "src"), { recursive: true });
       await writeFile(path.join(workspace.cwd, relativePath), "export const changed = true;\n");
       await workspace.client.checkoutRefresh(workspace.cwd);

@@ -367,6 +367,10 @@ test("updates populated code and diff appearance without losing the editor insta
     (_, index) => `export const line${index} = "retained ${index}";`,
   ).join("\n");
   try {
+    await workspace.client.setDiffComparisonV2(
+      { kind: "workspace", workspaceId: workspace.workspaceId },
+      { mode: "uncommitted" },
+    );
     await writeFile(`${workspace.repoPath}/appearance.ts`, source);
     await page.addInitScript(() => {
       localStorage.setItem(

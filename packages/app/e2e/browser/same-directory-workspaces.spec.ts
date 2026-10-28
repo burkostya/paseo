@@ -41,6 +41,10 @@ test.describe("Same-directory workspaces", () => {
     const seeded = await seedWorkspace({ repoPrefix: "same-dir-shared-" });
 
     try {
+      await seeded.client.setDiffComparisonV2(
+        { kind: "project", projectId: seeded.projectId },
+        { mode: "uncommitted" },
+      );
       const secondWorkspaceId = await createSecondWorkspaceOnSameDir(seeded, "Second view");
 
       // Seed an uncommitted change directly in the shared checkout. Because the

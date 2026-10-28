@@ -38,6 +38,11 @@ async function configureRemote(input: {
     execSync(`git init --bare -b main ${remoteDir}`, { cwd: repoPath, stdio: "ignore" });
     execSync(`git remote add origin ${remoteDir}`, { cwd: repoPath, stdio: "ignore" });
     execSync("git push -u origin --all", { cwd: repoPath, stdio: "ignore" });
+    // A clone normally creates this symbolic ref; git push into a bare fixture does not.
+    execSync("git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main", {
+      cwd: repoPath,
+      stdio: "ignore",
+    });
     if (originUrl) {
       // Relabel origin to a display URL after the local tracking remote is set
       // up, so project grouping shows the remote's owner/repo while branch
