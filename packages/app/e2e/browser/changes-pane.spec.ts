@@ -7,7 +7,7 @@ import { test, expect } from "../support/fixtures";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { getServerId } from "../support/helpers/server-id";
 import { connectSeedClient } from "../support/helpers/seed-client";
-import { createTempGitRepo } from "../support/helpers/workspace";
+import { configureTempComparisonBase, createTempGitRepo } from "../support/helpers/workspace";
 import { openChangesPanel, waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
 
 interface DirtyWorkspace {
@@ -269,7 +269,7 @@ test("Changes opens All changes for a clean checkout", async ({ page }) => {
 
   const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
   const tree = page.getByTestId("changes-tree-panel").filter({ visible: true });
-  await expect(tree.getByTestId("changes-diff-status-trigger")).toContainText("All changes");
+  await expect(tree.getByTestId("changes-comparison-trigger")).toContainText("All changes");
   await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("committed-only.ts, +1, -0");
 });
 
@@ -283,7 +283,7 @@ test("All changes combines committed and pending edits and preserves an unfinish
   await openWorkspaceChangesSurface(page, workspace);
   const tree = page.getByTestId("changes-tree-panel").filter({ visible: true });
   const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
-  const mode = tree.getByRole("button", { name: "Diff mode", exact: true });
+  const mode = tree.getByTestId("changes-comparison-trigger");
   await expect(mode).toContainText("All changes");
   await expectNetComparisonFiles(page, ["a-tracked.ts", "b-committed.ts"]);
   await expectRenderedAddedLine(page, "committed");
@@ -328,25 +328,20 @@ test("Changes keeps a manual comparison when checkout dirtiness changes", async 
   await openWorkspaceChanges(page, workspace);
 
   const tree = page.getByTestId("changes-tree-panel").filter({ visible: true });
-  const mode = tree.getByTestId("changes-diff-status-trigger");
+  const mode = tree.getByTestId("changes-comparison-trigger");
   await expect(mode).toContainText("All changes");
 
-  await mode.click();
-  await page.getByTestId("changes-diff-mode-committed").click();
+  await selectChangesComparison(page, "Committed");
   await expect(mode).toContainText("Committed");
-  await expect(tree.getByRole("button", { name: "See uncommitted changes" })).toBeVisible();
+  await expect(tree.getByText("No changes to display", { exact: true })).toBeVisible();
 
   execFileSync("git", ["add", "--all"], { cwd: workspace.repoPath });
   execFileSync("git", ["commit", "-m", "Commit working changes"], { cwd: workspace.repoPath });
   await expect(mode).toContainText("Committed");
-  await expect(tree.getByRole("button", { name: "See uncommitted changes" })).toHaveCount(0, {
-    timeout: 30_000,
-  });
+  await expect(tree.getByText("use-mounted-tab-set.ts", { exact: true })).toBeVisible();
 
   await writeFile(path.join(workspace.repoPath, "new-working-change.txt"), "uncommitted\n");
-  await expect(tree.getByRole("button", { name: "See uncommitted changes" })).toBeVisible({
-    timeout: 30_000,
-  });
+  await expect(tree.getByText("new-working-change.txt", { exact: true })).toHaveCount(0);
   await expect(mode).toContainText("Committed");
 
   await selectChangesComparison(page, "Uncommitted");
@@ -363,25 +358,21 @@ test("Changes keeps a manual comparison when checkout dirtiness changes", async 
   await expect(mode).toContainText("Uncommitted");
 });
 
-test("an empty Changes comparison links to the populated comparison", async ({ page }) => {
+test("an empty Changes comparison can switch to the populated comparison", async ({ page }) => {
   const workspace = await createWorkspaceWithCommittedDiff();
   await openWorkspaceChangesSurface(page, workspace);
 
   const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
   const tree = page.getByTestId("changes-tree-panel").filter({ visible: true });
-  const mode = tree.getByTestId("changes-diff-status-trigger");
-  await mode.click();
-  await page.getByTestId("changes-diff-mode-committed").click();
+  const mode = tree.getByTestId("changes-comparison-trigger");
+  await selectChangesComparison(page, "Committed");
   await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("committed-only.ts, +1, -0");
 
-  await mode.click();
-  await page.getByTestId("changes-diff-mode-uncommitted").click();
+  await selectChangesComparison(page, "Uncommitted");
 
   await expect(tree.getByText("No changes to display", { exact: true })).toBeVisible();
   await expect(panel.getByText("No changes to display", { exact: true })).toBeVisible();
-  const seeCommitted = tree.getByRole("button", { name: "See committed changes" });
-  await expect(seeCommitted).toBeVisible();
-  await seeCommitted.click();
+  await selectChangesComparison(page, "Committed");
   await expect(mode).toContainText("Committed");
   await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("committed-only.ts, +1, -0");
 });
@@ -840,7 +831,7 @@ test("Changes keeps review navigation and controls inside its workspace tab", as
   await expect(visiblePanel).toBeVisible();
   await expect(visiblePanel.getByTestId("changes-repository-header")).toHaveCount(0);
   await expect(visiblePanel.getByTestId("changes-branch-switcher")).toHaveCount(0);
-  await expect(visiblePanel.getByTestId("changes-diff-status-trigger")).toHaveCount(0);
+  await expect(visiblePanel.getByTestId("changes-comparison-trigger")).toHaveCount(0);
   await expect(visiblePanel.getByTestId("changes-selected-diff-stat")).toHaveCount(0);
   await expect(visiblePanel.getByTestId("changes-header")).toHaveCount(1);
   await expect(diffHeaderForPath(visiblePanel, "src/use-mounted-tab-set.ts")).toHaveAccessibleName(
@@ -962,8 +953,7 @@ test("compact Explorer renders inline hunks with a saved tree-only desktop prefe
     { key: CHANGES_PREFERENCES_KEY },
   );
   const explorer = await openCompactChanges(page, workspace);
-  await explorer.getByRole("button", { name: "Diff mode", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Uncommitted", exact: true }).click();
+  await selectChangesComparison(page, "Uncommitted");
   await expect(explorer.getByTestId("git-diff-canvas")).toBeVisible();
   await expect(explorer.getByTestId("diff-file-0-toggle")).toBeVisible();
   await explorer.getByTestId("diff-file-0-toggle").click({ button: "right" });
@@ -1541,6 +1531,15 @@ async function expectVisibleDiffRowsShareTypography(page: Page): Promise<void> {
   await expect(page.locator('[data-testid^="diff-code-row-"]')).toHaveCount(0);
 }
 
+async function createChangesRepo(
+  prefix: string,
+  options?: Parameters<typeof createTempGitRepo>[1],
+) {
+  const repo = await createTempGitRepo(prefix, options);
+  configureTempComparisonBase(repo.path);
+  return repo;
+}
+
 async function createWorkspaceWithMountedTabDiff(
   options: WorkspaceFixtureOptions = {},
 ): Promise<DirtyWorkspace> {
@@ -1557,7 +1556,7 @@ async function createWorkspaceWithMountedTabDiff(
       { path: "src/zz-folder/nested/changed.ts", content: "export const nested = 1;\n" },
     );
   }
-  const repo = await createTempGitRepo("changes-pane-", { files });
+  const repo = await createChangesRepo("changes-pane-", { files });
   const client = await connectSeedClient();
   cleanupTasks.push({
     run: async () => {
@@ -1598,7 +1597,7 @@ async function createWorkspaceWithMountedTabDiff(
 }
 
 async function createWorkspaceWithNetDiff(): Promise<DirtyWorkspace> {
-  const repo = await createTempGitRepo("changes-net-", {
+  const repo = await createChangesRepo("changes-net-", {
     files: [{ path: "a-tracked.ts", content: "base\n" }],
   });
   const client = await connectSeedClient();
@@ -1656,7 +1655,7 @@ async function expectRenderedAddedLine(page: Page, contents: string): Promise<vo
 }
 
 async function createWorkspaceWithCommittedDiff(): Promise<DirtyWorkspace> {
-  const repo = await createTempGitRepo("changes-committed-", {
+  const repo = await createChangesRepo("changes-committed-", {
     files: [{ path: "tracked.ts", content: "export const tracked = 1;\n" }],
   });
   const client = await connectSeedClient();
@@ -1678,7 +1677,7 @@ async function createWorkspaceWithCommittedDiff(): Promise<DirtyWorkspace> {
 }
 
 async function createWorkspaceWithScrollableComparisons(): Promise<DirtyWorkspace> {
-  const repo = await createTempGitRepo("changes-comparison-focus-", {
+  const repo = await createChangesRepo("changes-comparison-focus-", {
     files: [{ path: "tracked.ts", content: "export const tracked = true;\n" }],
   });
   const client = await connectSeedClient();
@@ -1718,7 +1717,7 @@ async function writeComparisonFiles(
 }
 
 async function createWorkspaceWithExactSelectionDiff(content: string): Promise<DirtyWorkspace> {
-  const repo = await createTempGitRepo("changes-canvas-selection-", {
+  const repo = await createChangesRepo("changes-canvas-selection-", {
     files: [{ path: "src/selection.ts", content: "" }],
   });
   await writeFile(path.join(repo.path, "src/selection.ts"), `${content}\n`);
@@ -1735,7 +1734,7 @@ async function createWorkspaceWithExactSelectionDiff(content: string): Promise<D
 }
 
 async function createWorkspaceWithTwoSelectionDiffs(): Promise<DirtyWorkspace> {
-  const repo = await createTempGitRepo("changes-canvas-selection-shift-", {
+  const repo = await createChangesRepo("changes-canvas-selection-shift-", {
     files: [
       { path: "src/first.ts", content: "" },
       { path: "src/second.ts", content: "" },
@@ -1762,7 +1761,7 @@ async function createWorkspaceWithManyTinyDiffs(fileCount: number): Promise<Dirt
     path: `src/file-${String(index).padStart(4, "0")}.ts`,
     content: "export const value = 0;\n",
   }));
-  const repo = await createTempGitRepo("changes-canvas-many-files-", { files });
+  const repo = await createChangesRepo("changes-canvas-many-files-", { files });
   await Promise.all(
     files.map((file, index) =>
       writeFile(path.join(repo.path, file.path), `export const value = ${index + 1};\n`),
@@ -1789,7 +1788,7 @@ async function createWorkspaceWithStickyTransitionDiff(): Promise<DirtyWorkspace
     path: filePath,
     content: `${source}\n`,
   }));
-  const repo = await createTempGitRepo("changes-canvas-sticky-transition-", { files });
+  const repo = await createChangesRepo("changes-canvas-sticky-transition-", { files });
   const changedSource = Array.from(
     { length: 48 },
     (_, index) => `export const value${index} = ${index + 100};`,
@@ -1873,8 +1872,7 @@ async function jumpToOverviewFile(page: Page, explorer: Locator, filePath: strin
 }
 
 async function selectEmptyUncommittedComparison(page: Page, explorer: Locator): Promise<void> {
-  await explorer.getByRole("button", { name: "Diff mode", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Uncommitted", exact: true }).click();
+  await selectChangesComparison(page, "Uncommitted");
   await expect(explorer.getByText("No changes to display", { exact: true })).toBeVisible();
 }
 
@@ -1922,9 +1920,21 @@ async function selectChangesComparison(
   comparison: "Committed" | "Uncommitted",
 ): Promise<void> {
   const tree = page.getByTestId("changes-tree-panel").filter({ visible: true });
-  await tree.getByTestId("changes-diff-status-trigger").click();
-  await page.getByTestId(`changes-diff-mode-${comparison.toLowerCase()}`).click();
-  await expect(tree.getByTestId("changes-diff-status-trigger")).toContainText(comparison);
+  await tree.getByTestId("changes-comparison-trigger").click();
+  await page
+    .getByTestId(
+      comparison === "Committed" ? "comparison-committed-auto" : "comparison-uncommitted",
+    )
+    .click();
+  await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+  const backdrop = page.getByRole("button", { name: "Bottom sheet backdrop", exact: true });
+  if (await backdrop.isVisible()) {
+    await backdrop.click({ position: { x: 5, y: 5 } });
+    await expect(backdrop).toHaveCount(0);
+  } else {
+    await page.keyboard.press("Escape");
+  }
+  await expect(tree.getByTestId("changes-comparison-trigger")).toContainText(comparison);
 }
 
 async function expectWorkingComparisonFiles(

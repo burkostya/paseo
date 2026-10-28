@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { mkdtemp, readFile, writeFile, rm, mkdir, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -23,6 +23,14 @@ export interface TempDirectory {
  */
 export async function resolveTempRoot(): Promise<string> {
   return await realpath(tmpdir());
+}
+
+/** Give an isolated fixture a stable remote default without network access. */
+export function configureTempComparisonBase(repoPath: string): void {
+  const run = (args: string[]) => execFileSync("git", args, { cwd: repoPath, stdio: "ignore" });
+  run(["remote", "add", "paseo-fixture", repoPath]);
+  run(["update-ref", "refs/remotes/paseo-fixture/main", "HEAD"]);
+  run(["symbolic-ref", "refs/remotes/paseo-fixture/HEAD", "refs/remotes/paseo-fixture/main"]);
 }
 
 async function configureRemote(input: {
