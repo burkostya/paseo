@@ -831,7 +831,17 @@ test("Changes keeps review navigation and controls inside its workspace tab", as
   await expect(visiblePanel).toBeVisible();
   await expect(visiblePanel.getByTestId("changes-repository-header")).toHaveCount(0);
   await expect(visiblePanel.getByTestId("changes-branch-switcher")).toHaveCount(0);
-  await expect(visiblePanel.getByTestId("changes-comparison-trigger")).toHaveCount(0);
+  const panelComparison = visiblePanel.getByTestId("changes-comparison-trigger");
+  const treeComparison = page
+    .getByTestId("changes-tree-panel")
+    .filter({ visible: true })
+    .getByTestId("changes-comparison-trigger");
+  await expect(panelComparison).toBeVisible();
+  await expect
+    .poll(
+      async () => (await panelComparison.textContent()) === (await treeComparison.textContent()),
+    )
+    .toBe(true);
   await expect(visiblePanel.getByTestId("changes-selected-diff-stat")).toHaveCount(0);
   await expect(visiblePanel.getByTestId("changes-header")).toHaveCount(1);
   await expect(diffHeaderForPath(visiblePanel, "src/use-mounted-tab-set.ts")).toHaveAccessibleName(
