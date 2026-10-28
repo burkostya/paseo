@@ -123,15 +123,28 @@ layouts discover while Explorer is active. The rail requests summary status; sel
 content also requests timeline data. Inactive consumers read cached data without request demand.
 Discovery uses ordinary PR tabs and their existing once-per-workspace close opt-out.
 
+## Workspace hierarchy
+
+Created, Last prompt, and Manual sort siblings within the project tree. Drag-and-drop is available
+in Manual; the parent menu remains available in every sort mode. The collapsed project list keeps
+the first seven visible rows and active rows, along with their visible ancestors. Explicitly
+collapsed branches stay collapsed and their parent carries the aggregate status.
+
 ## Changes comparison
 
 Choose **Compare changes** in the project menu to set its default. Workspace menus and Changes
 can override it or return to **Use project setting**. The sidebar and composer counters use the
 same comparison as Changes; opening a counter opens that comparison.
 
-Uncommitted changes is the default and includes staged, unstaged, and untracked files. Comparing
-against a branch includes commits and current working-tree changes since their merge base. Local
-and remote-tracking branches are separate choices. A commit never switches the selected mode.
+All changes is the default and includes commits and working-tree changes since the comparison
+base. Committed and Uncommitted are separate modes. A workspace override wins over the project
+setting; clearing it restores the project setting. A commit never switches the selected mode.
+
+For an automatic base, use the current PR or MR target, then the saved worktree base, then the
+symbolic HEAD of the selected remote. The current branch's configured remote selects that remote;
+without one, require exactly one remote. Keep exact remote refs, and ask the user to select a base
+when none is available. Do not infer the base from `main`, `master`, or branch ancestry. A forge
+failure retains the last known PR target for that workspace and branch and shows the error.
 
 If a selected branch disappears or has no common ancestor, show comparison unavailable and let
 the user select another comparison. Do not substitute the repository default branch. While a new

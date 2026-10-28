@@ -1,9 +1,13 @@
-import { comparisonLabel } from "./label";
+import { comparisonV2Label } from "./label";
 import { useCallback, useMemo, useState } from "react";
 import { Text } from "react-native";
 import { useTranslation } from "react-i18next";
 import { useMutation } from "@tanstack/react-query";
-import type { DiffComparison, SessionInboundMessage } from "@getpaseo/protocol/messages";
+import type {
+  DiffComparison,
+  DiffComparisonV2,
+  SessionInboundMessage,
+} from "@getpaseo/protocol/messages";
 import { MenuHint, MenuItem, MenuTextField, type MenuPageDefinition } from "@/components/ui/menu";
 import {
   DropdownMenu,
@@ -23,7 +27,14 @@ export type ComparisonTarget = Extract<
   { type: "git.comparison.set.request" }
 >["target"];
 export const COMPARISON_PAGE = "gitComparison";
-const UNCOMMITTED: DiffComparison = { mode: "uncommitted" };
+const UNCOMMITTED: DiffComparisonV2 = { mode: "uncommitted" };
+const ALL_AUTO: DiffComparisonV2 = { mode: "all" };
+const COMMITTED_AUTO: DiffComparisonV2 = { mode: "base" };
+
+function legacyComparison(comparison: DiffComparison | undefined): DiffComparisonV2 | undefined {
+  if (!comparison) return undefined;
+  return comparison.mode === "base" ? { ...comparison, mode: "all" } : comparison;
+}
 
 interface ComparisonMenuProps {
   serverId: string;
@@ -31,6 +42,7 @@ interface ComparisonMenuProps {
   cwd?: string;
 }
 
+// oxlint-disable-next-line complexity
 function useComparisonTarget({ serverId, target, cwd }: ComparisonMenuProps) {
   const workspace = useWorkspace(serverId, target.kind === "workspace" ? target.workspaceId : null);
   const project = useSessionStore((state) =>
@@ -38,29 +50,46 @@ function useComparisonTarget({ serverId, target, cwd }: ComparisonMenuProps) {
       ? state.sessions[serverId]?.projects.get(target.projectId)
       : undefined,
   );
-  const inherited = workspace?.projectDiffComparison ?? UNCOMMITTED;
+  const inherited =
+    workspace?.projectDiffComparisonV2 ??
+    legacyComparison(workspace?.projectDiffComparison) ??
+    ALL_AUTO;
   const selection =
-    target.kind === "workspace" ? workspace?.diffComparisonOverride : project?.diffComparison;
-  const effective =
-    target.kind === "workspace" ? workspace?.diffComparison : project?.diffComparison;
+    target.kind === "workspace"
+      ? workspace?.diffComparisonOverrideV2
+      : (project?.diffComparisonV2 ?? legacyComparison(project?.diffComparison));
+  const effective = target.kind === "workspace" ? workspace?.diffComparisonV2 : selection;
   return {
     inherited,
     selection,
-    effective: effective ?? UNCOMMITTED,
+    effective: effective ?? ALL_AUTO,
+    resolvedBase: workspace?.diffComparisonResolvedBase,
+    baseSource: workspace?.diffComparisonBaseSource,
+    warning: workspace?.diffComparisonWarning,
+    comparisonError: workspace?.diffComparisonError,
     cwd: cwd ?? workspace?.workspaceDirectory ?? project?.projectRootPath ?? "",
   };
 }
 
 function ComparisonPage(props: ComparisonMenuProps) {
   const { t } = useTranslation();
-  const supported = useHostFeature(props.serverId, "workspaceDiffComparison");
+  const supported = useHostFeature(props.serverId, "workspaceDiffComparisonV2");
   const client = useHostRuntimeClient(props.serverId);
-  const { inherited, selection, effective, cwd } = useComparisonTarget(props);
+  const {
+    inherited,
+    selection,
+    effective,
+    cwd,
+    resolvedBase,
+    baseSource,
+    warning,
+    comparisonError,
+  } = useComparisonTarget(props);
   const [search, setSearch] = useState("");
   const mutation = useMutation({
-    mutationFn: async (comparison: DiffComparison | null) => {
+    mutationFn: async (comparison: DiffComparisonV2 | null) => {
       if (!client) throw new Error(t("common.errors.daemonClientUnavailable"));
-      await client.setDiffComparison(props.target, comparison);
+      await client.setDiffComparisonV2(props.target, comparison);
     },
   });
   const branches = useFetchQuery({
@@ -84,6 +113,8 @@ function ComparisonPage(props: ComparisonMenuProps) {
   const choose = mutation.mutate;
   const inherit = useCallback(() => choose(null), [choose]);
   const uncommitted = useCallback(() => choose(UNCOMMITTED), [choose]);
+  const allAuto = useCallback(() => choose(ALL_AUTO), [choose]);
+  const committedAuto = useCallback(() => choose(COMMITTED_AUTO), [choose]);
   const refetch = branches.refetch;
   const retry = useCallback(() => void refetch(), [refetch]);
   if (!supported) return <MenuHint>{t("diffComparison.updateHost")}</MenuHint>;
@@ -94,7 +125,7 @@ function ComparisonPage(props: ComparisonMenuProps) {
           closeOnSelect={false}
           selected={!selection}
           disabled={mutation.isPending}
-          description={comparisonLabel(inherited, t)}
+          description={comparisonV2Label(inherited, t)}
           onSelect={inherit}
           testID="comparison-inherit"
         >
@@ -103,15 +134,41 @@ function ComparisonPage(props: ComparisonMenuProps) {
       ) : null}
       <MenuItem
         closeOnSelect={false}
-        selected={
-          selection?.mode === "uncommitted" || (props.target.kind === "project" && !selection)
-        }
+        selected={selection?.mode === "uncommitted"}
         disabled={mutation.isPending}
         onSelect={uncommitted}
         testID="comparison-uncommitted"
       >
         {t("diffComparison.uncommitted")}
       </MenuItem>
+      <MenuItem
+        closeOnSelect={false}
+        selected={effective.mode === "all" && !effective.baseRef}
+        disabled={mutation.isPending}
+        onSelect={allAuto}
+        testID="comparison-all-auto"
+      >
+        {comparisonV2Label(ALL_AUTO, t)}
+      </MenuItem>
+      <MenuItem
+        closeOnSelect={false}
+        selected={effective.mode === "base" && !effective.baseRef}
+        disabled={mutation.isPending}
+        onSelect={committedAuto}
+        testID="comparison-committed-auto"
+      >
+        {comparisonV2Label(COMMITTED_AUTO, t)}
+      </MenuItem>
+      {resolvedBase && baseSource ? (
+        <MenuHint>{`${resolvedBase.replace(/^refs\/(heads|remotes)\//, "")} · ${t({ explicit: "diffComparison.sourceExplicit", pull_request: "diffComparison.sourcePullRequest", worktree: "diffComparison.sourceWorktree", remote_head: "diffComparison.sourceRemoteHead" }[baseSource])}`}</MenuHint>
+      ) : null}
+      {warning ? <MenuHint>{warning}</MenuHint> : null}
+      {comparisonError ? (
+        <>
+          <MenuHint>{comparisonError}</MenuHint>
+          <MenuHint>{t("diffComparison.resolveError")}</MenuHint>
+        </>
+      ) : null}
       {mutation.isPending ? <MenuHint>{t("diffComparison.saving")}</MenuHint> : null}
       {mutation.isError ? <MenuHint>{mutation.error.message}</MenuHint> : null}
       {mutation.isSuccess ? <MenuHint>{t("diffComparison.saved")}</MenuHint> : null}
@@ -148,16 +205,17 @@ function BranchOption({
   choose,
 }: {
   branch: string;
-  effective: DiffComparison | undefined;
+  effective: DiffComparisonV2 | undefined;
   pending: boolean;
-  choose: (comparison: DiffComparison) => void;
+  choose: (comparison: DiffComparisonV2) => void;
 }) {
-  const select = useCallback(() => choose({ mode: "base", baseRef: branch }), [branch, choose]);
+  const mode = effective?.mode === "base" ? "base" : "all";
+  const select = useCallback(() => choose({ mode, baseRef: branch }), [branch, choose, mode]);
   return (
     <MenuItem
       closeOnSelect={false}
       disabled={pending}
-      selected={effective?.mode === "base" && effective.baseRef === branch}
+      selected={effective?.mode !== "uncommitted" && effective?.baseRef === branch}
       onSelect={select}
       testID={`comparison-branch-${branch}`}
     >
@@ -213,7 +271,7 @@ export function ComparisonMenuTrigger() {
 
 export function ComparisonDropdown(props: ComparisonMenuProps) {
   const { t } = useTranslation();
-  const { effective } = useComparisonTarget(props);
+  const { effective, resolvedBase } = useComparisonTarget(props);
   return (
     <DropdownMenu compactMode="sheet">
       <DropdownMenuTrigger
@@ -221,7 +279,7 @@ export function ComparisonDropdown(props: ComparisonMenuProps) {
         testID="changes-comparison-trigger"
       >
         <Text style={styles.label} numberOfLines={1}>
-          {comparisonLabel(effective, t)}
+          {comparisonV2Label(effective, t, resolvedBase)}
         </Text>
       </DropdownMenuTrigger>
       <DropdownMenuContent width={300} align="start" sheetTitle={t("diffComparison.title")}>

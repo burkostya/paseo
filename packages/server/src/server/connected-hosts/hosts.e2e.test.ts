@@ -1506,12 +1506,19 @@ test(
   { timeout: 30000 },
   async () => {
     const parentPrompts: string[] = [];
+    let scheduledDelivery: (() => void) | undefined;
     const childStarted = Promise.withResolvers<void>();
     const finishChild = Promise.withResolvers<void>();
     cleanup.push(async () => {
       finishChild.resolve();
     });
     const a = await daemon({
+      agentMessageSchedule: (_delayMs, callback) => {
+        scheduledDelivery = callback;
+        return () => {
+          if (scheduledDelivery === callback) scheduledDelivery = undefined;
+        };
+      },
       agentClients: createTestAgentClients({
         onStartTurn: (prompt, config) => {
           if (config.title === "Batch parent")
@@ -1629,7 +1636,11 @@ test(
         .sort();
     };
     expect(await receiptStates()).toEqual(["pending", "pending"]);
+    const scheduledBeforeCompletion = scheduledDelivery;
     finishChild.resolve();
+    await expect.poll(() => scheduledDelivery !== scheduledBeforeCompletion).toBe(true);
+    expect(scheduledDelivery).toBeDefined();
+    scheduledDelivery!();
     await expect.poll(() => parentPrompts, { timeout: 10000 }).toHaveLength(1);
     expect(parentPrompts[0]).toContain("REMOTE_REPORT &lt;ready&gt;");
     expect(parentPrompts[0]).toContain("LOCAL_CLI_REPORT");

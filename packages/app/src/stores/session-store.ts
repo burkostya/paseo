@@ -110,6 +110,12 @@ export interface WorkspaceDescriptor {
   diffComparisonOverride?: WorkspaceDescriptorPayload["diffComparisonOverride"];
   projectDiffComparison?: WorkspaceDescriptorPayload["projectDiffComparison"];
   diffComparisonError?: string | null;
+  diffComparisonV2?: WorkspaceDescriptorPayload["diffComparisonV2"];
+  diffComparisonOverrideV2?: WorkspaceDescriptorPayload["diffComparisonOverrideV2"];
+  projectDiffComparisonV2?: WorkspaceDescriptorPayload["projectDiffComparisonV2"];
+  diffComparisonResolvedBase?: WorkspaceDescriptorPayload["diffComparisonResolvedBase"];
+  diffComparisonBaseSource?: WorkspaceDescriptorPayload["diffComparisonBaseSource"];
+  diffComparisonWarning?: WorkspaceDescriptorPayload["diffComparisonWarning"];
   id: string;
   projectId: string;
   projectDisplayName: string;
@@ -181,6 +187,12 @@ export function normalizeWorkspaceDescriptor(
     diffComparisonOverride: payload.diffComparisonOverride,
     projectDiffComparison: payload.projectDiffComparison,
     diffComparisonError: payload.diffComparisonError,
+    diffComparisonV2: payload.diffComparisonV2,
+    diffComparisonOverrideV2: payload.diffComparisonOverrideV2,
+    projectDiffComparisonV2: payload.projectDiffComparisonV2,
+    diffComparisonResolvedBase: payload.diffComparisonResolvedBase,
+    diffComparisonBaseSource: payload.diffComparisonBaseSource,
+    diffComparisonWarning: payload.diffComparisonWarning,
     scripts: (payload.scripts ?? []).map((s) => Object.assign({}, s)),
     gitRuntime: payload.gitRuntime,
     githubRuntime: payload.githubRuntime,
@@ -191,6 +203,7 @@ export function normalizeWorkspaceDescriptor(
 
 export interface ProjectDescriptor {
   diffComparison?: WorkspaceProjectDescriptorPayload["diffComparison"];
+  diffComparisonV2?: WorkspaceProjectDescriptorPayload["diffComparisonV2"];
   projectId: string;
   projectKey?: string | null;
   projectDisplayName: string;
@@ -212,6 +225,7 @@ export function normalizeProjectDescriptor(
     projectCustomIconRevision: payload.projectCustomIconRevision ?? null,
     projectIconRevision: payload.projectIconRevision,
     diffComparison: payload.diffComparison,
+    diffComparisonV2: payload.diffComparisonV2,
     projectRootPath: payload.projectRootPath,
     projectKind: payload.projectKind,
   };

@@ -55,6 +55,8 @@ export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   archivingAt: string | null;
   diffStat: { additions: number; deletions: number } | null;
   diffComparison?: WorkspaceDescriptor["diffComparison"];
+  diffComparisonV2?: WorkspaceDescriptor["diffComparisonV2"];
+  diffComparisonResolvedBase?: WorkspaceDescriptor["diffComparisonResolvedBase"];
   diffComparisonError?: string | null;
   prHint: PrHint | null;
   archiveHasUncommittedChanges: boolean | null;
@@ -181,6 +183,8 @@ export function createSidebarWorkspaceEntry(input: {
     archivingAt: input.workspace.archivingAt,
     diffStat: visibleDiffStat(input.workspace.diffStat),
     diffComparison: input.workspace.diffComparison,
+    diffComparisonV2: input.workspace.diffComparisonV2,
+    diffComparisonResolvedBase: input.workspace.diffComparisonResolvedBase,
     diffComparisonError: input.workspace.diffComparisonError,
     prHint: selectPrHintFromStatus(
       input.workspace.githubRuntime?.pullRequest,

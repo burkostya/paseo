@@ -1,7 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildAgentDescriptor, resolveAgentLabel } from "@/agent-presentation";
 import { i18n } from "@/i18n/i18next";
 import { buildDraftPanelDescriptor } from "@/panels/draft-panel-descriptor";
+
+vi.mock("@/agent-profiles", () => ({
+  AgentProfileGlyph: () => null,
+  resolveAgentProfileIdentity: () => null,
+  useAgentProfiles: () => ({ profiles: null }),
+}));
 
 function TestIcon() {
   return null;
@@ -90,6 +96,13 @@ describe("shared agent descriptor", () => {
       icon: TestIcon,
       titleState: "ready",
       statusBucket: "done",
+    });
+  });
+
+  it("shows the persisted profile identity alongside the provider", () => {
+    expect(describeAgent({ profileName: "Reviewer" })).toMatchObject({
+      subtitle: "Reviewer · Codex agent",
+      tooltip: "Review checkout retries · Reviewer",
     });
   });
 

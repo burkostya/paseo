@@ -69,13 +69,11 @@ function useComparisonSelection({
   workspaceId,
   cwd,
   baseRef,
-  isDirty,
 }: {
   serverId: string;
   workspaceId?: string;
   cwd: string;
   baseRef?: string;
-  isDirty: boolean;
 }) {
   const {
     canSelectBase,
@@ -95,15 +93,24 @@ function useComparisonSelection({
     cwd,
   });
   const unifiedComparison =
-    useHostFeature(serverId, "workspaceDiffComparison") && Boolean(workspaceId);
+    useHostFeature(serverId, "workspaceDiffComparisonV2") && Boolean(workspaceId);
   const hostComparison = useWorkspaceFields(
     serverId,
     workspaceId ?? null,
-    (workspace) => workspace.diffComparison,
+    (workspace) => workspace.diffComparisonV2,
   );
-  const diffMode = unifiedComparison ? (hostComparison?.mode ?? "uncommitted") : legacyMode;
-  const hostBaseRef = hostComparison?.mode === "base" ? hostComparison.baseRef : undefined;
-  const effectiveBaseRef = unifiedComparison ? hostBaseRef : legacyBaseRef;
+  const resolvedBaseRef = useWorkspaceFields(
+    serverId,
+    workspaceId ?? null,
+    (workspace) => workspace.diffComparisonResolvedBase,
+  );
+  const comparisonError = useWorkspaceFields(
+    serverId,
+    workspaceId ?? null,
+    (workspace) => workspace.diffComparisonError,
+  );
+  const diffMode = unifiedComparison ? (hostComparison?.mode ?? "all") : legacyMode;
+  const effectiveBaseRef = unifiedComparison ? (resolvedBaseRef ?? undefined) : legacyBaseRef;
   const selectUncommitted = useCallback(() => selectComparison("uncommitted"), [selectComparison]);
   const selectBase = useCallback(() => selectComparison("base"), [selectComparison]);
   const selectAll = useCallback(() => selectComparison("all"), [selectComparison]);
@@ -115,12 +122,14 @@ function useComparisonSelection({
     diffMode,
     unifiedComparison,
     hostComparison,
+    comparisonError,
     selectUncommitted,
     selectBase,
     selectAll,
   };
 }
 
+// oxlint-disable-next-line complexity
 export function useWorkingDiff({
   serverId,
   workspaceId,
@@ -153,6 +162,7 @@ export function useWorkingDiff({
     diffMode,
     unifiedComparison,
     hostComparison,
+    comparisonError,
     selectUncommitted,
     selectBase,
     selectAll,
@@ -161,9 +171,8 @@ export function useWorkingDiff({
     workspaceId,
     cwd,
     baseRef,
-    isDirty: Boolean(gitStatus?.isDirty),
   });
-  const reviewBaseRef = diffMode === "base" ? effectiveBaseRef : baseRef;
+  const reviewBaseRef = unifiedComparison || diffMode === "base" ? effectiveBaseRef : baseRef;
 
   const {
     files,
@@ -176,8 +185,11 @@ export function useWorkingDiff({
     mode: diffMode,
     baseRef: reviewBaseRef,
     ignoreWhitespace,
-    enabled: enabled && isGit && (!unifiedComparison || Boolean(hostComparison)),
-    includeWorkingTree: unifiedComparison,
+    enabled:
+      enabled &&
+      isGit &&
+      (!unifiedComparison ||
+        Boolean(hostComparison && (diffMode === "uncommitted" || effectiveBaseRef))),
     queryScope,
   });
   const reviewDraftKey = useMemo(
@@ -226,9 +238,11 @@ export function useWorkingDiff({
     selectBase,
     selectAll,
     files,
-    diffPayloadError,
+    diffPayloadError: comparisonError
+      ? { code: "UNKNOWN" as const, message: comparisonError }
+      : diffPayloadError,
     diffTooLarge,
-    isDiffLoading,
+    isDiffLoading: isDiffLoading && !comparisonError,
     reviewActions,
     reviewAttachment,
     reviewFeedback,

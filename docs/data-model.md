@@ -530,10 +530,11 @@ Array of workspace records. A workspace is a specific working directory within a
 
 ### Changes comparison
 
-Project and workspace records accept an optional `diffComparison`. A missing workspace value
-inherits the project setting; a missing project value means uncommitted changes. Keep it separate
-from `baseBranch`: choosing what to review must not change worktree recovery or merge operations.
-The host owns this preference so all connected clients show the same counters and Changes view.
+Project and workspace records hold a host-owned comparison setting. Workspace overrides inherit
+the project value when absent; an absent project value means All changes with an automatic base.
+Legacy `base` records keep their combined committed and working-tree behavior. New settings use a
+separate optional wire field so older clients can still parse the legacy projection. Keep this
+preference separate from `baseBranch`, which owns worktree recovery and merge behavior.
 See [Changes comparison](explorer-sidebar.md#changes-comparison) for the user-facing contract.
 
 ### Workspace label catalog

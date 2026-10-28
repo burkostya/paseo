@@ -36,6 +36,8 @@ test("shares comparison settings, persists overrides, and matches sidebar counts
   git(cwd, ["commit", "-m", "Shared"]);
   git(cwd, ["branch", "release"]);
   git(cwd, ["update-ref", "refs/remotes/team/release", "HEAD"]);
+  git(cwd, ["remote", "add", "team", cwd]);
+  git(cwd, ["symbolic-ref", "refs/remotes/team/HEAD", "refs/remotes/team/release"]);
   writeFileSync(path.join(cwd, "feature-only.txt"), "feature\n");
   git(cwd, ["add", "."]);
   git(cwd, ["commit", "-m", "Feature"]);
@@ -50,9 +52,21 @@ test("shares comparison settings, persists overrides, and matches sidebar counts
     await page.getByTestId("sidebar-workspace-trailing-diff").click();
     await closeSidebarDisplayPreferences(page);
     await openChangesPanel(page);
-    await expect(trigger).toHaveText("Uncommitted changes");
-    await expect(stat).toContainText("+1");
+    await expect(trigger).toContainText("team/release");
+    await expect(stat).toContainText("+2");
     await expect(page.getByText("working.txt", { exact: true })).toBeVisible();
+    await trigger.click();
+    await expect(page.getByText("team/release · Remote default", { exact: true })).toBeVisible();
+    await page.getByTestId("comparison-committed-auto").click();
+    await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(stat).toContainText("+1");
+    await expect(page.getByText("working.txt", { exact: true })).toHaveCount(0);
+    await choose(page, "comparison-all-auto");
+    await expect(stat).toContainText("+2");
+    await expect(page.getByText("working.txt", { exact: true })).toBeVisible();
+    await choose(page, "comparison-uncommitted");
+    await expect(stat).toContainText("+1");
     await choose(page, "comparison-branch-refs/remotes/team/release");
     await expect(trigger).toContainText("team/release");
     await expect(stat).toContainText("+2");
@@ -65,6 +79,18 @@ test("shares comparison settings, persists overrides, and matches sidebar counts
     await expect(stat).toContainText("+2");
     await expect(page.getByText("feature-only.txt", { exact: true })).toBeVisible();
     await expect(page.getByText("shared-change.txt", { exact: true })).toHaveCount(0);
+    await workspace.client.setDiffComparisonV2(
+      { kind: "workspace", workspaceId: workspace.workspaceId },
+      { mode: "base", baseRef: "refs/remotes/team/release" },
+    );
+    await expect(stat).toContainText("+1");
+    await expect(page.getByText("working.txt", { exact: true })).toHaveCount(0);
+    await workspace.client.setDiffComparisonV2(
+      { kind: "workspace", workspaceId: workspace.workspaceId },
+      { mode: "all", baseRef: "refs/remotes/team/release" },
+    );
+    await expect(stat).toContainText("+2");
+    await expect(page.getByText("working.txt", { exact: true })).toBeVisible();
     const projectRow = page.locator('[data-testid^="sidebar-project-row-"]').first();
     await projectRow.hover();
     await page.locator('[data-testid^="sidebar-project-kebab-"]').first().click();
@@ -103,6 +129,9 @@ test("shares comparison settings, persists overrides, and matches sidebar counts
     await choose(page, "comparison-branch-refs/remotes/team/release");
     git(cwd, ["update-ref", "-d", "refs/remotes/team/release"]);
     await expect(stat).toHaveText("!");
+    await trigger.click();
+    await expect(page.getByText(/Choose another branch below, or run git fetch/)).toBeVisible();
+    await page.keyboard.press("Escape");
     await choose(page, "comparison-uncommitted");
     await expect(stat).toHaveCount(0);
     await choose(page, "comparison-branch-refs/heads/main");
@@ -121,6 +150,9 @@ test("keeps a failed selection actionable and uses the compact comparison sheet"
   page,
 }) => {
   const workspace = await seedWorkspace({ repoPrefix: "diff-comparison-failure-" });
+  git(workspace.repoPath, ["remote", "add", "team", workspace.repoPath]);
+  git(workspace.repoPath, ["update-ref", "refs/remotes/team/main", "HEAD"]);
+  git(workspace.repoPath, ["symbolic-ref", "refs/remotes/team/HEAD", "refs/remotes/team/main"]);
   const serverId = getServerId();
   // Forward to the real daemon with an expired identity once, then allow the retry.
   let rejectNext = true;
@@ -160,13 +192,68 @@ test("keeps a failed selection actionable and uses the compact comparison sheet"
       .first();
     await option.click();
     await expect(page.getByText("Workspace not found", { exact: true })).toBeVisible();
-    await expect(trigger).toHaveText("Uncommitted changes");
+    await expect(trigger).toContainText("All changes");
     await expect(option).toBeEnabled();
     await option.click();
     await expect(page.getByText("Saved", { exact: true })).toBeVisible();
     await expect(trigger).toContainText("main");
     await expect(page.getByText("Workspace not found", { exact: true })).toHaveCount(0);
     await page.screenshot({ path: "/tmp/paseo-comparison-compact.png" });
+  } finally {
+    await workspace.cleanup();
+  }
+});
+
+test("requires a host update for shared comparison when the capability is absent", async ({
+  page,
+}) => {
+  const workspace = await seedWorkspace({ repoPrefix: "diff-comparison-legacy-host-" });
+  const serverId = getServerId();
+  let comparisonWrites = 0;
+  await page.routeWebSocket(/\/ws(?:\?|$)/, (browser) => {
+    const server = browser.connectToServer();
+    browser.onMessage((message) => {
+      if (typeof message === "string") {
+        const envelope = JSON.parse(message) as { message?: { type?: string } };
+        if (envelope.message?.type === "git.comparison.set.request") comparisonWrites += 1;
+      }
+      server.send(message);
+    });
+    server.onMessage((message) => {
+      if (typeof message !== "string") {
+        browser.send(message);
+        return;
+      }
+      const envelope = JSON.parse(message) as {
+        message?: {
+          type?: string;
+          payload?: { status?: string; features?: Record<string, unknown> };
+        };
+      };
+      if (
+        envelope.message?.type === "status" &&
+        envelope.message.payload?.status === "server_info"
+      ) {
+        envelope.message.payload.features = {
+          ...envelope.message.payload.features,
+          workspaceDiffComparisonV2: false,
+        };
+      }
+      browser.send(JSON.stringify(envelope));
+    });
+  });
+  try {
+    await gotoAppShell(page);
+    await waitForSidebarHydration(page);
+    await switchWorkspaceViaSidebar({ page, serverId, workspaceId: workspace.workspaceId });
+    await page
+      .getByTestId(`sidebar-workspace-row-${serverId}:${workspace.workspaceId}`)
+      .first()
+      .click({ button: "right" });
+    await page.getByTestId("comparison-menu").click();
+    await expect(page.getByText("Update the host to choose a comparison.")).toBeVisible();
+    await expect(page.getByTestId("comparison-all-auto")).toHaveCount(0);
+    expect(comparisonWrites).toBe(0);
   } finally {
     await workspace.cleanup();
   }

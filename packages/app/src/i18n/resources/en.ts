@@ -13,6 +13,11 @@ export const en = {
     add: "Add selected ({{count}})",
   },
   diffComparison: {
+    automatic: "Automatic",
+    sourcePullRequest: "Pull request",
+    sourceWorktree: "Worktree",
+    sourceRemoteHead: "Remote default",
+    sourceExplicit: "Selected branch",
     title: "Compare changes",
     uncommitted: "Uncommitted changes",
     branch: "Against {{branch}}",
@@ -24,6 +29,7 @@ export const en = {
     retry: "Retry",
     updateHost: "Update the host to choose a comparison.",
     unavailable: "Comparison unavailable",
+    resolveError: "Choose another branch below, or run git fetch to update remote refs.",
   },
 
   paneFind: {

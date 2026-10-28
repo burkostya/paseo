@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 
 import type { Logger } from "pino";
 import { z } from "zod";
-import { DiffComparisonSchema } from "@getpaseo/protocol/messages";
+import { DiffComparisonSchema, DiffComparisonV2Schema } from "@getpaseo/protocol/messages";
 
 import { writeJsonFileAtomic } from "./atomic-file.js";
 import { areEquivalentPaths } from "../utils/path.js";
@@ -22,6 +22,7 @@ const UntrustedWorkspaceSourceSchema = z.object({
 
 const PersistedProjectRecordSchema = z.object({
   diffComparison: DiffComparisonSchema.optional(),
+  diffComparisonV2: DiffComparisonV2Schema.optional(),
   projectId: z.string(),
   rootPath: z.string(),
   kind: z.enum(["git", "non_git"]),
@@ -52,6 +53,7 @@ const PersistedProjectRecordSchema = z.object({
 
 const PersistedWorkspaceRecordSchema = z.object({
   diffComparison: DiffComparisonSchema.optional(),
+  diffComparisonV2: DiffComparisonV2Schema.optional(),
   workspaceId: z.string(),
   projectId: z.string(),
   cwd: z.string(),

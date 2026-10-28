@@ -8,4 +8,8 @@ export {
   isSystemInjectedEnvelope,
   type AgentPromptSource,
 } from "./envelope.js";
-export { createAgentMessageDelivery, type AgentMessageDelivery } from "./delivery.js";
+export {
+  createAgentMessageDelivery,
+  type AgentMessageDelivery,
+  type AgentMessageSchedule,
+} from "./delivery.js";

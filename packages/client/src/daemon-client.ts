@@ -3341,6 +3341,19 @@ export class DaemonClient {
     if (!payload.accepted) throw new Error(payload.error ?? "Comparison update failed");
   }
 
+  async setDiffComparisonV2(
+    target: Extract<SessionInboundMessage, { type: "git.comparison.set.request" }>["target"],
+    comparisonV2: NonNullable<
+      Extract<SessionInboundMessage, { type: "git.comparison.set.request" }>["comparisonV2"]
+    > | null,
+  ): Promise<void> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"git.comparison.set.response">({
+        message: { type: "git.comparison.set.request", target, comparison: null, comparisonV2 },
+      });
+    if (!payload.accepted) throw new Error(payload.error ?? "Comparison update failed");
+  }
+
   async renameProject(
     projectId: string,
     customName: string | null,

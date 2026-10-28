@@ -134,6 +134,33 @@ describe("workspace registries", () => {
       archivedAt: timestamp,
       diffComparison: { mode: "uncommitted" },
     });
+    await reloadedProjects.update(project.projectId, (record) => ({
+      ...record,
+      diffComparison: undefined,
+      diffComparisonV2: { mode: "all" },
+    }));
+    await reloadedWorkspaces.update(workspace.workspaceId, (record) => ({
+      ...record,
+      diffComparison: undefined,
+      diffComparisonV2: { mode: "base", baseRef: "refs/remotes/team/develop" },
+    }));
+    const reopenedProjects = new FileBackedProjectRegistry(
+      path.join(tmpDir, "projects", "projects.json"),
+      logger,
+    );
+    const reopenedWorkspaces = new FileBackedWorkspaceRegistry(
+      path.join(tmpDir, "projects", "workspaces.json"),
+      logger,
+    );
+    await reopenedProjects.initialize();
+    await reopenedWorkspaces.initialize();
+    expect((await reopenedProjects.get(project.projectId))?.diffComparisonV2).toEqual({
+      mode: "all",
+    });
+    expect((await reopenedWorkspaces.get(workspace.workspaceId))?.diffComparisonV2).toEqual({
+      mode: "base",
+      baseRef: "refs/remotes/team/develop",
+    });
     await reloadedWorkspaces.update(workspace.workspaceId, (record) => ({
       ...record,
       archivedAt: null,

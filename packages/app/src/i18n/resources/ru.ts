@@ -16,6 +16,11 @@ export const ru: TranslationResources = {
     add: "Добавить выбранные ({{count}})",
   },
   diffComparison: {
+    automatic: "Автоматически",
+    sourcePullRequest: "Pull request",
+    sourceWorktree: "Worktree",
+    sourceRemoteHead: "Основная ветка remote",
+    sourceExplicit: "Выбранная ветка",
     title: "Сравнение изменений",
     uncommitted: "Незакоммиченные изменения",
     branch: "Относительно {{branch}}",
@@ -27,6 +32,7 @@ export const ru: TranslationResources = {
     retry: "Повторить",
     updateHost: "Обновите хост, чтобы выбрать сравнение.",
     unavailable: "Сравнение недоступно",
+    resolveError: "Выберите другую ветку ниже или выполните git fetch для обновления remote refs.",
   },
   paneFind: {
     connectionFailure:

@@ -1,6 +1,8 @@
+import { createElement, useMemo } from "react";
 import { useShallow } from "zustand/shallow";
+import { AgentProfileGlyph, resolveAgentProfileIdentity, useAgentProfiles } from "@/agent-profiles";
 import { useProviderIcon } from "@/components/provider-icons";
-import type { PanelDescriptor } from "@/panels/panel-registry";
+import type { PanelDescriptor, PanelIconProps } from "@/panels/panel-registry";
 import { useSessionStore, selectAgentTurnPresentation, type Agent } from "@/stores/session-store";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 
@@ -40,6 +42,7 @@ export function useAgentDescriptor(
         session?.agents?.get(target.agentId) ?? session?.agentDetails?.get(target.agentId) ?? null;
       return {
         provider: agent?.provider ?? "codex",
+        agentProfileId: agent?.agentProfileId,
         title: agent?.title ?? null,
         status: agent?.status ?? null,
         pendingPermissionCount: agent?.pendingPermissions.length ?? 0,
@@ -49,8 +52,19 @@ export function useAgentDescriptor(
       };
     }),
   );
-  const icon = useProviderIcon(descriptorState.provider, context.serverId);
-  return buildAgentDescriptor({ ...descriptorState, icon });
+  const providerIcon = useProviderIcon(descriptorState.provider, context.serverId);
+  const { profiles } = useAgentProfiles(context.serverId);
+  const profile = resolveAgentProfileIdentity(profiles, descriptorState.agentProfileId);
+  const profileIcon = profile?.icon;
+  const profileColor = profile?.color;
+  const hasProfile = profile !== null;
+  const icon = useMemo(() => {
+    if (!hasProfile) return providerIcon;
+    return function AgentProfilePanelIcon({ size }: PanelIconProps) {
+      return createElement(AgentProfileGlyph, { icon: profileIcon, color: profileColor, size });
+    };
+  }, [hasProfile, profileColor, profileIcon, providerIcon]);
+  return buildAgentDescriptor({ ...descriptorState, icon, profileName: profile?.name });
 }
 
 export function buildAgentDescriptor(input: {
@@ -62,14 +76,18 @@ export function buildAgentDescriptor(input: {
   attentionReason: Agent["attentionReason"];
   isTurnActive: boolean;
   icon: PanelDescriptor["icon"];
+  profileName?: string;
 }): PanelDescriptor {
   const provider = input.provider;
   const label = resolveAgentLabel(input.title);
+  const subtitle = `${input.profileName ? `${input.profileName} · ` : ""}${formatProviderLabel(provider)} agent`;
+  const tooltip =
+    label && input.profileName ? `${label} · ${input.profileName}` : (label ?? subtitle);
 
   return {
     label: label ?? "",
-    subtitle: `${formatProviderLabel(provider)} agent`,
-    tooltip: label ?? `${formatProviderLabel(provider)} agent`,
+    subtitle,
+    tooltip,
     titleState: label ? "ready" : "loading",
     icon: input.icon,
     statusBucket: input.status

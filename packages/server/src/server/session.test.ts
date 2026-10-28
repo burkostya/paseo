@@ -4179,7 +4179,8 @@ describe("session workspace descriptors", () => {
     expect(checkoutGitMocks.getCachedCheckoutShortstat).not.toHaveBeenCalled();
     expect(checkoutGitMocks.warmCheckoutShortstatInBackground).not.toHaveBeenCalled();
     expect(descriptor.diffStat).toBeNull();
-    expect(descriptor.diffComparison).toEqual({ mode: "uncommitted" });
+    expect(descriptor.diffComparisonV2).toEqual({ mode: "all" });
+    expect(descriptor.diffComparison).toBeUndefined();
     expect(descriptor.diffComparisonOverride).toBeNull();
   });
 

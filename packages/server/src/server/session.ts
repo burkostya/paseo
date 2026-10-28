@@ -3,7 +3,7 @@ import type { AgentMessageDelivery } from "./agent/agent-messages/index.js";
 import { AgentDirectory } from "./agent/directory.js";
 import { ConnectedHostSession } from "./connected-hosts/index.js";
 import type { ConnectedHosts } from "./connected-hosts/index.js";
-import { describeWorkspaceComparison } from "./git-comparison/snapshot.js";
+import { describeWorkspaceComparison, projectLegacyComparison } from "./git-comparison/snapshot.js";
 import { listProjectWorktrees, importProjectWorktree } from "./project-worktree-import.js";
 import { searchTimeline } from "./agent/chat-search/index.js";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
@@ -3628,17 +3628,27 @@ export class Session {
   ): Promise<void> {
     try {
       const comparison = request.comparison ?? undefined;
+      const comparisonV2 = request.comparisonV2 ?? undefined;
       if (
         comparison?.mode === "base" &&
         (!comparison.baseRef.trim() || comparison.baseRef.startsWith("-"))
       ) {
         throw new SessionRequestError("invalid_comparison_branch", "Invalid comparison branch");
       }
+      if (
+        comparisonV2?.mode !== "uncommitted" &&
+        comparisonV2?.baseRef !== undefined &&
+        (!comparisonV2.baseRef.trim() || comparisonV2.baseRef.trim().startsWith("-"))
+      ) {
+        throw new SessionRequestError("invalid_comparison_branch", "Invalid comparison branch");
+      }
+      const useV2 = request.comparisonV2 !== undefined;
       const updatedAt = new Date().toISOString();
       if (request.target.kind === "project") {
         const updated = await this.projectRegistry.update(request.target.projectId, (record) => ({
           ...record,
-          diffComparison: comparison,
+          diffComparison: useV2 ? undefined : comparison,
+          diffComparisonV2: useV2 ? comparisonV2 : undefined,
           updatedAt,
         }));
         if (!updated) throw new SessionRequestError("project_not_found", "Project not found");
@@ -3648,7 +3658,8 @@ export class Session {
           request.target.workspaceId,
           (record) => ({
             ...record,
-            diffComparison: comparison,
+            diffComparison: useV2 ? undefined : comparison,
+            diffComparisonV2: useV2 ? comparisonV2 : undefined,
             updatedAt,
           }),
         );
@@ -4141,7 +4152,7 @@ export class Session {
       ...inspection,
       entries: inspection.entries.map((entry) => {
         const record = recordsById.get(entry.workspaceId);
-        const git = record ? this.workspaceGitService.peekSnapshot(record.cwd)?.git : null;
+        const git = record ? this.workspaceRuntimeStore.get(record.cwd)?.git : null;
         if (!git) return entry;
         return Object.assign({}, entry, {
           archiveHasUncommittedChanges: git.isDirty,
@@ -6141,6 +6152,7 @@ export class Session {
       workspace,
       project: resolvedProjectRecord,
       snapshot: this.workspaceRuntimeStore.get(workspace.cwd),
+      context: { paseoHome: this.paseoHome, worktreesRoot: this.worktreesRoot },
       owner: this,
       onReady: this.onComparisonReady,
     });
@@ -6443,7 +6455,8 @@ export class Session {
       ...(project.projectKey ? { projectKey: project.projectKey } : {}),
       projectDisplayName: resolveProjectDisplayName(project),
       projectCustomName: project.customName ?? null,
-      diffComparison: project.diffComparison,
+      diffComparison: projectLegacyComparison(project),
+      diffComparisonV2: project.diffComparisonV2,
       projectCustomIconRevision: project.customIconRevision ?? null,
       projectIconRevision: icon.revision,
       projectRootPath: project.rootPath,

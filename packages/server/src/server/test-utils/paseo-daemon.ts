@@ -7,6 +7,7 @@ import pino from "pino";
 import {
   createPaseoDaemon,
   type PaseoDaemonConfig,
+  type PaseoDaemonDependencies,
   type PaseoOpenAIConfig,
   type PaseoSpeechConfig,
 } from "../bootstrap.js";
@@ -34,6 +35,7 @@ interface TestPaseoDaemonOptions {
   daemonStatusRpcCapability?: boolean;
   relayConfigCapability?: boolean;
   agentClients?: Partial<Record<AgentProvider, AgentClient>>;
+  agentMessageSchedule?: PaseoDaemonDependencies["agentMessageSchedule"];
   providerOverrides?: PaseoDaemonConfig["providerOverrides"];
   paseoHomeRoot?: string;
   staticDir?: string;
@@ -106,6 +108,7 @@ export async function createTestPaseoDaemon(
     const logger = options.logger ?? pino({ level: "silent" });
     const daemon = await createPaseoDaemon(config, logger, {
       builtinPlugins: options.builtinPlugins ?? new BuiltinPluginLoader(undefined, []),
+      agentMessageSchedule: options.agentMessageSchedule,
       serverFeatureOverrides: {
         daemonStatusRpc: options.daemonStatusRpcCapability,
         relayConfig: options.relayConfigCapability,

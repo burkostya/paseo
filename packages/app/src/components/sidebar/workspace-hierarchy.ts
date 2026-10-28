@@ -2,7 +2,7 @@ import type {
   SidebarWorkspaceEntry,
   SidebarWorkspacePlacement,
 } from "@/hooks/sidebar-workspaces-view-model";
-import { SIDEBAR_GROUP_ITEM_LIMIT } from "./sidebar-group-limit";
+import { aggregateSidebarStateBuckets } from "@/utils/sidebar-agent-state";
 
 export interface WorkspaceTreeRow {
   workspace: SidebarWorkspacePlacement;
@@ -242,33 +242,54 @@ export function collectWorkspaceDescendantKeys(
   return descendants;
 }
 
-/** Apply the sidebar's item limit to complete root branches, never to a child in the middle. */
+export function collapsedWorkspaceStatuses(
+  visibleRows: readonly WorkspaceTreeRow[],
+  allRows: readonly WorkspaceTreeRow[],
+  entries: ReadonlyMap<string, Pick<SidebarWorkspaceEntry, "statusBucket">>,
+): Map<string, SidebarWorkspaceEntry["statusBucket"]> {
+  const result = new Map<string, SidebarWorkspaceEntry["statusBucket"]>();
+  for (const row of visibleRows) {
+    if (row.expanded || !row.hasChildren) continue;
+    const keys = [row.workspace.workspaceKey];
+    const index = allRows.findIndex(
+      (candidate) => candidate.workspace.workspaceKey === row.workspace.workspaceKey,
+    );
+    if (index < 0) continue;
+    for (let i = index + 1; i < allRows.length; i += 1) {
+      const candidate = allRows[i];
+      if (candidate.depth <= row.depth) break;
+      keys.push(candidate.workspace.workspaceKey);
+    }
+    result.set(
+      row.workspace.workspaceKey,
+      aggregateSidebarStateBuckets(keys.map((key) => entries.get(key)?.statusBucket ?? "done")),
+    );
+  }
+  return result;
+}
+
+/** Keep the initial rows and active rows together with their visible ancestors. */
 export function limitWorkspaceTreeRows(
   rows: readonly WorkspaceTreeRow[],
-  limit = SIDEBAR_GROUP_ITEM_LIMIT,
+  limit = 7,
+  getStatusBucket?: (workspaceKey: string) => SidebarWorkspaceEntry["statusBucket"] | undefined,
 ): WorkspaceTreeRow[] {
-  const roots = rows.filter((row) => row.parentWorkspaceKey === null);
-  if (roots.length <= limit) return [...rows];
-  const visibleRootKeys = new Set(
-    roots.slice(0, Math.max(0, limit)).map((row) => row.workspace.workspaceKey),
+  const visibleKeys = new Set(
+    rows.slice(0, Math.max(0, limit)).map((row) => row.workspace.workspaceKey),
   );
-  const rootKeyByRow = new Map<string, string>();
   const rowByKey = new Map(rows.map((row) => [row.workspace.workspaceKey, row]));
-  const resolveRootKey = (row: WorkspaceTreeRow): string => {
-    const cached = rootKeyByRow.get(row.workspace.workspaceKey);
-    if (cached) return cached;
+  for (const row of rows) {
+    const status = getStatusBucket?.(row.workspace.workspaceKey);
+    if (status && status !== "done") visibleKeys.add(row.workspace.workspaceKey);
+  }
+  for (const key of visibleKeys) {
     const seen = new Set<string>();
-    let current = row;
-    while (current.parentWorkspaceKey) {
-      if (seen.has(current.workspace.workspaceKey)) break;
-      seen.add(current.workspace.workspaceKey);
-      const parent = rowByKey.get(current.parentWorkspaceKey);
-      if (!parent) break;
-      current = parent;
+    let parentKey = rowByKey.get(key)?.parentWorkspaceKey;
+    while (parentKey && !seen.has(parentKey)) {
+      seen.add(parentKey);
+      visibleKeys.add(parentKey);
+      parentKey = rowByKey.get(parentKey)?.parentWorkspaceKey;
     }
-    const rootKey = current.workspace.workspaceKey;
-    rootKeyByRow.set(row.workspace.workspaceKey, rootKey);
-    return rootKey;
-  };
-  return rows.filter((row) => visibleRootKeys.has(resolveRootKey(row)));
+  }
+  return rows.filter((row) => visibleKeys.has(row.workspace.workspaceKey));
 }

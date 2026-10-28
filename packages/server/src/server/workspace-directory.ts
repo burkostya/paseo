@@ -15,6 +15,7 @@ import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
 import { SortablePager } from "./pagination/sortable-pager.js";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "./workspace-registry.js";
 import { resolveProjectDisplayName } from "./workspace-registry.js";
+import { projectLegacyComparison } from "./git-comparison/snapshot.js";
 import {
   deriveTerminalActivityStatusBucket,
   type TerminalActivity,
@@ -587,7 +588,8 @@ export class WorkspaceDirectory {
         projectKey: project.projectKey ?? undefined,
         projectDisplayName: resolveProjectDisplayName(project),
         projectCustomName: project.customName ?? null,
-        diffComparison: project.diffComparison,
+        diffComparison: projectLegacyComparison(project),
+        diffComparisonV2: project.diffComparisonV2,
         projectCustomIconRevision: project.customIconRevision ?? null,
         projectRootPath: project.rootPath,
         projectKind: project.kind,

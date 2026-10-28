@@ -1301,6 +1301,18 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
         }),
       );
 
+      forge.getCurrentPullRequestStatus.mockRejectedValueOnce(new Error("forge unavailable"));
+      await vi.advanceTimersByTimeAsync(120_000);
+      await flushPromises();
+      expect(listener).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          forge: expect.objectContaining({
+            error: { message: "forge unavailable" },
+            pullRequest: expect.objectContaining({ title: "MR self-healed" }),
+          }),
+        }),
+      );
+
       subscription.unsubscribe();
     } finally {
       service.dispose();

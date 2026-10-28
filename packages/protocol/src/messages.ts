@@ -985,6 +985,13 @@ export const DiffComparisonSchema = z.discriminatedUnion("mode", [
 ]);
 export type DiffComparison = z.infer<typeof DiffComparisonSchema>;
 
+export const DiffComparisonV2Schema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("uncommitted") }),
+  z.object({ mode: z.literal("base"), baseRef: z.string().min(1).optional() }),
+  z.object({ mode: z.literal("all"), baseRef: z.string().min(1).optional() }),
+]);
+export type DiffComparisonV2 = z.infer<typeof DiffComparisonV2Schema>;
+
 export const DiffComparisonSetRequestSchema = z.object({
   type: z.literal("git.comparison.set.request"),
   target: z.discriminatedUnion("kind", [
@@ -992,6 +999,8 @@ export const DiffComparisonSetRequestSchema = z.object({
     z.object({ kind: z.literal("workspace"), workspaceId: z.string() }),
   ]),
   comparison: DiffComparisonSchema.nullable(),
+  // COMPAT(workspaceDiffComparisonV2): added in v0.13.2, remove after 2027-04-28 when old fork clients are unsupported.
+  comparisonV2: DiffComparisonV2Schema.nullable().optional(),
   requestId: z.string(),
 });
 export const DiffComparisonSetResponseSchema = z.object({
@@ -3967,6 +3976,8 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(checkoutDiffBaseSelection): added in the v0.1.109 fork, remove after 2027-01-16.
         checkoutDiffBaseSelection: z.boolean().optional(),
         workspaceDiffComparison: z.boolean().optional(),
+        // COMPAT(workspaceDiffComparisonV2): added in v0.13.2, remove after 2027-04-28 when old daemons are unsupported.
+        workspaceDiffComparisonV2: z.boolean().optional(),
       })
       .optional(),
   })
@@ -4252,6 +4263,16 @@ export const WorkspaceDescriptorPayloadSchema = z
     diffComparisonOverride: DiffComparisonSchema.nullable().optional(),
     diffComparison: DiffComparisonSchema.optional(),
     diffComparisonError: z.string().nullable().optional(),
+    // COMPAT(workspaceDiffComparisonV2): added in v0.13.2, remove after 2027-04-28 when old daemons are unsupported.
+    projectDiffComparisonV2: DiffComparisonV2Schema.optional(),
+    diffComparisonOverrideV2: DiffComparisonV2Schema.nullable().optional(),
+    diffComparisonV2: DiffComparisonV2Schema.optional(),
+    diffComparisonResolvedBase: z.string().nullable().optional(),
+    diffComparisonBaseSource: z
+      .enum(["explicit", "pull_request", "worktree", "remote_head"])
+      .nullable()
+      .optional(),
+    diffComparisonWarning: z.string().nullable().optional(),
     // Identifies the project's stored custom icon; null means automatic.
     // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
     projectCustomIconRevision: z.string().nullable().optional(),
@@ -4453,6 +4474,8 @@ export const WorkspaceProjectDescriptorPayloadSchema = z.object({
   projectDisplayName: z.string(),
   projectCustomName: z.string().nullable().optional(),
   diffComparison: DiffComparisonSchema.optional(),
+  // COMPAT(workspaceDiffComparisonV2): added in v0.13.2, remove after 2027-04-28 when old daemons are unsupported.
+  diffComparisonV2: DiffComparisonV2Schema.optional(),
   // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
   projectCustomIconRevision: z.string().nullable().optional(),
   // Fingerprints the effective icon, including automatic discovery and the

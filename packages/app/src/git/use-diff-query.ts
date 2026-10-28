@@ -32,7 +32,12 @@ function normalizeCheckoutDiffCompare(compare: {
   baseRef?: string;
   ignoreWhitespace?: boolean;
   includeWorkingTree?: boolean;
-}): { mode: "uncommitted" | "base" | "all"; baseRef?: string; ignoreWhitespace?: boolean; includeWorkingTree?: boolean } {
+}): {
+  mode: "uncommitted" | "base" | "all";
+  baseRef?: string;
+  ignoreWhitespace?: boolean;
+  includeWorkingTree?: boolean;
+} {
   const ignoreWhitespace = compare.ignoreWhitespace === true;
   const includeWorkingTree = compare.includeWorkingTree === true;
   if (compare.mode === "uncommitted") {

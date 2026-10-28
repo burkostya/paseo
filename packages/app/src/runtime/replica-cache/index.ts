@@ -2,6 +2,8 @@ import { z } from "zod";
 import {
   AgentStatusSchema,
   AgentTimelineItemPayloadSchema,
+  DiffComparisonSchema,
+  DiffComparisonV2Schema,
   WorkspaceGitHubRuntimePayloadSchema,
 } from "@getpaseo/protocol/messages";
 import { AgentProviderSchema } from "@getpaseo/protocol/provider-manifest";
@@ -300,6 +302,21 @@ const StoredWorkspaceSchema = z.strictObject({
   // Require both keys: a cursor without these values would preserve the wrong sort on reconnect.
   createdAt: IsoDateSchema.nullable(),
   lastUserMessageAt: IsoDateSchema.nullable(),
+  forkFieldsVersion: z.literal(2),
+  parentWorkspaceId: z.string().nullable(),
+  diffComparison: DiffComparisonSchema.optional(),
+  diffComparisonOverride: DiffComparisonSchema.nullable().optional(),
+  projectDiffComparison: DiffComparisonSchema.optional(),
+  diffComparisonError: z.string().nullable().optional(),
+  diffComparisonV2: DiffComparisonV2Schema.optional(),
+  diffComparisonOverrideV2: DiffComparisonV2Schema.nullable().optional(),
+  projectDiffComparisonV2: DiffComparisonV2Schema.optional(),
+  diffComparisonResolvedBase: z.string().nullable().optional(),
+  diffComparisonBaseSource: z
+    .enum(["explicit", "pull_request", "worktree", "remote_head"])
+    .nullable()
+    .optional(),
+  diffComparisonWarning: z.string().nullable().optional(),
   id: z.string(),
   projectId: z.string(),
   projectDisplayName: z.string(),
@@ -331,10 +348,13 @@ const StoredWorkspaceSchema = z.strictObject({
 });
 
 const StoredProjectSchema = z.strictObject({
+  forkFieldsVersion: z.literal(2),
   projectId: z.string(),
   projectKey: z.string().optional(),
   projectDisplayName: z.string(),
   projectCustomName: z.string().nullable(),
+  diffComparison: DiffComparisonSchema.optional(),
+  diffComparisonV2: DiffComparisonV2Schema.optional(),
   projectCustomIconRevision: z.string().nullable(),
   projectIconRevision: z.string().optional(),
   projectRootPath: z.string(),
@@ -697,13 +717,32 @@ function deserializeAgent(serverId: string, stored: StoredAgent): Agent {
 }
 
 function restoreWorkspace(stored: StoredWorkspace): WorkspaceDescriptor {
-  return normalizeWorkspaceDescriptor({ ...stored, createdAt: stored.createdAt ?? undefined });
+  return normalizeWorkspaceDescriptor({
+    ...stored,
+    createdAt: stored.createdAt ?? undefined,
+  });
+}
+
+function restoreProject(stored: StoredProject): ProjectDescriptor {
+  return normalizeProjectDescriptor(stored);
 }
 
 function serializeWorkspace(workspace: WorkspaceDescriptor): StoredWorkspace {
   return {
     createdAt: workspace.createdAt?.toISOString() ?? null,
     lastUserMessageAt: workspace.lastUserMessageAt?.toISOString() ?? null,
+    forkFieldsVersion: 2,
+    parentWorkspaceId: workspace.parentWorkspaceId ?? null,
+    diffComparison: workspace.diffComparison,
+    diffComparisonOverride: workspace.diffComparisonOverride,
+    projectDiffComparison: workspace.projectDiffComparison,
+    diffComparisonError: workspace.diffComparisonError,
+    diffComparisonV2: workspace.diffComparisonV2,
+    diffComparisonOverrideV2: workspace.diffComparisonOverrideV2,
+    projectDiffComparisonV2: workspace.projectDiffComparisonV2,
+    diffComparisonResolvedBase: workspace.diffComparisonResolvedBase,
+    diffComparisonBaseSource: workspace.diffComparisonBaseSource,
+    diffComparisonWarning: workspace.diffComparisonWarning,
     id: workspace.id,
     projectId: workspace.projectId,
     projectDisplayName: workspace.projectDisplayName,
@@ -745,10 +784,13 @@ function serializeWorkspace(workspace: WorkspaceDescriptor): StoredWorkspace {
 
 function serializeProject(project: ProjectDescriptor): StoredProject {
   return {
+    forkFieldsVersion: 2,
     projectId: project.projectId,
     ...(project.projectKey ? { projectKey: project.projectKey } : {}),
     projectDisplayName: project.projectDisplayName,
     projectCustomName: project.projectCustomName,
+    diffComparison: project.diffComparison,
+    diffComparisonV2: project.diffComparisonV2,
     projectCustomIconRevision: project.projectCustomIconRevision ?? null,
     projectIconRevision: project.projectIconRevision,
     projectRootPath: project.projectRootPath,
@@ -876,7 +918,7 @@ function applyDirectoryRow(
     case "project": {
       const stored = parseStoredPayload(StoredProjectSchema, row.payload);
       if (stored.projectId !== row.id) throw new Error("Replica project row id mismatch");
-      result.projects.set(row.id, normalizeProjectDescriptor(stored));
+      result.projects.set(row.id, restoreProject(stored));
       return;
     }
     case "checkpoint":
@@ -975,7 +1017,7 @@ export class ReplicaCache {
       try {
         const stored = parseStoredPayload(StoredProjectSchema, projectRow.payload);
         if (stored.projectId !== projectRow.id) throw new Error("Replica project row id mismatch");
-        project = normalizeProjectDescriptor(stored);
+        project = restoreProject(stored);
       } catch {
         await this.deleteInvalidRow(projectRow);
       }

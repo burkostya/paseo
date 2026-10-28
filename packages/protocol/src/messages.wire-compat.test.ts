@@ -10,6 +10,9 @@ import {
   WorkspaceSetupSnapshotSchema,
   WorkspaceSetupProgressMessageSchema,
   AgentTimelineEntryPayloadSchema,
+  DiffComparisonSchema,
+  DiffComparisonSetRequestSchema,
+  WorkspaceDescriptorPayloadSchema,
 } from "./messages.js";
 
 test("terminal listings accept older rows and retain new per-terminal directories", () => {
@@ -68,6 +71,39 @@ const LegacyAgentSnapshotPayloadSchema = AgentSnapshotPayloadSchema.extend({
 });
 
 describe("wire schema compatibility", () => {
+  test("comparison v2 keeps the legacy selection and request readable", () => {
+    const legacyRequest = {
+      type: "git.comparison.set.request",
+      target: { kind: "project", projectId: "p" },
+      comparison: { mode: "base", baseRef: "refs/heads/next" },
+      requestId: "r",
+    } as const;
+    expect(DiffComparisonSetRequestSchema.parse(legacyRequest)).toEqual(legacyRequest);
+    const v2Request = { ...legacyRequest, comparison: null, comparisonV2: { mode: "all" } };
+    expect(DiffComparisonSetRequestSchema.parse(v2Request)).toEqual(v2Request);
+    expect(DiffComparisonSchema.safeParse({ mode: "all" }).success).toBe(false);
+    const legacyProjection = { mode: "base", baseRef: "refs/remotes/upstream/next" };
+    expect(DiffComparisonSchema.parse(legacyProjection)).toEqual(legacyProjection);
+    const workspace = {
+      id: "w",
+      projectId: "p",
+      projectDisplayName: "project",
+      projectRootPath: "/repo",
+      projectKind: "git",
+      workspaceKind: "worktree",
+      name: "task",
+      status: "done",
+      statusEnteredAt: null,
+      activityAt: null,
+      diffComparison: legacyProjection,
+      diffComparisonV2: { mode: "all" },
+    };
+    expect(WorkspaceDescriptorPayloadSchema.parse(workspace).diffComparison).toEqual(
+      legacyProjection,
+    );
+    const legacyReader = z.object({ diffComparison: DiffComparisonSchema.optional() });
+    expect(legacyReader.parse(workspace).diffComparison).toEqual(legacyProjection);
+  });
   test("hello parses with and without the project update capability", () => {
     const legacy = WSHelloMessageSchema.parse({
       type: "hello",

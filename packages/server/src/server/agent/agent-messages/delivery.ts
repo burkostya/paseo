@@ -35,11 +35,13 @@ interface DispatchRequest {
   unarchive: boolean;
   onDispatch(disposition: PromptDispatchDisposition): void;
 }
+export type AgentMessageSchedule = (delayMs: number, callback: () => void) => () => void;
+
 interface Dependencies {
   dispatch(request: DispatchRequest): Promise<PromptDispatchDisposition>;
   onError(error: unknown, request: DispatchRequest): void;
   /** Return a cancellation function. Production uses the daemon's event loop. */
-  schedule?: (delayMs: number, callback: () => void) => () => void;
+  schedule?: AgentMessageSchedule;
 }
 export interface AgentMessageDelivery {
   enqueue(message: Message): Receipt;

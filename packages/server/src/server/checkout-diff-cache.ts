@@ -85,7 +85,11 @@ export class CheckoutDiffCache {
     for (const key of new Set([...this.values.keys(), ...this.active.keys()])) {
       const [cachedCwd, cachedMode, , , , includeWorkingTree]: unknown[] = JSON.parse(key);
       const workingBaseInvalidated = mode === "uncommitted" && includeWorkingTree === true;
-      if (cachedCwd !== cwd || (cachedMode !== mode && cachedMode !== "all" && !workingBaseInvalidated)) continue;
+      if (
+        cachedCwd !== cwd ||
+        (cachedMode !== mode && cachedMode !== "all" && !workingBaseInvalidated)
+      )
+        continue;
       this.values.delete(key);
       const pending = this.active.get(key);
       if (pending) pending.invalidated = true;

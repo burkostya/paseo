@@ -6,7 +6,10 @@ import {
 
 const PINNED_POLICY = { kind: "pinned" } as const;
 
-type ExpansionOptions = { expanded?: boolean; onToggleExpanded?: () => void };
+interface ExpansionOptions {
+  expanded?: boolean;
+  onToggleExpanded?: () => void;
+}
 
 export function useLimitedSidebarGroup<T>(
   items: readonly T[],

@@ -4,6 +4,7 @@ import type { SubscribeCheckoutDiffRequest, SessionOutboundMessage } from "./mes
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 import { expandTilde } from "../utils/path.js";
 import { toCheckoutError } from "./checkout-git-utils.js";
+import { comparisonBaseResolver } from "./git-comparison/base.js";
 
 const CHECKOUT_DIFF_WATCH_DEBOUNCE_MS = 150;
 
@@ -61,16 +62,21 @@ export interface CheckoutDiffSubscription {
 export class CheckoutDiffManager {
   private readonly workspaceGitService: CheckoutDiffWorkspace;
   private readonly workspaceRuntimeStore: WorkspaceRuntimeStore;
+  private readonly paseoHome: string;
+  private readonly worktreesRoot: string | undefined;
   private readonly targets = new Map<string, CheckoutDiffWatchTarget>();
 
   constructor(options: {
     logger: pino.Logger;
     paseoHome: string;
+    worktreesRoot?: string;
     workspaceGitService: CheckoutDiffWorkspace;
     workspaceRuntimeStore: WorkspaceRuntimeStore;
   }) {
     this.workspaceGitService = options.workspaceGitService;
     this.workspaceRuntimeStore = options.workspaceRuntimeStore;
+    this.paseoHome = options.paseoHome;
+    this.worktreesRoot = options.worktreesRoot;
   }
 
   async read(
@@ -153,14 +159,15 @@ export class CheckoutDiffManager {
 
   private normalizeCompare(compare: CheckoutDiffCompareInput): CheckoutDiffCompareInput {
     const ignoreWhitespace = compare.ignoreWhitespace === true;
-    const includeWorkingTree = compare.includeWorkingTree === true;
     if (compare.mode === "uncommitted") {
       return { mode: "uncommitted", ignoreWhitespace };
     }
+    // COMPAT(workingTreeComparison): added in v0.11.0, remove after 2027-04-28 once old fork clients are unsupported.
+    const mode = compare.mode === "base" && compare.includeWorkingTree ? "all" : compare.mode;
     const trimmedBaseRef = compare.baseRef?.trim();
     return trimmedBaseRef
-      ? { mode: compare.mode, baseRef: trimmedBaseRef, ignoreWhitespace, includeWorkingTree }
-      : { mode: compare.mode, ignoreWhitespace, includeWorkingTree };
+      ? { mode, baseRef: trimmedBaseRef, ignoreWhitespace }
+      : { mode, ignoreWhitespace };
   }
 
   private buildTargetKey(cwd: string, compare: CheckoutDiffCompareInput): string {
@@ -169,7 +176,6 @@ export class CheckoutDiffManager {
       compare.mode,
       compare.mode !== "uncommitted" ? (compare.baseRef ?? "") : "",
       compare.ignoreWhitespace === true,
-      compare.includeWorkingTree === true,
     ]);
   }
 
@@ -220,7 +226,11 @@ export class CheckoutDiffManager {
     const structureChanged = structureFingerprint !== previousStructureFingerprint;
     const worktreeChanged = worktreeFingerprint !== previousWorktreeFingerprint;
     const forgeChanged = forgeFingerprint !== previousForgeFingerprint;
-    if (structureChanged || (!worktreeChanged && !forgeChanged)) {
+    if (
+      structureChanged ||
+      (forgeChanged && target.compare.mode !== "uncommitted" && !target.compare.baseRef) ||
+      (!worktreeChanged && !forgeChanged)
+    ) {
       this.scheduleTargetRefresh(target, false);
     }
   }
@@ -259,13 +269,24 @@ export class CheckoutDiffManager {
   ): Promise<CheckoutDiffSnapshotPayload> {
     const diffCwd = options?.diffCwd ?? cwd;
     try {
+      const baseRef =
+        compare.mode !== "uncommitted" && !compare.baseRef
+          ? (
+              await comparisonBaseResolver.resolve({
+                cwd,
+                snapshot:
+                  this.workspaceRuntimeStore.get(cwd) ??
+                  (await this.workspaceGitService.getSnapshot(cwd, { includeForge: true })),
+                context: { paseoHome: this.paseoHome, worktreesRoot: this.worktreesRoot },
+              })
+            ).baseRef
+          : compare.baseRef;
       const diffResult = await this.workspaceGitService.getCheckoutDiff(
         diffCwd,
         {
           mode: compare.mode,
-          baseRef: compare.baseRef,
+          baseRef,
           ignoreWhitespace: compare.ignoreWhitespace,
-          includeWorkingTree: compare.includeWorkingTree,
           includeStructured: true,
         },
         options?.force
@@ -385,7 +406,7 @@ export class CheckoutDiffManager {
         return;
       }
       target.workspaceGitUnsubscribe = workspaceSubscription.unsubscribe;
-      if (target.compare.mode === "base" && !target.compare.includeWorkingTree) return;
+      if (target.compare.mode === "base") return;
     }
 
     const { repoRoot, unsubscribe } = await this.workspaceGitService.requestWorkingTreeWatch(

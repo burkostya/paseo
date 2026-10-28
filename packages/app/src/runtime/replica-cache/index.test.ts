@@ -326,7 +326,7 @@ describe("ReplicaCache", () => {
     vi.restoreAllMocks();
   });
 
-  it("preserves workspace sorting timestamps across cache reopen", async () => {
+  it("preserves workspace sorting, hierarchy and comparison settings across cache reopen", async () => {
     const storage = new MemoryStorage();
     const writer = createCache(storage);
     const baseline = directory();
@@ -334,16 +334,33 @@ describe("ReplicaCache", () => {
       ...workspacePayload(),
       createdAt: "2026-07-18T08:00:00.000Z",
       lastUserMessageAt: "2026-07-18T09:00:00.000Z",
+      parentWorkspaceId: "workspace-parent",
+      diffComparison: { mode: "base", baseRef: "refs/heads/next" },
+      diffComparisonOverride: { mode: "base", baseRef: "refs/heads/next" },
+      projectDiffComparison: { mode: "uncommitted" },
+      diffComparisonError: "reference unavailable",
+      diffComparisonV2: { mode: "all", baseRef: "refs/remotes/team/next" },
+      diffComparisonOverrideV2: { mode: "all", baseRef: "refs/remotes/team/next" },
+      projectDiffComparisonV2: { mode: "base" },
+      diffComparisonResolvedBase: "refs/remotes/team/next",
+      diffComparisonBaseSource: "explicit",
+      diffComparisonWarning: "forge refresh failed",
     });
     baseline.workspaces.set(workspace.id, workspace);
+    const project = baseline.projects.get("project-1")!;
+    project.diffComparison = { mode: "base", baseRef: "refs/heads/next" };
+    project.diffComparisonV2 = { mode: "base" };
     commitDirectory(writer, SERVER_ID, baseline);
     await writer.flush();
     const reader = createCache(storage);
     expect((await reader.readDirectory(SERVER_ID)).workspaces.get(workspace.id)).toEqual(workspace);
     expect((await reader.readWorkspace(SERVER_ID, workspace.id))?.workspace).toEqual(workspace);
+    expect((await reader.readDirectory(SERVER_ID)).projects.get(project.projectId)).toEqual(
+      project,
+    );
   });
 
-  it.each(["createdAt", "lastUserMessageAt"])(
+  it.each(["createdAt", "lastUserMessageAt", "parentWorkspaceId", "forkFieldsVersion"])(
     "refetches workspaces cached without %s",
     async (field) => {
       const cached = await cacheWithoutBackgroundVisibility();
@@ -941,6 +958,7 @@ describe("ReplicaCache", () => {
       kind: "project",
       id: "project-1",
       payload: JSON.stringify({
+        forkFieldsVersion: 2,
         projectId: "project-1",
         projectDisplayName: "Paseo",
         projectCustomName: null,

@@ -1,7 +1,8 @@
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
-import { comparisonLabel } from "@/git/comparison/label";
+import { comparisonLabel, comparisonV2Label } from "@/git/comparison/label";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { openWorkspaceChanges } from "@/workspace-tabs/open-supporting-view";
+import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { useSettings } from "@/hooks/use-settings";
 import { useCallback } from "react";
@@ -72,14 +73,18 @@ function WorkspaceComparisonStat({ workspace }: { workspace: SidebarWorkspaceEnt
       navigateToWorkspace({ serverId: workspace.serverId, workspaceId: workspace.workspaceId });
       openWorkspaceChanges({
         isCompact,
-        workspaceKey: workspace.workspaceKey,
-        checkout: { serverId: workspace.serverId, cwd: workspace.workspaceDirectory, isGit: true },
+        workspaceKey: buildWorkspaceTabPersistenceKey({
+          serverId: workspace.serverId,
+          workspaceId: workspace.workspaceId,
+        }),
         preferences,
       });
     },
     [isCompact, preferences, workspace],
   );
-  const label = comparisonLabel(workspace.diffComparison, t);
+  const label = workspace.diffComparisonV2
+    ? comparisonV2Label(workspace.diffComparisonV2, t, workspace.diffComparisonResolvedBase)
+    : comparisonLabel(workspace.diffComparison, t);
   const description = workspace.diffComparisonError
     ? `${t("diffComparison.unavailable")}: ${label}`
     : label;

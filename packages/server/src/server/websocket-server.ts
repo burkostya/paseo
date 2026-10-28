@@ -2,6 +2,7 @@ import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import {
   createAgentMessageDelivery,
   type AgentMessageDelivery,
+  type AgentMessageSchedule,
 } from "./agent/agent-messages/index.js";
 import {
   sendPreparedPromptToAgent,
@@ -179,6 +180,7 @@ interface WebSocketServerConfig {
   daemonStatusRpc?: boolean;
   relayConfig?: boolean;
   startPaused?: boolean;
+  agentMessageSchedule?: AgentMessageSchedule;
 }
 
 type WebSocketRuntimeMetrics = SessionRuntimeMetrics & CheckoutDiffMetrics;
@@ -711,6 +713,7 @@ export class VoiceAssistantWebSocketServer {
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
     this.agentMessages = createAgentMessageDelivery({
+      schedule: wsConfig.agentMessageSchedule,
       dispatch: async (batch) => {
         const { disposition } = await sendPreparedPromptToAgent({
           agentManager,
@@ -2122,6 +2125,7 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(checkoutDiffBaseSelection): added in the v0.1.109 fork, remove after 2027-01-16.
         checkoutDiffBaseSelection: true,
         workspaceDiffComparison: true,
+        workspaceDiffComparisonV2: true,
       },
     };
   }

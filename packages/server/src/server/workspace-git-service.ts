@@ -2900,6 +2900,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         }
       } catch (error) {
         consecutiveErrors += 1;
+        if (!closed && this.isActiveObservedWorkspaceTarget(target) && target.latestForge) {
+          this.rememberForgePrStatusSnapshot(target, {
+            ...target.latestForge,
+            error: { message: error instanceof Error ? error.message : String(error) },
+          });
+        }
         this.logger.warn(
           {
             err: error,
