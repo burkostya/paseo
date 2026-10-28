@@ -42,8 +42,8 @@ test("imports external worktrees without setup, deduplicates, and preserves file
       stdio: "pipe",
     });
     // On Windows the temp directory can use an 8.3 alias while Git returns the long path.
-    const canonicalWorktreePath = realpathSync(worktreePath);
-    const canonicalDetachedPath = realpathSync(detachedPath);
+    const canonicalWorktreePath = realpathSync.native(worktreePath);
+    const canonicalDetachedPath = realpathSync.native(detachedPath);
     writeFileSync(
       path.join(worktreePath, "paseo.json"),
       JSON.stringify({
