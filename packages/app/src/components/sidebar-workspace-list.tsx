@@ -104,6 +104,10 @@ import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press
 import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-header";
 import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
 import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
+import {
+  selectSidebarGroupVisibility,
+  WORKSPACE_GROUP_VISIBILITY,
+} from "@/components/sidebar/sidebar-group-visibility";
 import { SIDEBAR_GROUP_ITEM_LIMIT } from "@/components/sidebar/sidebar-group-limit";
 import {
   SidebarWorkspaceRowFrame,
@@ -2487,8 +2491,12 @@ export function SidebarWorkspaceList({
       if (collapsedWorkspaceGroupKeys.has(activeGroup.key)) {
         setWorkspaceGroupCollapsed(activeGroup.key, false);
       }
-      const groupIndex = activeGroup.rows.findIndex(matchesSelection);
-      if (groupIndex >= SIDEBAR_GROUP_ITEM_LIMIT) {
+      const visible = selectSidebarGroupVisibility(
+        activeGroup.rows,
+        false,
+        WORKSPACE_GROUP_VISIBILITY,
+      ).visibleItems;
+      if (!visible.some(matchesSelection)) {
         setWorkspaceGroupExpanded(activeGroup.key, true);
       }
     }

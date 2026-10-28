@@ -4,6 +4,11 @@ export type SidebarGroupVisibilityPolicy<T> =
   | { kind: "pinned" }
   | { kind: "workspaces"; getStatusBucket: (item: T) => SidebarStateBucket };
 
+export const WORKSPACE_GROUP_VISIBILITY = {
+  kind: "workspaces" as const,
+  getStatusBucket: (workspace: { statusBucket: SidebarStateBucket }) => workspace.statusBucket,
+};
+
 // A placement can outrun its entry: a retained sidebar that is inactive (compact layout with the
 // sidebar closed) or still waiting for sessions keeps an empty entry map. A missing entry renders
 // no row, so it counts as Done and claims no slot past the limit.

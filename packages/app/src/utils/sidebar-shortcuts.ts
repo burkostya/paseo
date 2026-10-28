@@ -3,7 +3,10 @@ import type {
   SidebarWorkspacePlacement,
 } from "@/hooks/use-sidebar-workspaces-list";
 import type { StatusGroup } from "@/hooks/sidebar-status-view-model";
-import { limitSidebarGroupItems } from "@/components/sidebar/sidebar-group-limit";
+import {
+  selectSidebarGroupVisibility,
+  WORKSPACE_GROUP_VISIBILITY,
+} from "@/components/sidebar/sidebar-group-visibility";
 import {
   buildWorkspaceTreeRows,
   limitWorkspaceTreeRows,
@@ -64,10 +67,11 @@ export function buildStatusSidebarShortcutModel(input: {
 }): SidebarShortcutModel {
   return buildSidebarShortcutSections({
     sections: input.groups.map((group) => ({
-      workspaces: limitSidebarGroupItems(
+      workspaces: selectSidebarGroupVisibility(
         group.rows,
         input.expandedStatusGroupKeys?.has(group.bucket) ?? false,
-      ),
+        WORKSPACE_GROUP_VISIBILITY,
+      ).visibleItems,
       collapsed: input.collapsedStatusGroupKeys?.has(group.bucket),
     })),
     shortcutLimit: input.shortcutLimit,

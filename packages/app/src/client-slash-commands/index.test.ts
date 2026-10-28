@@ -111,6 +111,7 @@ describe("buildDraftAgentSetup", () => {
     expect(buildDraftAgentSetup(createAgent())).toEqual({
       provider: "codex",
       cwd: "/repo",
+      agentProfileId: null,
       modeId: "mode-current",
       model: "agent-model",
       thinkingOptionId: "think-hard",
@@ -118,6 +119,12 @@ describe("buildDraftAgentSetup", () => {
         "web-search": true,
         effort: "high",
       },
+    });
+  });
+
+  it("preserves profile identity in the replacement draft", () => {
+    expect(buildDraftAgentSetup(createAgent({ agentProfileId: "profile-1" }))).toMatchObject({
+      agentProfileId: "profile-1",
     });
   });
 

@@ -560,8 +560,21 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       }
       expect(localStatus.aheadBehind).toEqual({ ahead: 0, behind: 0 });
       await expect(
-        getCheckoutDiff(localResult.worktreePath, { mode: "base", baseRef: "main" }, { paseoHome }),
+        getCheckoutDiff(
+          localResult.worktreePath,
+          { mode: "base", baseRef: "refs/heads/main" },
+          { paseoHome },
+        ),
       ).resolves.toMatchObject({ diff: "" });
+      expect(
+        (
+          await getCheckoutDiff(
+            localResult.worktreePath,
+            { mode: "base", baseRef: "refs/remotes/origin/main" },
+            { paseoHome },
+          )
+        ).diff,
+      ).toContain("+from-local");
       expect(readFileSync(join(originResult.worktreePath, "file.txt"), "utf8")).toBe(
         "from-origin\n",
       );
@@ -627,13 +640,25 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
           { mode: "base", baseRef: "refs/remotes/origin/main" },
           { paseoHome },
         ),
+      ).rejects.toThrow("Base ref not found: refs/remotes/origin/main");
+      expect(
+        (
+          await getCheckoutDiff(
+            result.worktreePath,
+            { mode: "base", baseRef: "refs/heads/main" },
+            { paseoHome },
+          )
+        ).diff,
+      ).toContain("+from-upstream");
+      await expect(
+        mergeFromBase(result.worktreePath, { baseRef: "refs/heads/main" }, { paseoHome }),
       ).rejects.toThrow(
-        "Base ref mismatch: stored refs/remotes/upstream/main, requested refs/remotes/origin/main",
+        "Base ref mismatch: stored refs/remotes/upstream/main, requested refs/heads/main",
       );
       expect(
         await getCheckoutDiff(
           result.worktreePath,
-          { mode: "base", baseRef: "main" },
+          { mode: "base", baseRef: "refs/remotes/upstream/main" },
           { paseoHome },
         ),
       ).toMatchObject({ diff: "" });
@@ -665,7 +690,11 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
         cwd: result.worktreePath,
       });
       await expect(
-        getCheckoutDiff(result.worktreePath, { mode: "base", baseRef: "main" }, { paseoHome }),
+        getCheckoutDiff(
+          result.worktreePath,
+          { mode: "base", baseRef: "refs/remotes/upstream/main" },
+          { paseoHome },
+        ),
       ).rejects.toThrow("Base ref not found: refs/remotes/upstream/main");
       await expect(
         mergeFromBase(result.worktreePath, { baseRef: "main" }, { paseoHome }),

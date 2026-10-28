@@ -80,6 +80,7 @@ import {
 import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-header";
 import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
 import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
+import { WORKSPACE_GROUP_VISIBILITY } from "@/components/sidebar/sidebar-group-visibility";
 import type { ToggleSidebarWorkspacePin } from "@/hooks/use-sidebar-workspace-pin";
 import { DraggableList, type DraggableRenderItemInfo } from "@/components/draggable-list";
 import type { DraggableListDragHandleProps } from "@/components/draggable-list.types";
@@ -397,11 +398,6 @@ function StatusGroupList({
   );
 }
 
-const STATUS_GROUP_VISIBILITY = {
-  kind: "workspaces" as const,
-  getStatusBucket: (workspace: SidebarWorkspaceEntry) => workspace.statusBucket,
-};
-
 function StatusGroupRows({
   group,
   collapsed,
@@ -440,7 +436,7 @@ function StatusGroupRows({
     expanded: workspacesExpanded,
     canToggle: canToggleWorkspaces,
     toggleExpanded: toggleWorkspacesExpanded,
-  } = useLimitedSidebarGroup(group.rows, STATUS_GROUP_VISIBILITY, {
+  } = useLimitedSidebarGroup(group.rows, WORKSPACE_GROUP_VISIBILITY, {
     expanded,
     onToggleExpanded: () => toggleWorkspaceGroupExpanded(group.key),
   });
