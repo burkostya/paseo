@@ -917,7 +917,13 @@ class FakeAgentSession implements AgentSession {
     if (this.providerName === "codex") {
       const codexHome = process.env.CODEX_HOME ?? path.join(process.env.HOME ?? "/tmp", ".codex");
 
-      const commands: AgentSlashCommand[] = [];
+      const commands: AgentSlashCommand[] = [
+        {
+          name: "status",
+          description: "Show Codex session status",
+          argumentHint: "",
+        },
+      ];
 
       const promptsDir = path.join(codexHome, "prompts");
       try {

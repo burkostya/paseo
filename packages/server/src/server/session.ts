@@ -3,6 +3,8 @@ import type { AgentMessageDelivery } from "./agent/agent-messages/index.js";
 import { AgentDirectory } from "./agent/directory.js";
 import { ConnectedHostSession } from "./connected-hosts/index.js";
 import type { ConnectedHosts } from "./connected-hosts/index.js";
+import { describeWorkspaceComparison, projectLegacyComparison } from "./git-comparison/snapshot.js";
+import { listProjectWorktrees, importProjectWorktree } from "./project-worktree-import.js";
 import { searchTimeline } from "./agent/chat-search/index.js";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { BrowserAutomationHostCapabilitySchema } from "@getpaseo/protocol/browser-automation/capabilities";
@@ -261,6 +263,15 @@ import {
   handleWorkspaceSetupRunRequest as handleWorkspaceSetupRunRequestMessage,
 } from "./worktree-session.js";
 import { archiveByScope, type ActiveWorkspaceRef } from "./workspace-archive-service.js";
+import {
+  collectWorkspaceSubtree,
+  inspectWorkspaceSubtree,
+  orderWorkspaceSubtree,
+  WorkspaceHierarchyOperationCoordinator,
+  type WorkspaceHierarchyAction,
+  type WorkspaceHierarchyInspection,
+  type WorkspaceHierarchyOperationResult,
+} from "./workspace-hierarchy-service.js";
 import { WorkspaceSetupRuntime } from "./workspace-setup-runtime.js";
 import { SessionAuthorization, type DaemonPermission } from "./authorization/index.js";
 
@@ -471,6 +482,7 @@ export interface SessionOptions {
   creationService: Pick<CreationService, "create" | "subscribe">;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
+  workspaceHierarchyCoordinator?: WorkspaceHierarchyOperationCoordinator;
   directorySync?: DirectorySyncService;
   workspaceLabelService?: WorkspaceLabelService;
   filesystem?: SessionFileSystem;
@@ -620,6 +632,13 @@ function sessionRequestId(message: SessionInboundMessage): string | null {
   return null;
 }
 
+function sameWorkspaceIdSet(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  const leftSet = new Set(left);
+  if (leftSet.size !== left.length) return false;
+  return right.length === leftSet.size && right.every((id) => leftSet.has(id));
+}
+
 type RegistryTransition = "created" | "unarchived" | "existing";
 
 interface ArchivedRecordSnapshot {
@@ -633,6 +652,12 @@ interface WorkspaceUpdateOptions {
 
 function resolveDirectorySync(service: DirectorySyncService | undefined): DirectorySyncService {
   return service ?? new DirectorySyncService();
+}
+
+function resolveWorkspaceHierarchyCoordinator(
+  coordinator: WorkspaceHierarchyOperationCoordinator | undefined,
+): WorkspaceHierarchyOperationCoordinator {
+  return coordinator ?? new WorkspaceHierarchyOperationCoordinator();
 }
 
 function describeRegistryTransition(record: ArchivedRecordSnapshot | null): RegistryTransition {
@@ -752,6 +777,7 @@ export class Session {
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
   private readonly agentDirectory: AgentDirectory;
+  private readonly workspaceHierarchyCoordinator: WorkspaceHierarchyOperationCoordinator;
   private readonly directorySync: DirectorySyncService;
   private readonly filesystem: SessionFileSystem;
   private readonly github: ForgeService;
@@ -854,6 +880,7 @@ export class Session {
       agentStorage,
       projectRegistry,
       workspaceRegistry,
+      workspaceHierarchyCoordinator,
       directorySync,
       workspaceLabelService,
       filesystem,
@@ -938,6 +965,9 @@ export class Session {
     this.agentStorage = agentStorage;
     this.projectRegistry = projectRegistry;
     this.workspaceRegistry = workspaceRegistry;
+    this.workspaceHierarchyCoordinator = resolveWorkspaceHierarchyCoordinator(
+      workspaceHierarchyCoordinator,
+    );
     this.directorySync = resolveDirectorySync(directorySync);
     this.workspaceLabelService = resolveWorkspaceLabelService(workspaceLabelService);
     this.filesystem = filesystem ?? nodeSessionFileSystem;
@@ -1071,6 +1101,7 @@ export class Session {
           agentManager.setAgentFeature(agentId, featureId, value),
         setThinking: (agentId, thinkingOptionId) =>
           agentManager.setAgentThinkingOption(agentId, thinkingOptionId),
+        applyBundle: (agentId, config) => agentManager.applyAgentConfig(agentId, config),
       },
       logger: this.sessionLogger,
     });
@@ -2990,6 +3021,7 @@ export class Session {
 
   // eslint-disable-next-line complexity
   private dispatchCheckoutMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    if (msg.type === "git.comparison.set.request") return this.handleDiffComparisonSetRequest(msg);
     switch (msg.type) {
       case "checkout_status_request":
         return this.checkoutSession.handleStatusRequest(msg);
@@ -3058,6 +3090,8 @@ export class Session {
   private dispatchWorkspaceAndProjectMessage(
     msg: SessionInboundMessage,
   ): Promise<void> | undefined {
+    const hierarchyPromise = this.dispatchWorkspaceExtensionsMessage(msg);
+    if (hierarchyPromise) return hierarchyPromise;
     switch (msg.type) {
       case "fetch_workspaces_request":
         return this.handleFetchWorkspacesRequest(msg);
@@ -3094,6 +3128,30 @@ export class Session {
         return this.handleWorkspaceTitleSetRequest(msg.workspaceId, msg.title, msg.requestId);
       case "workspace.pin.set.request":
         return this.handleWorkspacePinSetRequest(msg.workspaceId, msg.pinned, msg.requestId);
+      default:
+        return undefined;
+    }
+  }
+
+  private dispatchWorkspaceExtensionsMessage(
+    msg: SessionInboundMessage,
+  ): Promise<void> | undefined {
+    switch (msg.type) {
+      case "project.worktree.list.request":
+      case "project.worktree.import.request":
+        return this.handleProjectWorktreeRequest(msg);
+      case "workspace.hierarchy.setParent.request":
+        return this.handleWorkspaceHierarchySetParentRequest(
+          msg.workspaceId,
+          msg.parentWorkspaceId,
+          msg.requestId,
+        );
+      case "workspace.hierarchy.inspectSubtree.request":
+        return this.handleWorkspaceHierarchyInspectSubtreeRequest(msg);
+      case "workspace.hierarchy.archiveSubtree.request":
+        return this.handleWorkspaceHierarchyArchiveSubtreeRequest(msg);
+      case "workspace.hierarchy.restoreSubtree.request":
+        return this.handleWorkspaceHierarchyRestoreSubtreeRequest(msg);
       default:
         return undefined;
     }
@@ -3628,6 +3686,64 @@ export class Session {
     }
   }
 
+  private async handleDiffComparisonSetRequest(
+    request: Extract<SessionInboundMessage, { type: "git.comparison.set.request" }>,
+  ): Promise<void> {
+    try {
+      const comparison = request.comparison ?? undefined;
+      const comparisonV2 = request.comparisonV2 ?? undefined;
+      if (
+        comparison?.mode === "base" &&
+        (!comparison.baseRef.trim() || comparison.baseRef.startsWith("-"))
+      ) {
+        throw new SessionRequestError("invalid_comparison_branch", "Invalid comparison branch");
+      }
+      if (
+        comparisonV2?.mode !== "uncommitted" &&
+        comparisonV2?.baseRef !== undefined &&
+        (!comparisonV2.baseRef.trim() || comparisonV2.baseRef.trim().startsWith("-"))
+      ) {
+        throw new SessionRequestError("invalid_comparison_branch", "Invalid comparison branch");
+      }
+      const useV2 = request.comparisonV2 !== undefined;
+      const updatedAt = new Date().toISOString();
+      if (request.target.kind === "project") {
+        const updated = await this.projectRegistry.update(request.target.projectId, (record) => ({
+          ...record,
+          diffComparison: useV2 ? undefined : comparison,
+          diffComparisonV2: useV2 ? comparisonV2 : undefined,
+          updatedAt,
+        }));
+        if (!updated) throw new SessionRequestError("project_not_found", "Project not found");
+        await this.emitProjectUpdate({ kind: "upsert", project: updated });
+      } else {
+        const updated = await this.workspaceRegistry.update(
+          request.target.workspaceId,
+          (record) => ({
+            ...record,
+            diffComparison: useV2 ? undefined : comparison,
+            diffComparisonV2: useV2 ? comparisonV2 : undefined,
+            updatedAt,
+          }),
+        );
+        if (!updated) throw new SessionRequestError("workspace_not_found", "Workspace not found");
+      }
+      this.emit({
+        type: "git.comparison.set.response",
+        payload: { requestId: request.requestId, accepted: true, error: null },
+      });
+    } catch (error) {
+      this.emit({
+        type: "git.comparison.set.response",
+        payload: {
+          requestId: request.requestId,
+          accepted: false,
+          error: getErrorMessageOr(error, "Failed to save comparison"),
+        },
+      });
+    }
+  }
+
   private async handleProjectRenameRequest(
     projectId: string,
     customName: string | null,
@@ -3786,43 +3902,48 @@ export class Session {
         .filter((workspace) => !workspace.archivedAt)
         .map((workspace) => workspace.workspaceId);
 
-      if (activeWorkspaceIds.length > 0) {
-        this.markWorkspaceArchiving(activeWorkspaceIds, new Date().toISOString());
-        await this.emitWorkspaceUpdatesForWorkspaceIds(activeWorkspaceIds);
-      }
-
       const removedWorkspaceIds: string[] = [];
-      try {
-        for (const workspaceId of activeWorkspaceIds) {
-          await archiveWorkspaceContents(
-            {
-              agentManager: this.agentManager,
-              agentStorage: this.agentStorage,
-              killTerminalsForWorkspace: (id) =>
-                this.terminalController.killTerminalsForWorkspace(id),
-              sessionLogger: this.sessionLogger,
-            },
-            workspaceId,
-          );
-          await this.archiveWorkspaceRecord(workspaceId);
-          removedWorkspaceIds.push(workspaceId);
-        }
+      await this.workspaceHierarchyCoordinator.run(
+        projectWorkspaces.map((workspace) => workspace.workspaceId),
+        async () => {
+          if (activeWorkspaceIds.length > 0) {
+            this.markWorkspaceArchiving(activeWorkspaceIds, new Date().toISOString());
+            await this.emitWorkspaceUpdatesForWorkspaceIds(activeWorkspaceIds);
+          }
 
-        await this.projectRegistry.remove(resolvedProjectId);
-        await removeProjectCustomIcon({
-          paseoHome: this.paseoHome,
-          projectId: resolvedProjectId,
-        }).catch((error) => {
-          this.sessionLogger.warn(
-            { err: error, projectId: resolvedProjectId },
-            "Failed to clean up removed project icon",
-          );
-        });
-      } finally {
-        if (activeWorkspaceIds.length > 0) {
-          this.clearWorkspaceArchiving(activeWorkspaceIds);
-        }
-      }
+          try {
+            for (const workspaceId of activeWorkspaceIds) {
+              await archiveWorkspaceContents(
+                {
+                  agentManager: this.agentManager,
+                  agentStorage: this.agentStorage,
+                  killTerminalsForWorkspace: (id) =>
+                    this.terminalController.killTerminalsForWorkspace(id),
+                  sessionLogger: this.sessionLogger,
+                },
+                workspaceId,
+              );
+              await this.archiveWorkspaceRecord(workspaceId);
+              removedWorkspaceIds.push(workspaceId);
+            }
+
+            await this.projectRegistry.remove(resolvedProjectId);
+            await removeProjectCustomIcon({
+              paseoHome: this.paseoHome,
+              projectId: resolvedProjectId,
+            }).catch((error) => {
+              this.sessionLogger.warn(
+                { err: error, projectId: resolvedProjectId },
+                "Failed to clean up removed project icon",
+              );
+            });
+          } finally {
+            if (activeWorkspaceIds.length > 0) {
+              this.clearWorkspaceArchiving(activeWorkspaceIds);
+            }
+          }
+        },
+      );
 
       const updateIds =
         removedWorkspaceIds.length > 0
@@ -3985,6 +4106,412 @@ export class Session {
       });
       emitResponse(false, null, getErrorMessageOr(error, "Failed to pin workspace"));
     }
+  }
+
+  private async handleWorkspaceHierarchySetParentRequest(
+    workspaceId: string,
+    parentWorkspaceId: string | null,
+    requestId: string,
+  ): Promise<void> {
+    const logContext = { workspaceId, parentWorkspaceId, requestId };
+    this.sessionLogger.info(logContext, "session: workspace.hierarchy.setParent.request");
+    try {
+      const records = await this.workspaceRegistry.list();
+      const movedSubtree = inspectWorkspaceSubtree({
+        records,
+        workspaceId,
+        action: "archive",
+      });
+      const operationWorkspaceIds = new Set(movedSubtree.expectedWorkspaceIds);
+      if (parentWorkspaceId) {
+        const destinationSubtree = inspectWorkspaceSubtree({
+          records,
+          workspaceId: parentWorkspaceId,
+          action: "archive",
+        });
+        for (const destinationWorkspaceId of destinationSubtree.expectedWorkspaceIds) {
+          operationWorkspaceIds.add(destinationWorkspaceId);
+        }
+      }
+      const updated = await this.workspaceHierarchyCoordinator.run([...operationWorkspaceIds], () =>
+        this.workspaceRegistry.setWorkspaceParent({
+          workspaceId,
+          parentWorkspaceId,
+        }),
+      );
+      if (!updated) {
+        throw new Error("Workspace not found");
+      }
+      this.emit({
+        type: "workspace.hierarchy.setParent.response",
+        payload: {
+          requestId,
+          workspaceId,
+          parentWorkspaceId: updated.parentWorkspaceId ?? null,
+          accepted: true,
+          error: null,
+        },
+      });
+      await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId]);
+    } catch (error) {
+      this.sessionLogger.error(
+        { ...logContext, err: error },
+        "session: workspace.hierarchy.setParent.request error",
+      );
+      this.emit({
+        type: "workspace.hierarchy.setParent.response",
+        payload: {
+          requestId,
+          workspaceId,
+          parentWorkspaceId,
+          accepted: false,
+          error: getErrorMessageOr(error, "Failed to update workspace hierarchy"),
+        },
+      });
+    }
+  }
+
+  private async handleWorkspaceHierarchyInspectSubtreeRequest(
+    request: Extract<SessionInboundMessage, { type: "workspace.hierarchy.inspectSubtree.request" }>,
+  ): Promise<void> {
+    try {
+      const inspection = await this.inspectWorkspaceHierarchySubtree({
+        workspaceId: request.workspaceId,
+        action: request.action,
+      });
+      this.emit({
+        type: "workspace.hierarchy.inspectSubtree.response",
+        payload: { requestId: request.requestId, ...inspection, error: null },
+      });
+    } catch (error) {
+      this.emit({
+        type: "workspace.hierarchy.inspectSubtree.response",
+        payload: {
+          requestId: request.requestId,
+          workspaceId: request.workspaceId,
+          action: request.action,
+          entries: [],
+          expectedWorkspaceIds: [],
+          changingWorkspaceIds: [],
+          error: getErrorMessageOr(error, "Failed to inspect workspace hierarchy"),
+        },
+      });
+    }
+  }
+
+  /**
+   * Add the cached git facts used by the ordinary worktree archive warning. The hierarchy service
+   * owns membership and ordering; this session owns the git observer that can provide the optional
+   * warning metadata without making registry inspection depend on git I/O.
+   */
+  private async inspectWorkspaceHierarchySubtree(input: {
+    workspaceId: string;
+    action: WorkspaceHierarchyAction;
+  }): Promise<WorkspaceHierarchyInspection> {
+    const records = await this.workspaceRegistry.list();
+    const inspection = inspectWorkspaceSubtree({ ...input, records });
+    const recordsById = new Map(records.map((record) => [record.workspaceId, record]));
+    return {
+      ...inspection,
+      entries: inspection.entries.map((entry) => {
+        const record = recordsById.get(entry.workspaceId);
+        const git = record ? this.workspaceRuntimeStore.get(record.cwd)?.git : null;
+        if (!git) return entry;
+        return Object.assign({}, entry, {
+          archiveHasUncommittedChanges: git.isDirty,
+          archiveUnpushedCommitCount: git.aheadOfOrigin,
+          diffStat: git.diffStat ?? null,
+        });
+      }),
+    };
+  }
+
+  private async handleWorkspaceHierarchyArchiveSubtreeRequest(
+    request: Extract<SessionInboundMessage, { type: "workspace.hierarchy.archiveSubtree.request" }>,
+  ): Promise<void> {
+    await this.runWorkspaceHierarchySubtreeOperation(request, "archive");
+  }
+
+  private async handleWorkspaceHierarchyRestoreSubtreeRequest(
+    request: Extract<SessionInboundMessage, { type: "workspace.hierarchy.restoreSubtree.request" }>,
+  ): Promise<void> {
+    await this.runWorkspaceHierarchySubtreeOperation(request, "restore");
+  }
+
+  private async runWorkspaceHierarchySubtreeOperation(
+    request: Extract<
+      SessionInboundMessage,
+      | { type: "workspace.hierarchy.archiveSubtree.request" }
+      | { type: "workspace.hierarchy.restoreSubtree.request" }
+    >,
+    action: WorkspaceHierarchyAction,
+  ): Promise<void> {
+    const responseType =
+      action === "archive"
+        ? "workspace.hierarchy.archiveSubtree.response"
+        : "workspace.hierarchy.restoreSubtree.response";
+    const emitFailure = (error: string, results: WorkspaceHierarchyOperationResult[] = []) => {
+      this.emit({
+        type: responseType,
+        payload: {
+          requestId: request.requestId,
+          workspaceId: request.workspaceId,
+          accepted: false,
+          error,
+          results,
+        },
+      } as SessionOutboundMessage);
+    };
+
+    let inspection: WorkspaceHierarchyInspection;
+    try {
+      inspection = await this.inspectWorkspaceHierarchySubtree({
+        workspaceId: request.workspaceId,
+        action,
+      });
+      if (!sameWorkspaceIdSet(inspection.expectedWorkspaceIds, request.expectedWorkspaceIds)) {
+        emitFailure("subtree_changed");
+        return;
+      }
+    } catch (error) {
+      emitFailure(getErrorMessageOr(error, "Failed to inspect workspace hierarchy"));
+      return;
+    }
+
+    try {
+      const results = await this.workspaceHierarchyCoordinator.run(
+        inspection.expectedWorkspaceIds,
+        async () => {
+          // A parent move or another lifecycle request may have settled between the first
+          // inspection and acquiring the shared coordinator. Re-read the membership while every
+          // target is reserved, before any marker or lifecycle side effect is emitted.
+          const freshInspection = await this.inspectWorkspaceHierarchySubtree({
+            workspaceId: request.workspaceId,
+            action,
+          });
+          if (
+            !sameWorkspaceIdSet(
+              inspection.expectedWorkspaceIds,
+              freshInspection.expectedWorkspaceIds,
+            )
+          ) {
+            throw new Error("subtree_changed");
+          }
+          inspection = freshInspection;
+          const changingIds = inspection.changingWorkspaceIds;
+          if (action === "archive" && changingIds.length > 0) {
+            this.markWorkspaceArchiving(changingIds, new Date().toISOString());
+            await this.emitWorkspaceUpdatesForWorkspaceIds(changingIds);
+          }
+          try {
+            return action === "archive"
+              ? await this.archiveWorkspaceHierarchy(inspection)
+              : await this.restoreWorkspaceHierarchy(inspection);
+          } finally {
+            if (action === "archive" && changingIds.length > 0) {
+              this.clearWorkspaceArchiving(changingIds);
+              await this.emitWorkspaceUpdatesForWorkspaceIds(changingIds);
+            }
+          }
+        },
+      );
+      this.emit({
+        type: responseType,
+        payload: {
+          requestId: request.requestId,
+          workspaceId: request.workspaceId,
+          accepted: true,
+          error: null,
+          results,
+        },
+      } as SessionOutboundMessage);
+    } catch (error) {
+      emitFailure(getErrorMessageOr(error, "Workspace hierarchy operation failed"));
+    }
+  }
+
+  private async archiveWorkspaceHierarchy(
+    inspection: ReturnType<typeof inspectWorkspaceSubtree>,
+  ): Promise<WorkspaceHierarchyOperationResult[]> {
+    const records = await this.workspaceRegistry.list();
+    const expectedIds = new Set(inspection.expectedWorkspaceIds);
+    const ordered = orderWorkspaceSubtree(
+      records.filter((record) => expectedIds.has(record.workspaceId)),
+      inspection.workspaceId,
+      "child-first",
+    );
+    const initialById = new Map(inspection.entries.map((entry) => [entry.workspaceId, entry]));
+    const childrenByParent = new Map<string, string[]>();
+    for (const entry of inspection.entries) {
+      if (!entry.parentWorkspaceId || !initialById.has(entry.parentWorkspaceId)) continue;
+      const children = childrenByParent.get(entry.parentWorkspaceId) ?? [];
+      children.push(entry.workspaceId);
+      childrenByParent.set(entry.parentWorkspaceId, children);
+    }
+    const results = new Map<string, WorkspaceHierarchyOperationResult>();
+    for (const record of ordered) {
+      const failedChild = (childrenByParent.get(record.workspaceId) ?? []).find(
+        (childId) => results.get(childId)?.status === "failed",
+      );
+      if (failedChild) {
+        results.set(record.workspaceId, {
+          workspaceId: record.workspaceId,
+          status: "failed",
+          error: `Descendant ${failedChild} could not be archived`,
+        });
+        continue;
+      }
+      if (record.archivedAt) {
+        results.set(record.workspaceId, {
+          workspaceId: record.workspaceId,
+          status: "unchanged",
+          error: null,
+        });
+        continue;
+      }
+      try {
+        await archiveByScope(
+          {
+            paseoHome: this.paseoHome,
+            paseoWorktreesBaseRoot: this.worktreesRoot,
+            github: this.github,
+            workspaceGitService: this.workspaceGitService,
+            agentManager: this.agentManager,
+            agentStorage: this.agentStorage,
+            findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
+            getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
+            listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
+            archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
+            emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
+              this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
+            markWorkspaceArchiving: (workspaceIds, archivingAt) =>
+              this.markWorkspaceArchiving(workspaceIds, archivingAt),
+            clearWorkspaceArchiving: (workspaceIds) => this.clearWorkspaceArchiving(workspaceIds),
+            assertWorkspaceAutomationAllowed: (workspaceId) =>
+              assertWorkspaceAutomationAllowedForWorkspace(this.workspaceRegistry, workspaceId),
+            killTerminalsForWorkspace: (workspaceId) =>
+              this.terminalController.killTerminalsForWorkspace(workspaceId),
+            stopWorkspaceSetup: (workspaceId) => this.workspaceSetupRuntime.stop(workspaceId),
+            sessionLogger: this.sessionLogger,
+          },
+          {
+            scope: { kind: "workspace", workspaceId: record.workspaceId },
+            requestId: `hierarchy:${record.workspaceId}`,
+            manageArchivingState: false,
+          },
+        );
+        const archived = await this.workspaceRegistry.get(record.workspaceId);
+        results.set(record.workspaceId, {
+          workspaceId: record.workspaceId,
+          status: archived?.archivedAt ? "succeeded" : "failed",
+          error: archived?.archivedAt ? null : "Workspace remained active after archive",
+        });
+      } catch (error) {
+        results.set(record.workspaceId, {
+          workspaceId: record.workspaceId,
+          status: "failed",
+          error: getErrorMessageOr(error, "Failed to archive workspace"),
+        });
+      }
+    }
+    return inspection.expectedWorkspaceIds.map(
+      (workspaceId) =>
+        results.get(workspaceId) ?? {
+          workspaceId,
+          status: "unchanged",
+          error: null,
+        },
+    );
+  }
+
+  private async restoreWorkspaceHierarchy(
+    inspection: ReturnType<typeof inspectWorkspaceSubtree>,
+  ): Promise<WorkspaceHierarchyOperationResult[]> {
+    const records = await this.workspaceRegistry.list();
+    const expectedIds = new Set(inspection.expectedWorkspaceIds);
+    const ordered = orderWorkspaceSubtree(
+      records.filter((record) => expectedIds.has(record.workspaceId)),
+      inspection.workspaceId,
+      "parent-first",
+    );
+    const results = new Map<string, WorkspaceHierarchyOperationResult>();
+    for (const record of ordered) {
+      const parentId = record.parentWorkspaceId;
+      if (parentId && expectedIds.has(parentId) && results.get(parentId)?.status === "failed") {
+        results.set(record.workspaceId, {
+          workspaceId: record.workspaceId,
+          status: "failed",
+          error: `Parent ${parentId} could not be restored`,
+        });
+        continue;
+      }
+      if (!record.archivedAt) {
+        results.set(record.workspaceId, {
+          workspaceId: record.workspaceId,
+          status: "unchanged",
+          error: null,
+        });
+        continue;
+      }
+      try {
+        await this.workspaceRecovery.restoreSingle(record.workspaceId);
+        const restored = await this.workspaceRegistry.get(record.workspaceId);
+        results.set(record.workspaceId, {
+          workspaceId: record.workspaceId,
+          status: restored?.archivedAt ? "failed" : "succeeded",
+          error: restored?.archivedAt ? "Workspace remained archived after restore" : null,
+        });
+        if (restored && !restored.archivedAt) {
+          await this.notifyWorkspaceRecovered(restored);
+        }
+      } catch (error) {
+        results.set(record.workspaceId, {
+          workspaceId: record.workspaceId,
+          status: "failed",
+          error: getErrorMessageOr(error, "Failed to restore workspace"),
+        });
+      }
+    }
+    return inspection.expectedWorkspaceIds.map(
+      (workspaceId) =>
+        results.get(workspaceId) ?? {
+          workspaceId,
+          status: "unchanged",
+          error: null,
+        },
+    );
+  }
+
+  private async notifyWorkspaceRecovered(workspace: PersistedWorkspaceRecord): Promise<void> {
+    if (this.onWorkspaceRecovered) {
+      try {
+        await this.onWorkspaceRecovered(workspace);
+        return;
+      } catch (error) {
+        this.sessionLogger.warn(
+          { err: error, workspaceId: workspace.workspaceId },
+          "Failed to publish workspace recovery to active sessions",
+        );
+      }
+    }
+    await this.refreshRecoveredWorkspaceForExternalMutation(workspace);
+  }
+
+  /**
+   * Legacy single-workspace lifecycle RPCs predate the subtree protocol. Reserve the current
+   * subtree while they run so an older client cannot race a newer grouped archive/restore or a
+   * parent move that touches the same branch.
+   */
+  private async runWithWorkspaceHierarchyLock<T>(
+    workspaceId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const records = await this.workspaceRegistry.list();
+    const subtree = collectWorkspaceSubtree(records, workspaceId);
+    return this.workspaceHierarchyCoordinator.run(
+      subtree.length > 0 ? subtree.map((record) => record.workspaceId) : [workspaceId],
+      operation,
+    );
   }
 
   private async handleWorkspaceRecoveryInspectRequest(
@@ -5673,6 +6200,13 @@ export class Session {
     }
   }
 
+  private readonly onComparisonReady = (cwd: string): void => {
+    if (this.isCleanedUp) return;
+    void this.emitWorkspaceUpdateForCwd(cwd).catch((error) => {
+      this.sessionLogger.warn({ err: error, cwd }, "Failed to publish comparison");
+    });
+  };
+
   private async describeWorkspaceRecord(
     workspace: PersistedWorkspaceRecord,
     projectRecord?: PersistedProjectRecord | null,
@@ -5680,11 +6214,14 @@ export class Session {
     const resolvedProjectRecord =
       projectRecord ?? (await this.projectRegistry.get(workspace.projectId));
 
-    let diffStat: { additions: number; deletions: number } | null = null;
-    const snapshot = this.workspaceRuntimeStore.get(workspace.cwd);
-    if (snapshot?.git.diffStat) {
-      diffStat = snapshot.git.diffStat;
-    }
+    const comparison = describeWorkspaceComparison({
+      workspace,
+      project: resolvedProjectRecord,
+      snapshot: this.workspaceRuntimeStore.get(workspace.cwd),
+      context: { paseoHome: this.paseoHome, worktreesRoot: this.worktreesRoot },
+      owner: this,
+      onReady: this.onComparisonReady,
+    });
 
     const worktreeSlug =
       workspace.isPaseoOwnedWorktree && workspace.worktreeRoot
@@ -5708,6 +6245,7 @@ export class Session {
       name: resolveWorkspaceDisplayName(workspace),
       title: workspace.title,
       pinnedAt: workspace.pinnedAt,
+      parentWorkspaceId: workspace.parentWorkspaceId ?? null,
       ...(workspace.labels && workspace.labels.length > 0 ? { labels: workspace.labels } : {}),
       background: workspace.background,
       archivingAt: null,
@@ -5715,7 +6253,7 @@ export class Session {
       statusEnteredAt: null,
       activityAt: null,
       createdAt: workspace.createdAt,
-      diffStat,
+      ...comparison,
       scripts: await this.buildWorkspaceScriptPayloadSnapshot(workspace, resolvedProjectRecord),
       ...(resolvedProjectRecord
         ? {
@@ -5769,7 +6307,6 @@ export class Session {
     return {
       ...base,
       name: resolveWorkspaceName({ title: workspace.title, derivedDisplayName: displayName }),
-      diffStat: snapshot.git.diffStat ?? null,
       gitRuntime: this.buildWorkspaceGitRuntimePayload(snapshot) ?? undefined,
       githubRuntime: this.buildWorkspaceGitHubRuntimePayload(snapshot),
       // Reuse the forge already resolved on the snapshot (probe-aware; GitHub-only
@@ -5783,7 +6320,12 @@ export class Session {
     result: CreatePaseoWorktreeResult,
   ): Promise<WorkspaceDescriptorPayload> {
     const projectRecord = await this.projectRegistry.get(result.workspace.projectId);
+    const comparisonDescriptor = await this.describeWorkspaceRecord(
+      result.workspace,
+      projectRecord,
+    );
     return {
+      ...comparisonDescriptor,
       id: result.workspace.workspaceId,
       projectId: result.workspace.projectId,
       projectDisplayName: projectRecord
@@ -5804,6 +6346,7 @@ export class Session {
       }),
       title: result.workspace.title,
       pinnedAt: result.workspace.pinnedAt,
+      parentWorkspaceId: result.workspace.parentWorkspaceId ?? null,
       ...(result.workspace.labels && result.workspace.labels.length > 0
         ? { labels: result.workspace.labels }
         : {}),
@@ -5813,7 +6356,7 @@ export class Session {
       activityAt: null,
       createdAt: result.workspace.createdAt,
       lastUserMessageAt: null,
-      diffStat: { additions: 0, deletions: 0 },
+      diffStat: comparisonDescriptor.diffStat,
       scripts: [],
       gitRuntime: {
         currentBranch: result.worktree.branchName || null,
@@ -5978,6 +6521,8 @@ export class Session {
       ...(project.projectKey ? { projectKey: project.projectKey } : {}),
       projectDisplayName: resolveProjectDisplayName(project),
       projectCustomName: project.customName ?? null,
+      diffComparison: projectLegacyComparison(project),
+      diffComparisonV2: project.diffComparisonV2,
       projectCustomIconRevision: project.customIconRevision ?? null,
       projectIconRevision: icon.revision,
       projectRootPath: project.rootPath,
@@ -5986,23 +6531,25 @@ export class Session {
   }
 
   private async restoreWorkspaceAndEmit(workspaceId: string): Promise<void> {
-    await this.workspaceRecovery.restore(workspaceId);
-    const workspace = await this.workspaceRegistry.get(workspaceId);
-    if (!workspace) {
-      throw new Error(`Recovered workspace record not found: ${workspaceId}`);
-    }
-    if (this.onWorkspaceRecovered) {
-      try {
-        await this.onWorkspaceRecovered(workspace);
-        return;
-      } catch (error) {
-        this.sessionLogger.warn(
-          { err: error, workspaceId },
-          "Failed to publish workspace recovery to active sessions",
-        );
+    await this.runWithWorkspaceHierarchyLock(workspaceId, async () => {
+      await this.workspaceRecovery.restore(workspaceId);
+      const workspace = await this.workspaceRegistry.get(workspaceId);
+      if (!workspace) {
+        throw new Error(`Recovered workspace record not found: ${workspaceId}`);
       }
-    }
-    await this.refreshRecoveredWorkspaceForExternalMutation(workspace);
+      if (this.onWorkspaceRecovered) {
+        try {
+          await this.onWorkspaceRecovered(workspace);
+          return;
+        } catch (error) {
+          this.sessionLogger.warn(
+            { err: error, workspaceId },
+            "Failed to publish workspace recovery to active sessions",
+          );
+        }
+      }
+      await this.refreshRecoveredWorkspaceForExternalMutation(workspace);
+    });
   }
 
   private async restoreOwningWorkspaceForLegacyAgentRefresh(agentId: string): Promise<void> {
@@ -6055,6 +6602,8 @@ export class Session {
       .filter((workspace) => !workspace.archivedAt)
       .map((workspace) => ({
         workspaceId: workspace.workspaceId,
+        projectId: workspace.projectId,
+        parentWorkspaceId: workspace.parentWorkspaceId,
         cwd: workspace.cwd,
         kind: workspace.kind,
         worktreeRoot: workspace.worktreeRoot,
@@ -6877,6 +7426,57 @@ export class Session {
       : this.handleWorkspaceCreateWorktree(creationRequest, workspaceId);
   }
 
+  private async handleProjectWorktreeRequest(
+    request: Extract<
+      SessionInboundMessage,
+      { type: "project.worktree.list.request" | "project.worktree.import.request" }
+    >,
+  ): Promise<void> {
+    const deps = { projects: this.projectRegistry, workspaces: this.workspaceRegistry };
+    if (request.type === "project.worktree.list.request") {
+      try {
+        const worktrees = await listProjectWorktrees(deps, request.projectId);
+        this.emit({
+          type: "project.worktree.list.response",
+          payload: { worktrees, error: null, requestId: request.requestId },
+        });
+      } catch (error) {
+        this.emit({
+          type: "project.worktree.list.response",
+          payload: { worktrees: [], error: getErrorMessage(error), requestId: request.requestId },
+        });
+      }
+      return;
+    }
+    try {
+      const workspaceId = await importProjectWorktree(
+        {
+          ...deps,
+          create: async (path) => {
+            const workspace = await this.handleWorkspaceCreateLocal({
+              type: "workspace.create.request",
+              requestId: request.requestId,
+              source: { kind: "directory", path, projectId: request.projectId },
+            });
+            return workspace.id;
+          },
+          restore: (existingWorkspaceId) => this.restoreWorkspaceAndEmit(existingWorkspaceId),
+        },
+        request.projectId,
+        request.path,
+      );
+      this.emit({
+        type: "project.worktree.import.response",
+        payload: { workspaceId, error: null, requestId: request.requestId },
+      });
+    } catch (error) {
+      this.emit({
+        type: "project.worktree.import.response",
+        payload: { workspaceId: null, error: getErrorMessage(error), requestId: request.requestId },
+      });
+    }
+  }
+
   private async handleWorkspaceCreateLocal(
     request: Extract<SessionInboundMessage, { type: "workspace.create.request" }>,
     workspaceId?: string,
@@ -7572,38 +8172,40 @@ export class Session {
         throw new Error(`Workspace not found: ${request.workspaceId}`);
       }
 
-      await archiveByScope(
-        {
-          paseoHome: this.paseoHome,
-          paseoWorktreesBaseRoot: this.worktreesRoot,
-          github: this.github,
-          workspaceGitService: this.workspaceGitService,
-          agentManager: this.agentManager,
-          agentStorage: this.agentStorage,
-          findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
-          getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
-          listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
-          archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
-          emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
-            this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
-          markWorkspaceArchiving: (workspaceIds, archivingAt) =>
-            this.markWorkspaceArchiving(workspaceIds, archivingAt),
-          clearWorkspaceArchiving: (workspaceIds) => this.clearWorkspaceArchiving(workspaceIds),
-          assertWorkspaceAutomationAllowed: (workspaceId) =>
-            assertWorkspaceAutomationAllowedForWorkspace(this.workspaceRegistry, workspaceId),
-          killTerminalsForWorkspace: (workspaceId) =>
-            this.terminalController.killTerminalsForWorkspace(workspaceId),
-          stopWorkspaceSetup: (workspaceId) => this.workspaceSetupRuntime.stop(workspaceId),
-          sessionLogger: this.sessionLogger,
-        },
-        {
-          scope: { kind: "workspace", workspaceId: existing.workspaceId },
-          requestId: request.requestId,
-        },
-      );
+      const archivedAt = await this.runWithWorkspaceHierarchyLock(request.workspaceId, async () => {
+        await archiveByScope(
+          {
+            paseoHome: this.paseoHome,
+            paseoWorktreesBaseRoot: this.worktreesRoot,
+            github: this.github,
+            workspaceGitService: this.workspaceGitService,
+            agentManager: this.agentManager,
+            agentStorage: this.agentStorage,
+            findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
+            getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
+            listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
+            archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
+            emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
+              this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
+            markWorkspaceArchiving: (workspaceIds, archivingAt) =>
+              this.markWorkspaceArchiving(workspaceIds, archivingAt),
+            clearWorkspaceArchiving: (workspaceIds) => this.clearWorkspaceArchiving(workspaceIds),
+            assertWorkspaceAutomationAllowed: (workspaceId) =>
+              assertWorkspaceAutomationAllowedForWorkspace(this.workspaceRegistry, workspaceId),
+            killTerminalsForWorkspace: (workspaceId) =>
+              this.terminalController.killTerminalsForWorkspace(workspaceId),
+            stopWorkspaceSetup: (workspaceId) => this.workspaceSetupRuntime.stop(workspaceId),
+            sessionLogger: this.sessionLogger,
+          },
+          {
+            scope: { kind: "workspace", workspaceId: existing.workspaceId },
+            requestId: request.requestId,
+          },
+        );
 
-      const archivedWorkspace = await this.workspaceRegistry.get(request.workspaceId);
-      const archivedAt = archivedWorkspace?.archivedAt ?? new Date().toISOString();
+        const archivedWorkspace = await this.workspaceRegistry.get(request.workspaceId);
+        return archivedWorkspace?.archivedAt ?? new Date().toISOString();
+      });
       this.emit({
         type: "archive_workspace_response",
         payload: {

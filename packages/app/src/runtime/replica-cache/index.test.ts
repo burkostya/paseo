@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 import {
   normalizeProjectDescriptor,
@@ -31,8 +31,11 @@ class MemoryStorage implements ReplicaRowStore {
   }> = [];
   writes = 0;
   cleanups = 0;
+  nextOpenFailure: Error | null = null;
+  nextReadAllFailure: Error | null = null;
   nextWriteFailure: Error | null = null;
   persistentWriteFailure: Error | null = null;
+  alwaysWriteFailure: Error | null = null;
   readGate: Promise<void> | null = null;
   onRead: (() => void) | null = null;
   /** Throws once a read goes past this count, so a non-terminating read loop fails the test. */
@@ -42,7 +45,13 @@ class MemoryStorage implements ReplicaRowStore {
     return `${row.serverId}:${row.kind}:${row.id}`;
   }
 
-  async open(): Promise<void> {}
+  async open(): Promise<void> {
+    if (this.nextOpenFailure) {
+      const error = this.nextOpenFailure;
+      this.nextOpenFailure = null;
+      throw error;
+    }
+  }
 
   async read(
     serverId: string,
@@ -68,6 +77,11 @@ class MemoryStorage implements ReplicaRowStore {
   }
 
   async readAll(): Promise<ReplicaHostRows[]> {
+    if (this.nextReadAllFailure) {
+      const error = this.nextReadAllFailure;
+      this.nextReadAllFailure = null;
+      throw error;
+    }
     const hosts = new Map<string, ReplicaRow[]>();
     for (const row of this.rows.values()) {
       const rows = hosts.get(row.serverId) ?? [];
@@ -80,6 +94,7 @@ class MemoryStorage implements ReplicaRowStore {
   async apply(changes: ReplicaRowChanges): Promise<void> {
     this.writes += 1;
     if (this.persistentWriteFailure) throw this.persistentWriteFailure;
+    if (this.alwaysWriteFailure) throw this.alwaysWriteFailure;
     if (this.nextWriteFailure) {
       const error = this.nextWriteFailure;
       this.nextWriteFailure = null;
@@ -306,6 +321,11 @@ async function expectLegacyWorkspaceRefresh({
 }
 
 describe("ReplicaCache", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
   it("persists the complete newest turn beyond the cache item target", async () => {
     const storage = new MemoryStorage();
     const writer = createCache(storage);
@@ -321,7 +341,7 @@ describe("ReplicaCache", () => {
     expect(restored?.range).toBeNull();
   });
 
-  it("preserves workspace sorting timestamps across cache reopen", async () => {
+  it("preserves workspace sorting, hierarchy and comparison settings across cache reopen", async () => {
     const storage = new MemoryStorage();
     const writer = createCache(storage);
     const baseline = directory();
@@ -329,16 +349,33 @@ describe("ReplicaCache", () => {
       ...workspacePayload(),
       createdAt: "2026-07-18T08:00:00.000Z",
       lastUserMessageAt: "2026-07-18T09:00:00.000Z",
+      parentWorkspaceId: "workspace-parent",
+      diffComparison: { mode: "base", baseRef: "refs/heads/next" },
+      diffComparisonOverride: { mode: "base", baseRef: "refs/heads/next" },
+      projectDiffComparison: { mode: "uncommitted" },
+      diffComparisonError: "reference unavailable",
+      diffComparisonV2: { mode: "all", baseRef: "refs/remotes/team/next" },
+      diffComparisonOverrideV2: { mode: "all", baseRef: "refs/remotes/team/next" },
+      projectDiffComparisonV2: { mode: "base" },
+      diffComparisonResolvedBase: "refs/remotes/team/next",
+      diffComparisonBaseSource: "explicit",
+      diffComparisonWarning: "forge refresh failed",
     });
     baseline.workspaces.set(workspace.id, workspace);
+    const project = baseline.projects.get("project-1")!;
+    project.diffComparison = { mode: "base", baseRef: "refs/heads/next" };
+    project.diffComparisonV2 = { mode: "base" };
     commitDirectory(writer, SERVER_ID, baseline);
     await writer.flush();
     const reader = createCache(storage);
     expect((await reader.readDirectory(SERVER_ID)).workspaces.get(workspace.id)).toEqual(workspace);
     expect((await reader.readWorkspace(SERVER_ID, workspace.id))?.workspace).toEqual(workspace);
+    expect((await reader.readDirectory(SERVER_ID)).projects.get(project.projectId)).toEqual(
+      project,
+    );
   });
 
-  it.each(["createdAt", "lastUserMessageAt"])(
+  it.each(["createdAt", "lastUserMessageAt", "parentWorkspaceId", "forkFieldsVersion"])(
     "refetches workspaces cached without %s",
     async (field) => {
       const cached = await cacheWithoutBackgroundVisibility();
@@ -668,6 +705,96 @@ describe("ReplicaCache", () => {
     expect(await reading).toBeUndefined();
   });
 
+  it("does not spin or bypass a delayed retry after persistence fails", async () => {
+    vi.useFakeTimers();
+    const storage = new MemoryStorage();
+    const cache = createCache(storage);
+    commitDirectory(cache, SERVER_ID, directory());
+    await cache.flush();
+    storage.alwaysWriteFailure = new Error("disk busy");
+    deleteDirectory(cache, SERVER_ID);
+
+    const readsBefore = storage.reads.length;
+    const [first, second] = await Promise.all([
+      cache.readWorkspace(SERVER_ID, "workspace-1"),
+      cache.readWorkspace(SERVER_ID, "workspace-1"),
+    ]);
+
+    expect(first).toBeUndefined();
+    expect(second).toBeUndefined();
+    expect(storage.reads).toHaveLength(readsBefore);
+    expect(storage.writes).toBe(2);
+    expect(vi.getTimerCount()).toBe(1);
+  });
+
+  it("recovers a failed persistence attempt on its scheduled retry", async () => {
+    vi.useFakeTimers();
+    const storage = new MemoryStorage();
+    const cache = createCache(storage);
+    storage.nextWriteFailure = new Error("disk busy");
+    cache.commitTimeline(SERVER_ID, "agent-1", timeline("Retry me"));
+
+    await cache.flush();
+    expect(await cache.readTimeline(SERVER_ID, "agent-1")).toBeUndefined();
+    expect(storage.rows.size).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect((await cache.readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([
+      timelineItem("Retry me"),
+    ]);
+  });
+
+  it("retries after a transient store-open failure", async () => {
+    const storage = new MemoryStorage();
+    const cache = createCache(storage);
+    storage.nextOpenFailure = new Error("store unavailable");
+    cache.commitTimeline(SERVER_ID, "agent-1", timeline("Open again"));
+
+    await cache.flush();
+    expect(storage.rows.size).toBe(0);
+
+    await cache.flush();
+    expect((await cache.readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([
+      timelineItem("Open again"),
+    ]);
+  });
+
+  it("retries after a transient stored-index failure", async () => {
+    const storage = new MemoryStorage();
+    const cache = createCache(storage);
+    storage.nextReadAllFailure = new Error("index unavailable");
+    cache.commitTimeline(SERVER_ID, "agent-1", timeline("Index again"));
+
+    await cache.flush();
+    expect(storage.rows.size).toBe(0);
+
+    await cache.flush();
+    expect((await cache.readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([
+      timelineItem("Index again"),
+    ]);
+  });
+
+  it("logs only once during a continuous persistence failure", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const storage = new MemoryStorage();
+    const cache = createCache(storage);
+    storage.alwaysWriteFailure = new Error("disk busy");
+    cache.commitTimeline(SERVER_ID, "agent-1", timeline("Keep retrying"));
+
+    await cache.flush();
+    await cache.flush();
+    expect(warning).toHaveBeenCalledTimes(1);
+
+    storage.alwaysWriteFailure = null;
+    await cache.flush();
+    storage.alwaysWriteFailure = new Error("disk busy again");
+    cache.commitTimeline(SERVER_ID, "agent-1", timeline("Log again"));
+    await cache.flush();
+
+    expect(warning).toHaveBeenCalledTimes(2);
+  });
+
   it("discards a durable read when the host changes while it is in flight", async () => {
     const storage = new MemoryStorage();
     const cache = createCache(storage);
@@ -846,6 +973,7 @@ describe("ReplicaCache", () => {
       kind: "project",
       id: "project-1",
       payload: JSON.stringify({
+        forkFieldsVersion: 2,
         projectId: "project-1",
         projectDisplayName: "Paseo",
         projectCustomName: null,

@@ -321,6 +321,23 @@ function sortBranchSuggestions(
   });
 }
 
+export async function listComparisonBranches(
+  cwd: string,
+  query = "",
+  limit = 200,
+): Promise<string[]> {
+  await requireGitRepo(cwd);
+  const { stdout } = await runGitCommand(
+    ["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"],
+    { cwd, envOverlay: READ_ONLY_GIT_ENV },
+  );
+  const search = query.trim().toLowerCase();
+  return stdout
+    .split("\n")
+    .filter((ref) => ref && !ref.endsWith("/HEAD") && ref.toLowerCase().includes(search))
+    .slice(0, limit);
+}
+
 export async function listBranchSuggestions(
   cwd: string,
   options?: { query?: string; limit?: number },
@@ -666,7 +683,7 @@ const EMPTY_TREE_OBJECT_ID = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 function isUnbornHeadDiffError(error: unknown): boolean {
   return (
     error instanceof Error &&
-    error.message.includes("--name-status HEAD") &&
+    (error.message.includes("--name-status HEAD") || error.message.includes("--shortstat HEAD")) &&
     error.message.includes("ambiguous argument 'HEAD'")
   );
 }
@@ -921,6 +938,7 @@ export type CheckoutDiffResult =
   | { diff: ""; structured: []; diffTooLarge: true };
 
 export interface CheckoutDiffCompare {
+  includeWorkingTree?: boolean;
   mode: "uncommitted" | "base" | "all";
   baseRef?: string;
   ignoreWhitespace?: boolean;
@@ -2840,6 +2858,8 @@ async function countUntrackedAdditions(
   cwd: string,
   context?: CheckoutContext,
   throwOnGitError = false,
+  excludedPaths?: ReadonlySet<string>,
+  maxFiles = UNTRACKED_SHORTSTAT_MAX_FILES,
 ): Promise<number> {
   try {
     const { stdout } = await getRunGitCommand(context)(
@@ -2849,10 +2869,10 @@ async function countUntrackedAdditions(
         envOverlay: READ_ONLY_GIT_ENV,
       },
     );
-    const files = stdout.split("\0").filter(Boolean);
+    const files = stdout.split("\0").filter((file) => file && !excludedPaths?.has(file));
 
     let additions = 0;
-    for (const file of files.slice(0, UNTRACKED_SHORTSTAT_MAX_FILES)) {
+    for (const file of files.slice(0, maxFiles)) {
       const absolutePath = resolve(cwd, file);
       try {
         const metadata = await statFile(absolutePath);
@@ -3513,21 +3533,117 @@ async function resolveCheckoutDiffRefs(
   if (compare.mode === "uncommitted") {
     return { baseRef: "HEAD", includeUntracked: true };
   }
-  const { storedBaseRef, resolvedBaseRef } = await resolveBaseRefForCwd(cwd, context);
-  const baseRef = resolveOperationBaseRef({
-    storedBaseRef,
-    resolvedBaseRef,
-    requestedBaseRef: compare.baseRef,
-  });
+  const { resolvedBaseRef } = await resolveBaseRefForCwd(cwd, context);
+  const baseRef = compare.baseRef ?? resolvedBaseRef;
   if (!baseRef) {
     return null;
   }
   const bestBaseRef = await resolveBestComparisonBaseRef(cwd, baseRef);
+  const mergeBase = await tryResolveMergeBase(cwd, bestBaseRef);
+  if (!mergeBase) throw new Error(`No merge base with ${bestBaseRef}`);
   return {
-    baseRef: (await tryResolveMergeBase(cwd, bestBaseRef)) ?? bestBaseRef,
+    baseRef: mergeBase,
     targetRef: compare.mode === "base" ? "HEAD" : undefined,
     includeUntracked: compare.mode === "all",
   };
+}
+
+export interface ComparisonBaseResolution {
+  baseRef: string;
+  source: "explicit" | "pull_request" | "worktree" | "remote_head";
+  warning?: string;
+}
+
+/** Resolve a comparison base without changing the base used by Git operations. */
+// oxlint-disable-next-line complexity
+export async function resolveComparisonBase(input: {
+  cwd: string;
+  explicitBaseRef?: string;
+  pullRequest?: { url: string; baseRefName: string } | null;
+  forgeError?: string | null;
+  previousPullRequestBase?: string | null;
+  context?: CheckoutContext;
+}): Promise<ComparisonBaseResolution> {
+  const { cwd, context } = input;
+  const git = getRunGitCommand(context);
+  const read = async (args: string[], accepted = [0]) =>
+    git(args, { cwd, envOverlay: READ_ONLY_GIT_ENV, acceptExitCodes: accepted });
+  const finish = async (
+    baseRef: string,
+    source: ComparisonBaseResolution["source"],
+    warning?: string,
+  ): Promise<ComparisonBaseResolution> => {
+    if (!baseRef || baseRef.startsWith("-")) throw new Error("Invalid comparison base");
+    const exact = await resolveBestComparisonBaseRef(cwd, baseRef, context);
+    if (!(await tryResolveMergeBase(cwd, exact))) throw new Error(`No merge base with ${exact}`);
+    return { baseRef: exact, source, ...(warning ? { warning } : {}) };
+  };
+
+  if (input.explicitBaseRef) return finish(input.explicitBaseRef, "explicit");
+
+  const branchResult = await read(["symbolic-ref", "--quiet", "--short", "HEAD"], [0, 1]);
+  const branch = branchResult.exitCode === 0 ? branchResult.stdout.trim() : "";
+  const remoteResult = await read(["remote"]);
+  const remotes = remoteResult.stdout
+    .split("\n")
+    .map((remote) => remote.trim())
+    .filter(Boolean);
+  const configured = branch
+    ? await read(["config", "--get", `branch.${branch}.remote`], [0, 1])
+    : null;
+  const configuredRemote = configured?.exitCode === 0 ? configured.stdout.trim() : "";
+  // Git uses "." for a local tracking branch; it does not identify a remote.
+  const branchRemote = configuredRemote === "." ? "" : configuredRemote;
+
+  if (input.forgeError && input.previousPullRequestBase) {
+    return finish(input.previousPullRequestBase, "pull_request", input.forgeError);
+  }
+  if (!input.forgeError && input.pullRequest) {
+    let url: URL;
+    try {
+      url = new URL(input.pullRequest.url);
+    } catch {
+      throw new Error("Cannot identify the pull request repository");
+    }
+    const path = decodeURIComponent(url.pathname)
+      .replace(/\/(?:pull|pulls)\/\d+\/?$/, "")
+      .replace(/\/-\/merge_requests\/\d+\/?$/, "")
+      .replace(/^\/+|\/+$/g, "");
+    const matches: string[] = [];
+    for (const remote of remotes) {
+      const result = await read(["remote", "get-url", remote]);
+      const location = parseGitRemoteLocation(result.stdout.trim());
+      if (location?.host.toLowerCase() === url.hostname.toLowerCase() && location.path === path) {
+        matches.push(remote);
+      }
+    }
+    let remote: string | undefined;
+    if (matches.includes(branchRemote)) remote = branchRemote;
+    else if (matches.length === 1) remote = matches[0];
+    if (!remote) throw new Error("Cannot uniquely identify the pull request's base remote");
+    return finish(`refs/remotes/${remote}/${input.pullRequest.baseRefName}`, "pull_request");
+  }
+
+  const storedBaseRef = await getStoredBaseRefForCwd(cwd, context);
+  if (storedBaseRef) {
+    // Legacy worktree metadata stored a short local branch name, unlike newer exact refs.
+    const localRef = `refs/heads/${storedBaseRef}`;
+    const baseRef =
+      !isQualifiedBranchRef(storedBaseRef) && (await doesGitRefExist(cwd, localRef, context))
+        ? localRef
+        : storedBaseRef;
+    return finish(baseRef, "worktree", input.forgeError ?? undefined);
+  }
+
+  let remote: string | undefined;
+  if (branchRemote && remotes.includes(branchRemote)) remote = branchRemote;
+  else if (!branchRemote && remotes.length === 1) remote = remotes[0];
+  if (!remote) throw new Error("Cannot uniquely identify a remote for the comparison base");
+  const head = await read(["symbolic-ref", "--quiet", `refs/remotes/${remote}/HEAD`], [0, 1]);
+  if (head.exitCode !== 0 || !head.stdout.trim().startsWith(`refs/remotes/${remote}/`)) {
+    throw new Error(`Remote ${remote} has no known default branch`);
+  }
+  return finish(head.stdout.trim(), "remote_head", input.forgeError ?? undefined);
 }
 
 // Git's working-tree diff ignores files absent from the index, even when they
@@ -3570,10 +3686,68 @@ async function prepareAllChangesIndex(cwd: string, baseRef: string) {
       input: entries,
       envOverlay: { ...READ_ONLY_GIT_ENV, GIT_INDEX_FILE: indexFile },
     });
-    return { indexFile, cleanup: () => rm(directory, { recursive: true, force: true }) };
+    const restoredPaths = new Set(
+      entries
+        .split("\0")
+        .filter(Boolean)
+        .map((entry) => entry.slice(entry.indexOf("\t") + 1)),
+    );
+    return {
+      indexFile,
+      restoredPaths,
+      cleanup: () => rm(directory, { recursive: true, force: true }),
+    };
   } catch (error) {
     await rm(directory, { recursive: true, force: true });
     throw error;
+  }
+}
+
+export async function getComparisonShortstat(
+  cwd: string,
+  comparison: import("@getpaseo/protocol/messages").DiffComparison,
+): Promise<CheckoutShortstat> {
+  return getComparisonShortstatV2(
+    cwd,
+    comparison.mode === "base" ? { ...comparison, mode: "all" } : comparison,
+  );
+}
+
+export async function getComparisonShortstatV2(
+  cwd: string,
+  comparison: import("@getpaseo/protocol/messages").DiffComparisonV2,
+): Promise<CheckoutShortstat> {
+  const refs = await resolveCheckoutDiffRefs(cwd, comparison, undefined);
+  if (!refs) throw new Error("Comparison is unavailable");
+  const index = comparison.mode === "all" ? await prepareAllChangesIndex(cwd, refs.baseRef) : null;
+  let stdout: string;
+  try {
+    try {
+      ({ stdout } = await runGitCommand(
+        ["diff", "--shortstat", refs.baseRef, ...(refs.targetRef ? [refs.targetRef] : [])],
+        {
+          cwd,
+          envOverlay: {
+            ...READ_ONLY_GIT_ENV,
+            ...(index ? { GIT_INDEX_FILE: index.indexFile } : {}),
+          },
+        },
+      ));
+    } catch (error) {
+      if (comparison.mode !== "uncommitted" || !isUnbornHeadDiffError(error)) throw error;
+      ({ stdout } = await runGitCommand(["diff", "--shortstat", EMPTY_TREE_OBJECT_ID], {
+        cwd,
+        envOverlay: READ_ONLY_GIT_ENV,
+      }));
+    }
+    const tracked = parseCheckoutShortstat(stdout);
+    const untracked =
+      comparison.mode === "base"
+        ? 0
+        : await countUntrackedAdditions(cwd, undefined, true, index?.restoredPaths, Infinity);
+    return { additions: (tracked?.additions ?? 0) + untracked, deletions: tracked?.deletions ?? 0 };
+  } finally {
+    await index?.cleanup();
   }
 }
 
@@ -3583,6 +3757,10 @@ export async function getCheckoutDiff(
   context?: CheckoutContext,
   signal?: AbortSignal,
 ): Promise<CheckoutDiffResult> {
+  // COMPAT(workingTreeComparison): added in v0.11.0, remove after 2027-04-28 once old fork clients are unsupported.
+  if (compare.mode === "base" && compare.includeWorkingTree) {
+    compare = { ...compare, mode: "all", includeWorkingTree: undefined };
+  }
   cwd = await requireGitWorktreeRoot(cwd);
 
   const refsForDiff = await resolveCheckoutDiffRefs(cwd, compare, context);

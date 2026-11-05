@@ -928,6 +928,15 @@ interface ComposerProps {
   hasExternalContent?: boolean;
   /** When true, the composer can submit even with no text or attachments. */
   allowEmptySubmit?: boolean;
+  /** Replaces the send action while the text field is empty. */
+  emptySubmitAction?: {
+    label: string;
+    accessibilityLabel: string;
+    onSubmit: () => void | Promise<void>;
+    disabled?: boolean;
+    loading?: boolean;
+    testID?: string;
+  };
   /** Optional accessibility label for the primary submit button. */
   submitButtonAccessibilityLabel?: string;
   /** Optional testID for the primary submit button. */
@@ -1244,6 +1253,7 @@ function ComposerContentImpl({
   onClientSlashCommand,
   hasExternalContent = false,
   allowEmptySubmit = false,
+  emptySubmitAction,
   submitButtonAccessibilityLabel,
   submitButtonTestID,
   submitIcon = "arrow",
@@ -1300,7 +1310,6 @@ function ComposerContentImpl({
   const { settings: appSettings } = useAppSettings();
 
   const agentState = useSessionStore(useShallow(buildAgentStateSelector(serverId, agentId)));
-
   const queuedMessagesRaw = useSessionStore((state) =>
     state.sessions[serverId]?.queuedMessages?.get(agentId),
   );
@@ -1319,6 +1328,7 @@ function ComposerContentImpl({
     () => textSource.getSnapshot().trim().length > 0,
     () => textSource.getSnapshot().trim().length > 0,
   );
+  const isEmptySubmitAction = Boolean(emptySubmitAction) && !hasText;
   const setUserInput = onChangeText;
   const workspaceAttachments = useWorkspaceAttachmentsForScopes(attachmentScopeKeys);
   const {
@@ -1418,7 +1428,6 @@ function ComposerContentImpl({
     },
     [onChangeText],
   );
-
   const runClientSlashCommand = useCallback(
     (command: ClientSlashCommand): boolean => {
       if (command.execution !== "immediate" || !onClientSlashCommand) {
@@ -1714,6 +1723,12 @@ function ComposerContentImpl({
 
   const handleSubmit = useCallback(
     (payload: MessagePayload) => {
+      if (isEmptySubmitAction) {
+        if (!emptySubmitAction?.disabled && !emptySubmitAction?.loading) {
+          void emptySubmitAction?.onSubmit();
+        }
+        return;
+      }
       const outgoingAttachments = buildOutgoingAttachments(attachments);
       const clientSlashCommand = resolveClientSlashCommand({
         text: payload.text,
@@ -1738,6 +1753,8 @@ function ComposerContentImpl({
       attachments,
       blurOnSubmit,
       buildOutgoingAttachments,
+      emptySubmitAction,
+      isEmptySubmitAction,
       runClientSlashCommand,
       pluginClientSlashCommands,
       runPluginClientSlashCommand,
@@ -2223,7 +2240,7 @@ function ComposerContentImpl({
     [attachments, setSelectedAttachments, setGithubSearchQuery, setIsGithubPickerOpen],
   );
 
-  const leftContent = useMemo(
+  const agentControlsContent = useMemo(
     () =>
       renderLeftContent({
         agentControls,
@@ -2235,7 +2252,6 @@ function ComposerContentImpl({
       }),
     [agentControls, agentId, focusInput, isCompactLayout, mode.showAgentControls, serverId],
   );
-
   const handleAttachButtonRef = useCallback((node: View | null) => {
     attachButtonRef.current = node;
   }, []);
@@ -2249,6 +2265,13 @@ function ComposerContentImpl({
       }
     },
     [cursorPublication, cursor],
+  );
+
+  const handleUserInputChange = useCallback(
+    (nextValue: string) => {
+      setUserInput(nextValue);
+    },
+    [setUserInput],
   );
 
   const handleFocusChange = useCallback(
@@ -2386,8 +2409,11 @@ function ComposerContentImpl({
 
   const isSubmitLoadingVisible =
     isProcessing || isSubmitLoading || isUploadingFile || pendingNativeImagePastes > 0;
+  const isEmptySubmitActionLoading = isEmptySubmitAction && Boolean(emptySubmitAction?.loading);
   const isSubmitDisabled =
-    isSubmitLoadingVisible || (waitForForgeAutoAttachOnSubmit && isForgeResolving);
+    isSubmitLoadingVisible ||
+    (waitForForgeAutoAttachOnSubmit && isForgeResolving) ||
+    (isEmptySubmitAction && Boolean(emptySubmitAction?.disabled));
 
   // Disable drops while submitting/uploading: the submit path clears and restores attachments,
   // so a drop in that window would be lost or land on a locked draft. `disabled` hides the
@@ -2465,16 +2491,26 @@ function ComposerContentImpl({
                   editingSession={editingSession}
                   submissionError={sendErrorNode}
                   value={textSource.getSnapshot()}
-                  onChangeText={setUserInput}
+                  onChangeText={handleUserInputChange}
                   onSubmit={handleSubmit}
                   hasExternalContent={hasExternalContent}
-                  allowEmptySubmit={allowEmptySubmit}
-                  submitButtonAccessibilityLabel={submitButtonAccessibilityLabel}
-                  submitButtonTestID={submitButtonTestID}
+                  allowEmptySubmit={allowEmptySubmit || isEmptySubmitAction}
+                  submitButtonAccessibilityLabel={
+                    isEmptySubmitAction
+                      ? emptySubmitAction?.accessibilityLabel
+                      : submitButtonAccessibilityLabel
+                  }
+                  submitButtonTestID={
+                    isEmptySubmitAction
+                      ? (emptySubmitAction?.testID ?? submitButtonTestID)
+                      : submitButtonTestID
+                  }
                   submitIcon={submitIcon}
                   isSubmitDisabled={isSubmitDisabled}
-                  isSubmitLoading={isSubmitLoadingVisible}
-                  preserveHeightOnSubmit={submitBehavior === "preserve-and-lock"}
+                  isSubmitLoading={isSubmitLoadingVisible || isEmptySubmitActionLoading}
+                  preserveHeightOnSubmit={
+                    submitBehavior === "preserve-and-lock" || isEmptySubmitAction
+                  }
                   attachments={selectedAttachments}
                   cwd={cwd}
                   attachmentMenuItems={attachmentMenuItems}
@@ -2486,8 +2522,8 @@ function ComposerContentImpl({
                   placeholder={messagePlaceholder}
                   autoFocus={messageInputAutoFocus}
                   autoFocusKey={`${serverId}:${agentId}:${autoFocusKey ?? ""}`}
-                  disabled={isSubmitLoading}
-                  leftContent={leftContent}
+                  disabled={isSubmitLoading || isEmptySubmitActionLoading}
+                  leftContent={agentControlsContent}
                   beforeVoiceContent={beforeVoiceContent}
                   rightContent={rightContent}
                   activeActionContent={activeActionContent}
@@ -2507,7 +2543,7 @@ function ComposerContentImpl({
                   inputMode={inputMode}
                   readOnly={readOnly}
                   textReplacement={textReplacement}
-                  submitLabel={submitLabel}
+                  submitLabel={isEmptySubmitAction ? emptySubmitAction?.label : submitLabel}
                 />
               </RenderProfile>
               <Combobox
@@ -2705,6 +2741,7 @@ const ThemedPaperclip = withUnistyles(Paperclip);
 const ThemedImageIcon = withUnistyles(ImageIcon);
 const ThemedClipboardPaste = withUnistyles(ClipboardPaste);
 const ThemedFileText = withUnistyles(FileText);
+
 const iconForegroundMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const iconForegroundMutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const iconAccentForegroundMapping = (theme: Theme) => ({ color: theme.colors.accentForeground });

@@ -1,5 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -14,6 +21,106 @@ import {
   type WebSocketLike,
 } from "@getpaseo/client/internal/daemon-client";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
+
+test("imports external worktrees without setup, deduplicates, and preserves files across archive and restore", async () => {
+  const daemon = await createTestPaseoDaemon();
+  const { repoDir, tempRoot } = createGitRepoWithBranch();
+  const worktreePath = path.join(tempRoot, "external worktree");
+  const detachedPath = path.join(tempRoot, "detached worktree");
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.11.0",
+  });
+  try {
+    execFileSync("git", ["worktree", "add", worktreePath, "feature/existing-branch"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+    execFileSync("git", ["worktree", "add", "--detach", detachedPath], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+    // On Windows the temp directory can use an 8.3 alias while Git returns the long path.
+    const canonicalWorktreePath = realpathSync.native(worktreePath);
+    const canonicalDetachedPath = realpathSync.native(detachedPath);
+    writeFileSync(
+      path.join(worktreePath, "paseo.json"),
+      JSON.stringify({
+        worktree: { setup: "touch setup-must-not-run", teardown: "touch teardown-must-not-run" },
+      }),
+    );
+    writeFileSync(path.join(worktreePath, "keep.txt"), "local changes");
+    await client.connect();
+    const added = await client.addProject(repoDir);
+    expect(added.error).toBeNull();
+    const projectId = added.project!.projectId;
+    const listed = await client.listProjectWorktrees(projectId);
+    expect(listed.error).toBeNull();
+    expect(listed.worktrees).toHaveLength(2);
+    expect(listed.worktrees).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: canonicalWorktreePath,
+          branch: "feature/existing-branch",
+          workspaceId: null,
+          unavailable: false,
+        }),
+        expect.objectContaining({ path: canonicalDetachedPath, branch: null, workspaceId: null }),
+      ]),
+    );
+    expect((await client.importProjectWorktree(projectId, repoDir)).error).toBeTruthy();
+    const results = await Promise.all([
+      client.importProjectWorktree(projectId, worktreePath),
+      client.importProjectWorktree(projectId, canonicalWorktreePath),
+    ]);
+    expect(results[0].error).toBeNull();
+    expect(results[1]).toMatchObject({ error: null, workspaceId: results[0].workspaceId });
+    const workspaceId = results[0].workspaceId!;
+    const records = JSON.parse(
+      readFileSync(path.join(daemon.paseoHome, "projects", "workspaces.json"), "utf8"),
+    );
+    expect(
+      records.filter((record: { cwd: string }) => record.cwd === canonicalWorktreePath),
+    ).toHaveLength(1);
+    expect(
+      records.find((record: { workspaceId: string }) => record.workspaceId === workspaceId),
+    ).toMatchObject({ kind: "worktree", isPaseoOwnedWorktree: false, projectId });
+    expect(existsSync(path.join(worktreePath, "setup-must-not-run"))).toBe(false);
+    expect((await client.archiveWorkspace(workspaceId)).error).toBeNull();
+    expect(readFileSync(path.join(worktreePath, "keep.txt"), "utf8")).toBe("local changes");
+    expect(existsSync(path.join(worktreePath, "teardown-must-not-run"))).toBe(false);
+    expect(
+      (await client.listProjectWorktrees(projectId)).worktrees.find(
+        (row) => row.path === canonicalWorktreePath,
+      ),
+    ).toMatchObject({ workspaceId, archived: true });
+    expect(await client.importProjectWorktree(projectId, worktreePath)).toMatchObject({
+      workspaceId,
+      error: null,
+    });
+    expect(
+      (await client.listProjectWorktrees(projectId)).worktrees.find(
+        (row) => row.path === canonicalWorktreePath,
+      ),
+    ).toMatchObject({ workspaceId, archived: false });
+    expect(existsSync(path.join(worktreePath, "setup-must-not-run"))).toBe(false);
+    expect((await client.importProjectWorktree(projectId, detachedPath)).error).toBeNull();
+    await rm(detachedPath, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    expect(
+      (await client.listProjectWorktrees(projectId)).worktrees.find(
+        (row) => row.path === canonicalDetachedPath,
+      )?.unavailable,
+    ).toBe(true);
+    expect((await client.importProjectWorktree(projectId, detachedPath)).error).toBeTruthy();
+    mkdirSync(detachedPath);
+    execFileSync("git", ["init", "-b", "main", detachedPath], { stdio: "pipe" });
+    expect((await client.importProjectWorktree(projectId, detachedPath)).error).toBeTruthy();
+  } finally {
+    await client.close().catch(() => undefined);
+    await daemon.close();
+    await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+}, 180000);
 
 // The reshaped workspace.create.request forwards its worktree `source`
 // (action/refName/branchName/githubPrNumber/worktreeSlug) into createWorktreeCore.
@@ -444,14 +551,14 @@ function commitFile(cwd: string, name: string, content: string): void {
 }
 
 test.each([
-  ["refs/heads/main", "refs/remotes/origin/main"],
-  ["refs/remotes/origin/main", "refs/heads/main"],
-])(
+  ["refs/heads/main", "refs/remotes/origin/main", ["feature.txt", "local.txt"]],
+  ["refs/remotes/origin/main", "refs/heads/main", ["feature.txt", "origin.txt"]],
+] as const)(
   "restore preserves %s through comparison, update and local merge",
-  async (baseRef, conflictingRef) => {
+  async (baseRef, alternateRef, alternateFiles) => {
     const workspace = await createRestorableWorkspace(baseRef);
     await archiveAndRestoreWorkspace(workspace);
-    await expectRestoredComparison(workspace, conflictingRef);
+    await expectRestoredComparison(workspace, alternateRef, alternateFiles);
     await updateFromOriginalBase(workspace);
     await expectMergeIntoLocalBase(workspace);
   },
@@ -461,7 +568,7 @@ test.each([
 test("restore preserves upstream comparison and update but rejects a missing local merge target", async () => {
   const workspace = await createRestorableWorkspace("refs/remotes/upstream/main");
   await archiveAndRestoreWorkspace(workspace);
-  await expectRestoredComparison(workspace, "refs/heads/main");
+  await expectRestoredComparison(workspace, "refs/heads/main", ["feature.txt", "upstream.txt"]);
   await updateFromOriginalBase(workspace);
   await expectMissingLocalMergeTarget(workspace);
 }, 180000);
@@ -494,7 +601,7 @@ async function createRestorableWorkspace(baseRef: string) {
   const head = runGit(cwd, "rev-parse", "HEAD");
   await client.checkoutRefresh(cwd);
   expect(await client.getCheckoutStatus(cwd)).toMatchObject({ isPaseoOwnedWorktree: true });
-  const before = await client.getCheckoutDiff(cwd, { mode: "base", baseRef: "main" });
+  const before = await client.getCheckoutDiff(cwd, { mode: "base", baseRef });
   expect(before.error).toBeNull();
   expect(before.files.map((file) => file.path)).toEqual(["feature.txt"]);
   expect((await client.getCheckoutStatus(cwd)).baseRef).toBe("main");
@@ -525,13 +632,14 @@ async function archiveAndRestoreWorkspace({ client, workspace, cwd }: Restorable
 
 async function expectRestoredComparison(
   { client, daemon, workspace, cwd, head, before, baseRef }: RestorableWorkspace,
-  conflictingRef: string,
+  alternateRef: string,
+  alternateFiles: readonly string[],
 ) {
-  const restoredStatus = await client.getCheckoutStatus(cwd);
+  await client.getCheckoutStatus(cwd);
   await client.checkoutRefresh(cwd);
   const after = await client.getCheckoutDiff(cwd, {
     mode: "base",
-    baseRef: restoredStatus.baseRef ?? undefined,
+    baseRef,
   });
   expect(after.error).toBeNull();
   expect(after.files).toEqual(before.files);
@@ -554,9 +662,11 @@ async function expectRestoredComparison(
     records.find((record: { workspaceId: string }) => record.workspaceId === workspace.id)
       .baseBranch,
   ).toBe(baseRef);
-  expect(
-    (await client.getCheckoutDiff(cwd, { mode: "base", baseRef: conflictingRef })).error?.message,
-  ).toContain("Base ref mismatch");
+  // Viewing another comparison must not replace the workspace's creation base.
+  const alternate = await client.getCheckoutDiff(cwd, { mode: "base", baseRef: alternateRef });
+  expect(alternate.error).toBeNull();
+  expect(alternate.files.map((file) => file.path)).toEqual(alternateFiles);
+  expect((await client.listCheckoutCommits(cwd)).baseRef).toBe(baseRef);
 }
 
 async function updateFromOriginalBase({ client, repoDir, cwd, baseRef }: RestorableWorkspace) {
@@ -574,9 +684,7 @@ async function updateFromOriginalBase({ client, repoDir, cwd, baseRef }: Restora
   expect(readFileSync(path.join(cwd, "base-update.txt"), "utf8")).toBe(`${baseRef}\n`);
   expect(runGit(cwd, "merge-base", baseUpdate, "HEAD")).toBe(baseUpdate);
   expect(
-    (await client.getCheckoutDiff(cwd, { mode: "base", baseRef: "main" })).files.map(
-      (file) => file.path,
-    ),
+    (await client.getCheckoutDiff(cwd, { mode: "base", baseRef })).files.map((file) => file.path),
   ).toEqual(["feature.txt"]);
 }
 

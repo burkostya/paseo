@@ -2,6 +2,38 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ru: TranslationResources = {
+  worktreeImport: {
+    title: "Добавить существующие worktree…",
+    chooseHost: "Выберите хост",
+    updateHost: "Обновите хост для импорта worktree.",
+    preserveFiles: "Внешние worktree остаются на диске при архивации workspace.",
+    refresh: "Обновить",
+    empty: "Связанные worktree не найдены.",
+    detached: "Detached HEAD · {{commit}}",
+    unavailable: "Недоступен на диске",
+    restore: "В архиве · выберите для восстановления",
+    open: "Открыть",
+    add: "Добавить выбранные ({{count}})",
+  },
+  diffComparison: {
+    automatic: "Автоматически",
+    sourcePullRequest: "Pull request",
+    sourceWorktree: "Worktree",
+    sourceRemoteHead: "Основная ветка remote",
+    sourceExplicit: "Выбранная ветка",
+    title: "Сравнение изменений",
+    uncommitted: "Незакоммиченные изменения",
+    branch: "Относительно {{branch}}",
+    inherit: "Как в проекте",
+    chooseBranch: "Относительно ветки…",
+    search: "Поиск веток",
+    saving: "Сохранение…",
+    saved: "Сохранено",
+    retry: "Повторить",
+    updateHost: "Обновите хост, чтобы выбрать сравнение.",
+    unavailable: "Сравнение недоступно",
+    resolveError: "Выберите другую ветку ниже или выполните git fetch для обновления remote refs.",
+  },
   paneFind: {
     connectionFailure:
       "Не удалось выполнить поиск в чате. Проверьте подключение к хосту и повторите попытку.",
@@ -252,9 +284,19 @@ export const ru: TranslationResources = {
       implement: "Реализовать",
       question: "Как бы вы хотели продолжить?",
       proposedPlan: "Предлагаемый план",
+      approved: "Одобрено",
+      rejected: "Отклонено",
+      skipped: "Пропущено",
+      planDisabledAfterMessages:
+        "Этот план больше нельзя принять, потому что после него диалог продолжился.",
     },
   },
   agentPanel: {
+    continue: {
+      label: "Продолжить",
+      accessibilityLabel: "Продолжить диалог после ошибки",
+      message: "Продолжить",
+    },
     states: {
       notFound: "Агент не найден",
       failedToLoad: "Не удалось загрузить агента",
@@ -336,6 +378,7 @@ export const ru: TranslationResources = {
     actions: {
       copyCode: "Скопировать код",
       copyTurn: "Скопировать ответ",
+      copyPlan: "Скопировать план",
       copyMessage: "Копировать сообщение",
       forkMenu: "Форкнуть чат отсюда",
       forkInNewTab: "Создать форк в новой вкладке",
@@ -466,6 +509,8 @@ export const ru: TranslationResources = {
         restoringAction: "Восстановление...",
         unavailableTitle: "Рабочая область недоступна",
         checkFailedTitle: "Не удалось проверить рабочее пространство",
+        partialFailure:
+          "Не удалось восстановить некоторые вложенные рабочие пространства ({{count}}).",
       },
     },
     hoverCard: {
@@ -983,6 +1028,15 @@ export const ru: TranslationResources = {
         all: "Все изменения",
         uncommitted: "Незафиксированные изменения",
         committed: "Зафиксированные изменения",
+        basePicker: {
+          trigger: "относительно {{baseRef}}",
+          accessibility: "Сравнить зафиксированные изменения с {{baseRef}}",
+          placeholder: "Выберите базовую ветку",
+          searchPlaceholder: "Фильтр веток...",
+          empty: "Ветки не найдены",
+          title: "Базовая ветка",
+          default: "По умолчанию",
+        },
         branchUnknown: "Неизвестная ветка",
         base: "базовая ветка",
         newFile: "Новый",
@@ -1336,11 +1390,27 @@ export const ru: TranslationResources = {
         archiving: "Архивирование...",
         hiding: "Скрытие...",
       },
+      hierarchy: {
+        title: "Иерархия рабочих пространств",
+        moveTo: "Переместить в…",
+        root: "Корень проекта",
+        search: "Поиск родительских рабочих пространств...",
+        noCandidates: "Нет подходящих родительских рабочих пространств",
+        hostUpgrade: "Обновите хост, чтобы управлять иерархией.",
+        failed: "Не удалось обновить иерархию рабочих пространств",
+        invalidDrop: "Это рабочее пространство нельзя разместить здесь",
+        collapse: "Свернуть рабочее пространство",
+        expand: "Развернуть рабочее пространство",
+      },
       confirmations: {
         hideTitle: "Скрыть рабочее пространство?",
         hideMessage:
           "Скрыть «{{workspaceName}}» на боковой панели?\n\nФайлы на диске не будут изменены.",
         hideConfirm: "Скрыть",
+        archiveSubtreeTitle: "Архивировать дерево рабочих пространств?",
+        archiveSubtreeMessage:
+          "Архивировать «{{workspaceName}}» и дочерние рабочие пространства ({{descendantCount}})?",
+        archiveSubtreeConfirm: "Архивировать всё",
         cancel: "Отмена",
       },
       rename: {
@@ -1355,6 +1425,7 @@ export const ru: TranslationResources = {
         hostDisconnected: "Хост не подключён",
         hideFailed: "Не удалось скрыть рабочее пространство",
         archiveFailed: "Не удалось архивировать рабочее пространство",
+        archivePartial: "Не удалось архивировать рабочих пространств: {{failedCount}}",
       },
     },
   },
@@ -2904,6 +2975,7 @@ export const ru: TranslationResources = {
         sectionTitle: "Профили агентов",
         unavailable: "Подключитесь к этому хосту, чтобы управлять профилями агентов",
         unsupported: "На этом хосте запущен демон, который пока не поддерживает профили агентов",
+        identityUnsupported: "Обновите хост, чтобы отображать выбранный профиль агента.",
         emptyState:
           "Пока нет профилей. Добавьте один, чтобы запускать агентов с сохранённым провайдером и моделью.",
         addProfileTitle: "Добавить профиль агента",

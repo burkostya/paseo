@@ -20,6 +20,7 @@ import {
   type SidebarShortcutSection,
 } from "@/utils/sidebar-shortcuts";
 import { statusWorkspaceGroups, type SidebarWorkspaceGroup } from "./sidebar-labels";
+import { buildWorkspaceTreeRows } from "./workspace-hierarchy";
 
 export interface SidebarProjection {
   pinnedGroups: PinnedSidebarGroups;
@@ -41,12 +42,15 @@ export interface SidebarProjectionInput {
   pinnedKeys: PinnedSidebarKeys;
   pinnedWorkspaceOrder: string[];
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
+  allWorkspaceEntriesByKey?: ReadonlyMap<string, SidebarWorkspaceEntry>;
   projectNamesByViewKey: Map<string, string>;
   groupMode: SidebarGroupMode;
   pinnedCollapsed: boolean;
   collapsedProjectKeys: ReadonlySet<string>;
   collapsedWorkspaceGroupKeys: ReadonlySet<string>;
   t: TFunction;
+  collapsedWorkspaceKeys?: ReadonlySet<string>;
+  shortcutLimit?: number;
 }
 
 export function buildSidebarProjection(input: SidebarProjectionInput): SidebarProjection {
@@ -70,10 +74,18 @@ export function buildSidebarProjection(input: SidebarProjectionInput): SidebarPr
   }
   if (input.groupMode === "project") {
     sections.push(
-      ...pinnedGroups.unpinnedProjects.map((project) => ({
-        workspaces: project.workspaces,
-        collapsed: input.collapsedProjectKeys.has(project.viewKey),
-      })),
+      ...pinnedGroups.unpinnedProjects.map((project) => {
+        const hierarchyEntries = input.allWorkspaceEntriesByKey ?? input.workspaceEntriesByKey;
+        const rows = buildWorkspaceTreeRows({
+          workspaces: project.workspaces,
+          workspaceEntriesByKey: hierarchyEntries,
+          collapsedKeys: input.collapsedWorkspaceKeys,
+        });
+        return {
+          workspaces: rows.map((row) => row.workspace),
+          collapsed: input.collapsedProjectKeys.has(project.viewKey),
+        };
+      }),
     );
   } else {
     sections.push(
@@ -88,7 +100,7 @@ export function buildSidebarProjection(input: SidebarProjectionInput): SidebarPr
     pinnedGroups,
     workspaceGroups,
     projectIconTargets: resolveSidebarProjectIconTargets(input.projects),
-    shortcutModel: buildSidebarShortcutSections({ sections }),
+    shortcutModel: buildSidebarShortcutSections({ sections, shortcutLimit: input.shortcutLimit }),
   };
 }
 

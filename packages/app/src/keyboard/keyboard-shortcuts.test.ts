@@ -456,6 +456,16 @@ describe("keyboard-shortcuts", () => {
       context: { isMac: true, isDesktop: true },
     },
     {
+      name: "does not capture Ctrl+Tab in a regular browser",
+      event: { key: "Tab", code: "Tab", ctrlKey: true },
+      context: { isDesktop: false },
+    },
+    {
+      name: "does not switch recent workspaces while command center is open",
+      event: { key: "Tab", code: "Tab", ctrlKey: true },
+      context: { isDesktop: true, commandCenterOpen: true, focusScope: "command-center" },
+    },
+    {
       name: "does not close tab with Ctrl+W on non-mac desktop when terminal is focused",
       event: { key: "w", code: "KeyW", ctrlKey: true },
       context: { isMac: false, isDesktop: true, focusScope: "terminal" },

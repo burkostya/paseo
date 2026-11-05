@@ -2,6 +2,21 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const es: TranslationResources = {
+  worktreeImport: {
+    title: "Añadir worktrees existentes…",
+    chooseHost: "Selecciona un host",
+    updateHost: "Actualiza el host para importar worktrees.",
+    preserveFiles:
+      "Los worktrees externos permanecen en el disco al archivar sus espacios de trabajo.",
+    refresh: "Actualizar",
+    empty: "No se encontraron worktrees vinculados.",
+    detached: "HEAD separado · {{commit}}",
+    unavailable: "No disponible en el disco",
+    restore: "Archivado · selecciona para restaurar",
+    open: "Abrir",
+    add: "Añadir seleccionados ({{count}})",
+  },
+  diffComparison: en.diffComparison,
   paneFind: {
     connectionFailure:
       "No se pudo buscar en este chat. Comprueba la conexión con el host y vuelve a intentarlo.",
@@ -252,9 +267,19 @@ export const es: TranslationResources = {
       implement: "Implementar",
       question: "¿Cómo le gustaría proceder?",
       proposedPlan: "Plan propuesto",
+      approved: "Aprobado",
+      rejected: "Rechazado",
+      skipped: "Omitido",
+      planDisabledAfterMessages:
+        "Este plan ya no se puede aprobar porque la conversación continuó después.",
     },
   },
   agentPanel: {
+    continue: {
+      label: "Continuar",
+      accessibilityLabel: "Continuar la conversación después del error",
+      message: "Continuar",
+    },
     states: {
       notFound: "Agentno encontrado",
       failedToLoad: "No se pudo cargar el agente",
@@ -337,6 +362,7 @@ export const es: TranslationResources = {
     actions: {
       copyCode: "Copiar código",
       copyTurn: "Copiar turno",
+      copyPlan: "Copiar plan",
       copyMessage: "Copiar mensaje",
       forkMenu: "Bifurcar mensaje",
       forkInNewTab: "Bifurcar en una pestaña nueva",
@@ -467,6 +493,8 @@ export const es: TranslationResources = {
         restoringAction: "Restaurando...",
         unavailableTitle: "Espacio de trabajo no disponible",
         checkFailedTitle: "No se pudo comprobar el espacio de trabajo",
+        partialFailure:
+          "No se pudieron restaurar algunos espacios de trabajo anidados ({{count}}).",
       },
     },
     hoverCard: {
@@ -999,6 +1027,15 @@ export const es: TranslationResources = {
         all: "Todos los cambios",
         uncommitted: "No comprometido",
         committed: "Comprometido",
+        basePicker: {
+          trigger: "frente a {{baseRef}}",
+          accessibility: "Comparar cambios confirmados con {{baseRef}}",
+          placeholder: "Seleccionar rama base",
+          searchPlaceholder: "Filtrar ramas...",
+          empty: "No se encontraron ramas",
+          title: "Rama base",
+          default: "Predeterminada",
+        },
         branchUnknown: "Desconocido",
         base: "base",
         newFile: "Nuevo",
@@ -1354,11 +1391,27 @@ export const es: TranslationResources = {
         archiving: "Archivando...",
         hiding: "Ocultación...",
       },
+      hierarchy: {
+        title: "Jerarquía de espacios de trabajo",
+        moveTo: "Mover a…",
+        root: "Raíz del proyecto",
+        search: "Buscar espacios de trabajo principales...",
+        noCandidates: "No hay espacios de trabajo principales elegibles",
+        hostUpgrade: "Actualiza el host para gestionar la jerarquía.",
+        failed: "No se pudo actualizar la jerarquía",
+        invalidDrop: "Ese espacio de trabajo no se puede colocar aquí",
+        collapse: "Contraer espacio de trabajo",
+        expand: "Expandir espacio de trabajo",
+      },
       confirmations: {
         hideTitle: "¿Ocultar espacio de trabajo?",
         hideMessage:
           '¿Ocultar "{{workspaceName}}" de la barra lateral?\n\nLos archivos en el disco no se cambiarán.',
         hideConfirm: "Esconder",
+        archiveSubtreeTitle: "¿Archivar el árbol de espacios de trabajo?",
+        archiveSubtreeMessage:
+          '¿Archivar "{{workspaceName}}" y {{descendantCount}} espacios de trabajo descendientes?',
+        archiveSubtreeConfirm: "Archivar todo",
         cancel: "Cancelar",
       },
       rename: {
@@ -1373,6 +1426,7 @@ export const es: TranslationResources = {
         hostDisconnected: "Hostno está conectado",
         hideFailed: "No se pudo ocultar el espacio de trabajo",
         archiveFailed: "No se pudo archivar el espacio de trabajo",
+        archivePartial: "No se pudieron archivar {{failedCount}} espacios de trabajo",
       },
     },
   },
@@ -2911,6 +2965,7 @@ export const es: TranslationResources = {
         sectionTitle: "Perfiles de agente",
         unavailable: "Conéctese a este host para administrar perfiles de agente",
         unsupported: "Este host ejecuta un daemon que aún no admite perfiles de agente",
+        identityUnsupported: "Actualice este host para mostrar el perfil de agente seleccionado.",
         emptyState:
           "Aún no hay perfiles. Agregue uno para iniciar agentes con un proveedor y un modelo guardados.",
         addProfileTitle: "Agregar perfil de agente",

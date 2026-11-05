@@ -2,6 +2,20 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ar: TranslationResources = {
+  worktreeImport: {
+    title: "إضافة أشجار عمل موجودة…",
+    chooseHost: "اختر مضيفًا",
+    updateHost: "حدّث المضيف لاستيراد أشجار العمل.",
+    preserveFiles: "تبقى أشجار العمل الخارجية على القرص عند أرشفة مساحات عملها.",
+    refresh: "تحديث",
+    empty: "لم يتم العثور على أشجار عمل مرتبطة.",
+    detached: "HEAD منفصل · {{commit}}",
+    unavailable: "غير متاح على القرص",
+    restore: "مؤرشف · حدد للاستعادة",
+    open: "فتح",
+    add: "إضافة المحدد ({{count}})",
+  },
+  diffComparison: en.diffComparison,
   paneFind: {
     connectionFailure: "تعذر البحث في هذه المحادثة. تحقق من الاتصال بالمضيف وأعد المحاولة.",
     historyChangedFailure: "تغيّرت المحادثة أثناء البحث. أعد البحث.",
@@ -250,9 +264,19 @@ export const ar: TranslationResources = {
       implement: "ينفذ",
       question: "كيف تريد المتابعة؟",
       proposedPlan: "الخطة المقترحة",
+      approved: "موافقة",
+      rejected: "مرفوض",
+      skipped: "تم التخطي",
+      planDisabledAfterMessages:
+        "لم يعد من الممكن الموافقة على هذه الخطة لأن المحادثة استمرت بعدها.",
     },
   },
   agentPanel: {
+    continue: {
+      label: "متابعة",
+      accessibilityLabel: "متابعة المحادثة بعد الخطأ",
+      message: "متابعة",
+    },
     states: {
       notFound: "لم يتم العثور على Agent",
       failedToLoad: "فشل تحميل الوكيل",
@@ -332,6 +356,7 @@ export const ar: TranslationResources = {
     actions: {
       copyCode: "نسخ الرمز",
       copyTurn: "نسخ بدوره",
+      copyPlan: "نسخ الخطة",
       copyMessage: "انسخ الرسالة",
       forkMenu: "تفريع الرسالة",
       forkInNewTab: "تفريع في تبويب جديد",
@@ -461,6 +486,7 @@ export const ar: TranslationResources = {
         restoringAction: "جارٍ الاستعادة...",
         unavailableTitle: "مساحة العمل غير متاحة",
         checkFailedTitle: "تعذر التحقق من مساحة العمل",
+        partialFailure: "تعذر استعادة بعض مساحات العمل المتداخلة ({{count}}).",
       },
     },
     hoverCard: {
@@ -966,6 +992,15 @@ export const ar: TranslationResources = {
         all: "كل التغييرات",
         uncommitted: "غير ملتزم",
         committed: "ملتزم",
+        basePicker: {
+          trigger: "مقابل {{baseRef}}",
+          accessibility: "مقارنة التغييرات الملتزم بها مع {{baseRef}}",
+          placeholder: "اختر الفرع الأساسي",
+          searchPlaceholder: "تصفية الفروع...",
+          empty: "لم يتم العثور على فروع",
+          title: "الفرع الأساسي",
+          default: "الافتراضي",
+        },
         branchUnknown: "مجهول",
         base: "قاعدة",
         newFile: "جديد",
@@ -1318,11 +1353,27 @@ export const ar: TranslationResources = {
         archiving: "أرشفة...",
         hiding: "إخفاء...",
       },
+      hierarchy: {
+        title: "تسلسل مساحات العمل",
+        moveTo: "نقل إلى…",
+        root: "جذر المشروع",
+        search: "البحث عن مساحات العمل الأصلية...",
+        noCandidates: "لا توجد مساحات عمل أصل مؤهلة",
+        hostUpgrade: "حدّث المضيف لإدارة تسلسل مساحات العمل.",
+        failed: "تعذر تحديث تسلسل مساحات العمل",
+        invalidDrop: "لا يمكن وضع مساحة العمل هذه هنا",
+        collapse: "طي مساحة العمل",
+        expand: "توسيع مساحة العمل",
+      },
       confirmations: {
         hideTitle: "إخفاء مساحة العمل؟",
         hideMessage:
           'إخفاء "{{workspaceName}}" من الشريط الجانبي؟\n\n لن يتم تغيير الملفات الموجودة على القرص.',
         hideConfirm: "يخفي",
+        archiveSubtreeTitle: "أرشفة شجرة مساحات العمل؟",
+        archiveSubtreeMessage:
+          'أرشفة "{{workspaceName}}" و{{descendantCount}} من مساحات العمل التابعة؟',
+        archiveSubtreeConfirm: "أرشفة الكل",
         cancel: "يلغي",
       },
       rename: {
@@ -1337,6 +1388,7 @@ export const ar: TranslationResources = {
         hostDisconnected: "Host غير متصل",
         hideFailed: "فشل في إخفاء مساحة العمل",
         archiveFailed: "فشل في أرشفة مساحة العمل",
+        archivePartial: "تعذر أرشفة {{failedCount}} من مساحات العمل",
       },
     },
   },
@@ -2887,6 +2939,7 @@ export const ar: TranslationResources = {
         sectionTitle: "ملفات تعريف الوكيل",
         unavailable: "اتصل بهذا المضيف لإدارة ملفات تعريف الوكيل",
         unsupported: "يشغّل هذا المضيف نسخة Daemon لا تدعم ملفات تعريف الوكيل بعد",
+        identityUnsupported: "حدّث هذا المضيف لإظهار ملف تعريف الوكيل المحدد.",
         emptyState: "لا توجد ملفات تعريف بعد. أضف واحدًا لبدء الوكلاء من مزود ونموذج محفوظين.",
         addProfileTitle: "إضافة ملف تعريف وكيل",
         newProfile: "ملف تعريف جديد",

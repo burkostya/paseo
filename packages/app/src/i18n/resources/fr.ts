@@ -2,6 +2,21 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
+  worktreeImport: {
+    title: "Ajouter des worktrees existants…",
+    chooseHost: "Choisissez un hôte",
+    updateHost: "Mettez à jour l’hôte pour importer des worktrees.",
+    preserveFiles:
+      "Les worktrees externes restent sur le disque lorsque vous archivez leurs espaces de travail.",
+    refresh: "Actualiser",
+    empty: "Aucun worktree lié trouvé.",
+    detached: "HEAD détachée · {{commit}}",
+    unavailable: "Indisponible sur le disque",
+    restore: "Archivé · sélectionner pour restaurer",
+    open: "Ouvrir",
+    add: "Ajouter la sélection ({{count}})",
+  },
+  diffComparison: en.diffComparison,
   paneFind: {
     connectionFailure:
       "Impossible de rechercher dans cette conversation. Vérifiez la connexion à l’hôte et réessayez.",
@@ -253,9 +268,19 @@ export const fr: TranslationResources = {
       implement: "Implémenter",
       question: "Comment souhaitez-vous procéder ?",
       proposedPlan: "Plan proposé",
+      approved: "Approuvé",
+      rejected: "Rejeté",
+      skipped: "Ignoré",
+      planDisabledAfterMessages:
+        "Ce plan ne peut plus être approuvé, car la conversation a continué après lui.",
     },
   },
   agentPanel: {
+    continue: {
+      label: "Continuer",
+      accessibilityLabel: "Continuer la conversation après l’erreur",
+      message: "Continuer",
+    },
     states: {
       notFound: "Agent introuvable",
       failedToLoad: "Impossible de charger l’agent",
@@ -337,6 +362,7 @@ export const fr: TranslationResources = {
     actions: {
       copyCode: "Copier le code",
       copyTurn: "Copier l’échange",
+      copyPlan: "Copier le plan",
       copyMessage: "Copier le message",
       forkMenu: "Forker la conversation à partir d’ici",
       forkInNewTab: "Forker dans un nouvel onglet",
@@ -466,6 +492,8 @@ export const fr: TranslationResources = {
         restoringAction: "Restauration…",
         unavailableTitle: "Espace de travail indisponible",
         checkFailedTitle: "Impossible de vérifier l’espace de travail",
+        partialFailure:
+          "Certains espaces de travail imbriqués n'ont pas pu être restaurés ({{count}}).",
       },
     },
     hoverCard: {
@@ -992,6 +1020,15 @@ export const fr: TranslationResources = {
         all: "Toutes les modifications",
         uncommitted: "Non commité",
         committed: "Commité",
+        basePicker: {
+          trigger: "par rapport à {{baseRef}}",
+          accessibility: "Comparer les modifications validées à {{baseRef}}",
+          placeholder: "Sélectionner la branche de base",
+          searchPlaceholder: "Filtrer les branches...",
+          empty: "Aucune branche trouvée",
+          title: "Branche de base",
+          default: "Par défaut",
+        },
         branchUnknown: "Inconnue",
         base: "base",
         newFile: "Nouveau",
@@ -1348,11 +1385,27 @@ export const fr: TranslationResources = {
         archiving: "Archivage…",
         hiding: "Masquage…",
       },
+      hierarchy: {
+        title: "Hiérarchie des espaces de travail",
+        moveTo: "Déplacer vers…",
+        root: "Racine du projet",
+        search: "Rechercher des espaces parents...",
+        noCandidates: "Aucun espace parent éligible",
+        hostUpgrade: "Mettez l’hôte à jour pour gérer la hiérarchie.",
+        failed: "Impossible de mettre à jour la hiérarchie",
+        invalidDrop: "Cet espace de travail ne peut pas être placé ici",
+        collapse: "Réduire l’espace de travail",
+        expand: "Développer l’espace de travail",
+      },
       confirmations: {
         hideTitle: "Masquer l’espace de travail ?",
         hideMessage:
           "Masquer « {{workspaceName}} » de la barre latérale ?\n\nLes fichiers sur le disque ne seront pas modifiés.",
         hideConfirm: "Masquer",
+        archiveSubtreeTitle: "Archiver l’arbre d’espaces de travail?",
+        archiveSubtreeMessage:
+          "Archiver «{{workspaceName}}» et {{descendantCount}} espaces descendants?",
+        archiveSubtreeConfirm: "Tout archiver",
         cancel: "Annuler",
       },
       rename: {
@@ -1367,6 +1420,7 @@ export const fr: TranslationResources = {
         hostDisconnected: "L’hôte n’est pas connecté",
         hideFailed: "Impossible de masquer l’espace de travail",
         archiveFailed: "Impossible d’archiver l’espace de travail",
+        archivePartial: "Impossible d’archiver {{failedCount}} espace(s) de travail",
       },
     },
   },
@@ -2916,6 +2970,7 @@ export const fr: TranslationResources = {
         sectionTitle: "Profils d’agent",
         unavailable: "Connectez-vous à cet hôte pour gérer les profils d’agent",
         unsupported: "Le daemon de cet hôte ne prend pas encore en charge les profils d’agent",
+        identityUnsupported: "Mettez à jour cet hôte pour afficher le profil d’agent sélectionné.",
         emptyState:
           "Aucun profil pour le moment. Ajoutez-en un pour démarrer des agents avec un fournisseur et un modèle enregistrés.",
         addProfileTitle: "Ajouter un profil d’agent",

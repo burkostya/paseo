@@ -61,6 +61,7 @@ export function projectAgentSnapshot(agent: Agent): AgentSnapshotPayload {
   return {
     id: agent.id,
     provider: agent.provider,
+    agentProfileId: agent.agentProfileId ?? null,
     cwd: agent.cwd,
     ...(agent.workspaceId ? { workspaceId: agent.workspaceId } : {}),
     model: agent.model,
@@ -109,6 +110,7 @@ export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId:
     serverId,
     id: snapshot.id,
     provider: snapshot.provider,
+    agentProfileId: snapshot.agentProfileId ?? null,
     status: snapshot.status,
     turn,
     createdAt,

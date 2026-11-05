@@ -88,10 +88,10 @@ export async function bootstrapWorkspaceRegistries(options: {
     return;
   }
 
-  const existingWorkspaceIdsByCwd = new Map(
+  const existingWorkspacesByCwd = new Map(
     (await options.workspaceRegistry.list()).map((workspace) => [
       path.resolve(workspace.cwd),
-      workspace.workspaceId,
+      workspace,
     ]),
   );
   const records = await options.agentStorage.list();
@@ -134,6 +134,7 @@ export async function bootstrapWorkspaceRegistries(options: {
   const projectRanges = new Map<string, { createdAt: string | null; updatedAt: string | null }>();
   const workspaceUpsertInputs: {
     workspaceId: string;
+    parentWorkspaceId: string | null;
     membership: ReturnType<typeof classifyDirectoryForProjectMembership>;
     workspaceCwd: string;
     createdAt: string;
@@ -161,8 +162,12 @@ export async function bootstrapWorkspaceRegistries(options: {
     existingProjectRange.updatedAt = maxIsoDate(existingProjectRange.updatedAt, updatedAt);
     projectRanges.set(membership.projectKey, existingProjectRange);
 
+    const existingWorkspace = existingWorkspacesByCwd.get(path.resolve(workspaceCwd));
     workspaceUpsertInputs.push({
-      workspaceId: existingWorkspaceIdsByCwd.get(workspaceCwd) ?? generateWorkspaceId(),
+      workspaceId: existingWorkspace?.workspaceId ?? generateWorkspaceId(),
+      // Bootstrap reconciles filesystem membership; it must preserve a manually assigned parent
+      // instead of replacing it with the default root value on every startup.
+      parentWorkspaceId: existingWorkspace?.parentWorkspaceId ?? null,
       membership,
       workspaceCwd,
       createdAt,
@@ -172,7 +177,7 @@ export async function bootstrapWorkspaceRegistries(options: {
 
   await Promise.all(
     workspaceUpsertInputs.flatMap(
-      ({ workspaceId, membership, workspaceCwd, createdAt, updatedAt }) => {
+      ({ workspaceId, parentWorkspaceId, membership, workspaceCwd, createdAt, updatedAt }) => {
         const projectRange = projectRanges.get(membership.projectKey) ?? {
           createdAt: null,
           updatedAt: null,
@@ -185,6 +190,7 @@ export async function bootstrapWorkspaceRegistries(options: {
               cwd: workspaceCwd,
               kind: membership.workspaceKind,
               displayName: membership.workspaceDisplayName,
+              parentWorkspaceId,
               createdAt,
               updatedAt,
             }),

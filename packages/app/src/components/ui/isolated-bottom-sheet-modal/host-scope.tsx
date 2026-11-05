@@ -1,8 +1,5 @@
-import {
-  BottomSheetModalInternalProvider,
-  INITIAL_CONTAINER_LAYOUT,
-  useBottomSheetModalInternal,
-} from "@gorhom/bottom-sheet";
+import { INITIAL_CONTAINER_LAYOUT, useBottomSheetModalInternal } from "@gorhom/bottom-sheet";
+import { BottomSheetModalInternalProvider } from "@gorhom/bottom-sheet/src/contexts";
 import { PortalHost } from "@gorhom/portal";
 import { useCallback, useId, useMemo, useRef, type ReactNode } from "react";
 import {

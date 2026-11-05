@@ -3445,6 +3445,33 @@ export class DaemonClient {
     }
   }
 
+  async setDiffComparison(
+    target: Extract<SessionInboundMessage, { type: "git.comparison.set.request" }>["target"],
+    comparison: Extract<
+      SessionInboundMessage,
+      { type: "git.comparison.set.request" }
+    >["comparison"],
+  ): Promise<void> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"git.comparison.set.response">({
+        message: { type: "git.comparison.set.request", target, comparison },
+      });
+    if (!payload.accepted) throw new Error(payload.error ?? "Comparison update failed");
+  }
+
+  async setDiffComparisonV2(
+    target: Extract<SessionInboundMessage, { type: "git.comparison.set.request" }>["target"],
+    comparisonV2: NonNullable<
+      Extract<SessionInboundMessage, { type: "git.comparison.set.request" }>["comparisonV2"]
+    > | null,
+  ): Promise<void> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"git.comparison.set.response">({
+        message: { type: "git.comparison.set.request", target, comparison: null, comparisonV2 },
+      });
+    if (!payload.accepted) throw new Error(payload.error ?? "Comparison update failed");
+  }
+
   async renameProject(
     projectId: string,
     customName: string | null,
@@ -3532,6 +3559,88 @@ export class DaemonClient {
       throw new Error(payload.error ?? "setWorkspacePinned rejected");
     }
     return { pinnedAt: payload.pinnedAt };
+  }
+
+  async setWorkspaceParent(
+    workspaceId: string,
+    parentWorkspaceId: string | null,
+    requestId?: string,
+  ): Promise<{ parentWorkspaceId: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "workspace.hierarchy.setParent.request",
+        workspaceId,
+        parentWorkspaceId,
+      },
+      responseType: "workspace.hierarchy.setParent.response",
+    });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "setWorkspaceParent rejected");
+    }
+    return { parentWorkspaceId: payload.parentWorkspaceId };
+  }
+
+  async inspectWorkspaceSubtree(
+    workspaceId: string,
+    action: "archive" | "restore",
+    requestId?: string,
+  ): Promise<
+    Extract<
+      SessionOutboundMessage,
+      { type: "workspace.hierarchy.inspectSubtree.response" }
+    >["payload"]
+  > {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "workspace.hierarchy.inspectSubtree.request",
+        workspaceId,
+        action,
+      },
+    });
+  }
+
+  async archiveWorkspaceSubtree(
+    workspaceId: string,
+    expectedWorkspaceIds: readonly string[],
+    requestId?: string,
+  ): Promise<
+    Extract<
+      SessionOutboundMessage,
+      { type: "workspace.hierarchy.archiveSubtree.response" }
+    >["payload"]
+  > {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "workspace.hierarchy.archiveSubtree.request",
+        workspaceId,
+        expectedWorkspaceIds: [...expectedWorkspaceIds],
+      },
+      timeout: 150_000,
+    });
+  }
+
+  async restoreWorkspaceSubtree(
+    workspaceId: string,
+    expectedWorkspaceIds: readonly string[],
+    requestId?: string,
+  ): Promise<
+    Extract<
+      SessionOutboundMessage,
+      { type: "workspace.hierarchy.restoreSubtree.response" }
+    >["payload"]
+  > {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "workspace.hierarchy.restoreSubtree.request",
+        workspaceId,
+        expectedWorkspaceIds: [...expectedWorkspaceIds],
+      },
+      timeout: 150_000,
+    });
   }
 
   async inspectWorkspaceRecovery(
@@ -4559,30 +4668,21 @@ export class DaemonClient {
     return responsePromise;
   }
 
-  private normalizeCheckoutDiffCompare(compare: {
-    mode: "uncommitted" | "base" | "all";
-    baseRef?: string;
-    ignoreWhitespace?: boolean;
-  }): { mode: "uncommitted" | "base" | "all"; baseRef?: string; ignoreWhitespace?: boolean } {
-    if (compare.mode === "uncommitted") {
-      return compare.ignoreWhitespace === true
-        ? { mode: "uncommitted", ignoreWhitespace: true }
-        : { mode: "uncommitted" };
-    }
-    const trimmedBaseRef = compare.baseRef?.trim();
-    if (!trimmedBaseRef) {
-      return compare.ignoreWhitespace === true
-        ? { mode: compare.mode, ignoreWhitespace: true }
-        : { mode: compare.mode };
-    }
-    return compare.ignoreWhitespace === true
-      ? { mode: compare.mode, baseRef: trimmedBaseRef, ignoreWhitespace: true }
-      : { mode: compare.mode, baseRef: trimmedBaseRef };
+  private normalizeCheckoutDiffCompare(
+    compare: Extract<SessionInboundMessage, { type: "checkout.diff.get.request" }>["compare"],
+  ): Extract<SessionInboundMessage, { type: "checkout.diff.get.request" }>["compare"] {
+    const baseRef = compare.mode !== "uncommitted" ? compare.baseRef?.trim() : undefined;
+    return {
+      mode: compare.mode,
+      ...(baseRef ? { baseRef } : {}),
+      ...(compare.ignoreWhitespace === true ? { ignoreWhitespace: true } : {}),
+      ...(compare.includeWorkingTree === true ? { includeWorkingTree: true } : {}),
+    };
   }
 
   async getCheckoutDiff(
     cwd: string,
-    compare: { mode: "uncommitted" | "base" | "all"; baseRef?: string; ignoreWhitespace?: boolean },
+    compare: Extract<SessionInboundMessage, { type: "checkout.diff.get.request" }>["compare"],
     requestId?: string,
   ): Promise<CheckoutDiffPayload> {
     return this.sendCorrelatedSessionRequest({
@@ -4598,7 +4698,7 @@ export class DaemonClient {
 
   observeCheckoutDiff(
     cwd: string,
-    compare: { mode: "uncommitted" | "base" | "all"; baseRef?: string; ignoreWhitespace?: boolean },
+    compare: Extract<SessionInboundMessage, { type: "checkout.diff.get.request" }>["compare"],
     options?: { requestId?: string; signal?: AbortSignal },
   ): OwnedSubscription<SubscribeCheckoutDiffPayload> {
     return this.observe(
@@ -4959,6 +5059,20 @@ export class DaemonClient {
     });
   }
 
+  async listProjectWorktrees(projectId: string) {
+    return this.sendCorrelatedSessionRequest({
+      message: { type: "project.worktree.list.request", projectId },
+      responseType: "project.worktree.list.response",
+    });
+  }
+
+  async importProjectWorktree(projectId: string, path: string) {
+    return this.sendCorrelatedSessionRequest({
+      message: { type: "project.worktree.import.request", projectId, path },
+      responseType: "project.worktree.import.response",
+    });
+  }
+
   async getPaseoWorktreeList(
     input: { cwd?: string; repoRoot?: string },
     requestId?: string,
@@ -5086,13 +5200,14 @@ export class DaemonClient {
   }
 
   async getBranchSuggestions(
-    options: { cwd: string; query?: string; limit?: number },
+    options: { cwd: string; query?: string; limit?: number; exactRefs?: boolean },
     requestId?: string,
   ): Promise<BranchSuggestionsPayload> {
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {
         type: "branch_suggestions_request",
+        exactRefs: options.exactRefs,
         cwd: options.cwd,
         query: options.query,
         limit: options.limit,

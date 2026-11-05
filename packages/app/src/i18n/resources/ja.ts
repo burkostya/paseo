@@ -2,6 +2,20 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ja: TranslationResources = {
+  worktreeImport: {
+    title: "既存のワークツリーを追加…",
+    chooseHost: "ホストを選択",
+    updateHost: "ワークツリーをインポートするにはホストを更新してください。",
+    preserveFiles: "ワークスペースをアーカイブしても、外部のワークツリーはディスクに残ります。",
+    refresh: "更新",
+    empty: "リンクされたワークツリーが見つかりません。",
+    detached: "切り離された HEAD · {{commit}}",
+    unavailable: "ディスク上で利用できません",
+    restore: "アーカイブ済み · 選択して復元",
+    open: "開く",
+    add: "選択項目を追加 ({{count}})",
+  },
+  diffComparison: en.diffComparison,
   paneFind: {
     connectionFailure:
       "このチャットを検索できませんでした。ホストへの接続を確認して再試行してください。",
@@ -252,9 +266,18 @@ export const ja: TranslationResources = {
       implement: "実装",
       question: "どのように続けますか？",
       proposedPlan: "提案されたプラン",
+      approved: "承認済み",
+      rejected: "拒否済み",
+      skipped: "スキップ済み",
+      planDisabledAfterMessages: "このプランの後に会話が続いたため、このプランは承認できません。",
     },
   },
   agentPanel: {
+    continue: {
+      label: "続行",
+      accessibilityLabel: "エラー後に会話を続行",
+      message: "続行",
+    },
     states: {
       notFound: "エージェントが見つかりません",
       failedToLoad: "エージェントの読み込みに失敗しました",
@@ -337,6 +360,7 @@ export const ja: TranslationResources = {
     actions: {
       copyCode: "コードをコピー",
       copyTurn: "ターンをコピー",
+      copyPlan: "プランをコピー",
       copyMessage: "メッセージをコピー",
       forkMenu: "メッセージをフォーク",
       forkInNewTab: "新しいタブにフォーク",
@@ -467,6 +491,7 @@ export const ja: TranslationResources = {
         restoringAction: "復元中...",
         unavailableTitle: "ワークスペースを利用できません",
         checkFailedTitle: "ワークスペースを確認できませんでした",
+        partialFailure: "一部のネストされたワークスペースを復元できませんでした（{{count}}）。",
       },
     },
     hoverCard: {
@@ -979,6 +1004,15 @@ export const ja: TranslationResources = {
         all: "すべての変更",
         uncommitted: "未コミット",
         committed: "コミット済み",
+        basePicker: {
+          trigger: "対 {{baseRef}}",
+          accessibility: "コミット済みの変更を {{baseRef}} と比較",
+          placeholder: "ベースブランチを選択",
+          searchPlaceholder: "ブランチを絞り込む...",
+          empty: "ブランチが見つかりません",
+          title: "ベースブランチ",
+          default: "デフォルト",
+        },
         branchUnknown: "不明",
         base: "ベース",
         newFile: "新規",
@@ -1332,11 +1366,27 @@ export const ja: TranslationResources = {
         archiving: "アーカイブ中...",
         hiding: "非表示にしています...",
       },
+      hierarchy: {
+        title: "ワークスペース階層",
+        moveTo: "移動先…",
+        root: "プロジェクトルート",
+        search: "親ワークスペースを検索...",
+        noCandidates: "選択できる親ワークスペースはありません",
+        hostUpgrade: "階層を管理するにはホストを更新してください。",
+        failed: "ワークスペース階層を更新できませんでした",
+        invalidDrop: "そのワークスペースはここに配置できません",
+        collapse: "ワークスペースを折りたたむ",
+        expand: "ワークスペースを展開",
+      },
       confirmations: {
         hideTitle: "ワークスペースを非表示にしますか？",
         hideMessage:
           '"{{workspaceName}}"をサイドバーから非表示にしますか？\n\nディスク上のファイルは変更されません。',
         hideConfirm: "非表示",
+        archiveSubtreeTitle: "ワークスペースのツリーをアーカイブしますか？",
+        archiveSubtreeMessage:
+          "「{{workspaceName}}」と子ワークスペース{{descendantCount}}件をアーカイブしますか？",
+        archiveSubtreeConfirm: "すべてアーカイブ",
         cancel: "キャンセル",
       },
       rename: {
@@ -1351,6 +1401,7 @@ export const ja: TranslationResources = {
         hostDisconnected: "ホストが接続されていません",
         hideFailed: "ワークスペースの非表示に失敗しました",
         archiveFailed: "ワークスペースのアーカイブに失敗しました",
+        archivePartial: "{{failedCount}}件のワークスペースをアーカイブできませんでした",
       },
     },
   },
@@ -2880,6 +2931,8 @@ export const ja: TranslationResources = {
         sectionTitle: "エージェントプロファイル",
         unavailable: "エージェントプロファイルを管理するにはこのホストに接続してください",
         unsupported: "このホストで動作するデーモンはまだエージェントプロファイルに対応していません",
+        identityUnsupported:
+          "選択したエージェントプロファイルを表示するにはホストを更新してください。",
         emptyState:
           "プロファイルがまだありません。保存したプロバイダーとモデルでエージェントを起動するために追加してください。",
         addProfileTitle: "エージェントプロファイルを追加",

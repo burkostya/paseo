@@ -17,6 +17,7 @@ const POLICY_REQUEST_CHANNEL = "paseo:browser-keyboard-policy-request";
 const SHORTCUT_INPUT_CHANNEL = "paseo:browser-shortcut-input";
 const SHORTCUT_OUTPUT_CHANNEL = "paseo:event:browser-shortcut-input";
 const RESERVED_SHORTCUT_OUTPUT_CHANNEL = "paseo:event:browser-shortcut";
+const MODIFIER_RELEASE_KEYS = new Set(["Alt", "Control", "Meta"]);
 
 interface BrowserKeyboardContentsIdentity {
   readonly id: number;
@@ -170,6 +171,22 @@ export class BrowserKeyboard {
     input: Electron.Input,
   ): void {
     const policy = this.policiesByHostWebContentsId.get(registration.hostWebContentsId);
+    if (input.type === "keyUp" && MODIFIER_RELEASE_KEYS.has(input.key)) {
+      if (!guest.hostContents.isDestroyed()) {
+        guest.hostContents.send(SHORTCUT_OUTPUT_CHANNEL, {
+          alt: input.alt,
+          browserId: registration.browserId,
+          code: input.code,
+          control: input.control,
+          key: input.key,
+          meta: input.meta,
+          phase: "keyup",
+          repeat: input.isAutoRepeat,
+          shift: input.shift,
+        });
+      }
+      return;
+    }
     const matchInput = {
       alt: input.alt,
       code: input.code,

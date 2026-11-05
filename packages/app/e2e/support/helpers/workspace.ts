@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { mkdtemp, readFile, writeFile, rm, mkdir, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -25,6 +25,14 @@ export async function resolveTempRoot(): Promise<string> {
   return await realpath(tmpdir());
 }
 
+/** Give an isolated fixture a stable remote default without network access. */
+export function configureTempComparisonBase(repoPath: string): void {
+  const run = (args: string[]) => execFileSync("git", args, { cwd: repoPath, stdio: "ignore" });
+  run(["remote", "add", "paseo-fixture", repoPath]);
+  run(["update-ref", "refs/remotes/paseo-fixture/main", "HEAD"]);
+  run(["symbolic-ref", "refs/remotes/paseo-fixture/HEAD", "refs/remotes/paseo-fixture/main"]);
+}
+
 async function configureRemote(input: {
   repoPath: string;
   withRemote: boolean;
@@ -38,6 +46,11 @@ async function configureRemote(input: {
     execSync(`git init --bare -b main ${remoteDir}`, { cwd: repoPath, stdio: "ignore" });
     execSync(`git remote add origin ${remoteDir}`, { cwd: repoPath, stdio: "ignore" });
     execSync("git push -u origin --all", { cwd: repoPath, stdio: "ignore" });
+    // A clone normally creates this symbolic ref; git push into a bare fixture does not.
+    execSync("git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main", {
+      cwd: repoPath,
+      stdio: "ignore",
+    });
     if (originUrl) {
       // Relabel origin to a display URL after the local tracking remote is set
       // up, so project grouping shows the remote's owner/repo while branch

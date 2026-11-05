@@ -1,8 +1,17 @@
 import { memo, useMemo, useCallback, useState, type ReactNode } from "react";
-import { Text, View, type ViewStyle } from "react-native";
+import { useTranslation } from "react-i18next";
+import { Text, View, type GestureResponderEvent, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { CircleAlert, Folder, FolderGit2, Monitor } from "lucide-react-native";
+import {
+  ChevronDown,
+  ChevronRight,
+  CircleAlert,
+  Folder,
+  FolderGit2,
+  Monitor,
+} from "lucide-react-native";
 import { ProjectStatusIndicator } from "@/components/sidebar/project-leading-visual";
+import { PressHighlight } from "@/components/ui/press-highlight";
 import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
 import {
   WorkspaceMetaRow,
@@ -36,8 +45,11 @@ const needsInputColorMapping = (theme: Theme) => ({
   color: theme.colors.surface0,
   fill: getStatusDotColor({ theme, bucket: "needs_input" }) ?? undefined,
 });
+const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 const ThemedCircleAlert = withUnistyles(CircleAlert);
+const ThemedChevronDown = withUnistyles(ChevronDown);
+const ThemedChevronRight = withUnistyles(ChevronRight);
 
 export function SidebarWorkspaceRowFrame({
   workspace,
@@ -99,6 +111,9 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   showShortcutBadge = false,
   reserveIdleStatusIndicatorSpace = true,
   children,
+  hasChildren = false,
+  expanded = true,
+  onToggleCollapsed,
 }: {
   workspace: SidebarWorkspaceEntry;
   hostBadge?: HostBadgeModel | null;
@@ -116,7 +131,11 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   /** Keep the empty leading slot when the workspace has no active status. */
   reserveIdleStatusIndicatorSpace?: boolean;
   children?: ReactNode;
+  hasChildren?: boolean;
+  expanded?: boolean;
+  onToggleCollapsed?: () => void;
 }) {
+  const { t } = useTranslation();
   const {
     settings: { workspaceTitleSource },
   } = useAppSettings();
@@ -132,10 +151,41 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
     ],
     [isHovered, isCreating],
   );
+  const treeToggleAccessibilityState = useMemo(() => ({ expanded }), [expanded]);
+  const handleTreeTogglePress = useCallback(
+    (event: GestureResponderEvent) => {
+      event.stopPropagation();
+      onToggleCollapsed?.();
+    },
+    [onToggleCollapsed],
+  );
 
   return (
     <View style={styles.workspaceRowContent}>
       <View style={styles.workspaceRowMain}>
+        {hasChildren ? (
+          <PressHighlight
+            accessibilityRole="button"
+            accessibilityLabel={
+              expanded
+                ? t("sidebar.workspace.hierarchy.collapse")
+                : t("sidebar.workspace.hierarchy.expand")
+            }
+            accessibilityState={treeToggleAccessibilityState}
+            hitSlop={6}
+            onPress={handleTreeTogglePress}
+            style={styles.workspaceTreeToggle}
+            highlightStyle={styles.workspaceTreeTogglePressed}
+          >
+            {expanded ? (
+              <ThemedChevronDown size={14} uniProps={foregroundMutedColorMapping} />
+            ) : (
+              <ThemedChevronRight size={14} uniProps={foregroundMutedColorMapping} />
+            )}
+          </PressHighlight>
+        ) : (
+          <View style={styles.workspaceTreeTogglePlaceholder} />
+        )}
         {leadingProjectName ? (
           <ProjectStatusIndicator
             iconDataUri={leadingProjectIconDataUri}
@@ -465,6 +515,22 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "flex-start",
     gap: theme.spacing[2],
     width: "100%",
+  },
+  workspaceTreeToggle: {
+    width: theme.iconSize.md,
+    height: theme.iconSize.md,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  workspaceTreeTogglePressed: {
+    backgroundColor: theme.colors.interactionHighlight,
+    borderRadius: theme.borderRadius.sm,
+  },
+  workspaceTreeTogglePlaceholder: {
+    width: theme.iconSize.md,
+    height: theme.iconSize.md,
+    flexShrink: 0,
   },
   workspaceContentColumn: {
     flex: 1,

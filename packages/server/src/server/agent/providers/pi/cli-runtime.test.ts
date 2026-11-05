@@ -1,8 +1,11 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import pino from "pino";
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test, vi, onTestFinished } from "vitest";
 
 import { PiCliRuntime } from "./cli-runtime.js";
 import type { PiRuntimeLaunch } from "./runtime.js";
@@ -47,6 +50,22 @@ function createRuntime(
     },
   });
 }
+
+test("opens an existing empty file so command checkpoints persist before the first conversation", async () => {
+  const root = await mkdtemp(join(tmpdir(), "paseo-pi-initial-session-"));
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const launches: PiRuntimeLaunch[] = [];
+  const session = await createRuntime(createPiChild(), launches).startSession({
+    cwd: root,
+    env: { PI_CODING_AGENT_DIR: root },
+    persistInitialSession: true,
+  });
+  onTestFinished(() => session.close());
+  const sessionFile = launches[0].session;
+  if (!sessionFile) throw new Error("Expected precreated native session file");
+  await expect(readFile(sessionFile, "utf8")).resolves.toBe("");
+  expect(launches[0].argv).toEqual(["pi", "--mode", "rpc", "--session", sessionFile]);
+});
 
 function onPiCommand(child: PiChild, handler: (command: Record<string, unknown>) => void): void {
   let buffer = "";

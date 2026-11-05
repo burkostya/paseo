@@ -45,6 +45,14 @@ export interface SeedDaemonClient {
   }>;
   removeProject(projectId: string): Promise<{ removedWorkspaceIds: string[] }>;
   renameProject(projectId: string, customName: string | null): Promise<void>;
+  setDiffComparison(
+    target: { kind: "project"; projectId: string } | { kind: "workspace"; workspaceId: string },
+    comparison: import("@getpaseo/protocol/messages").DiffComparison | null,
+  ): Promise<void>;
+  setDiffComparisonV2(
+    target: { kind: "project"; projectId: string } | { kind: "workspace"; workspaceId: string },
+    comparison: import("@getpaseo/protocol/messages").DiffComparisonV2 | null,
+  ): Promise<void>;
   fetchWorkspaces(options?: { filter?: { projectId?: string } }): Promise<{
     entries: SeedWorkspaceDescriptor[];
   }>;

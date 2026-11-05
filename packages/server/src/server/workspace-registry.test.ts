@@ -82,6 +82,94 @@ describe("workspace registries", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  test("persists comparison choices independently of worktree bases across archive and reload", async () => {
+    await projectRegistry.initialize();
+    await workspaceRegistry.initialize();
+    const timestamp = "2026-10-02T00:00:00.000Z";
+    const project = createPersistedProjectRecord({
+      projectId: "comparison-project",
+      rootPath: tmpDir,
+      kind: "git",
+      displayName: "comparison",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    const workspace = createPersistedWorkspaceRecord({
+      workspaceId: "comparison-workspace",
+      projectId: project.projectId,
+      cwd: tmpDir,
+      kind: "worktree",
+      displayName: "task",
+      baseBranch: "main",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    await projectRegistry.upsert(project);
+    await workspaceRegistry.upsert(workspace);
+    await projectRegistry.update(project.projectId, (record) => ({
+      ...record,
+      diffComparison: { mode: "base", baseRef: "refs/remotes/team/develop" },
+    }));
+    await workspaceRegistry.update(workspace.workspaceId, (record) => ({
+      ...record,
+      diffComparison: { mode: "uncommitted" },
+    }));
+    await workspaceRegistry.archive(workspace.workspaceId, timestamp);
+    const reloadedProjects = new FileBackedProjectRegistry(
+      path.join(tmpDir, "projects", "projects.json"),
+      logger,
+    );
+    const reloadedWorkspaces = new FileBackedWorkspaceRegistry(
+      path.join(tmpDir, "projects", "workspaces.json"),
+      logger,
+    );
+    await reloadedProjects.initialize();
+    await reloadedWorkspaces.initialize();
+    expect((await reloadedProjects.get(project.projectId))?.diffComparison).toEqual({
+      mode: "base",
+      baseRef: "refs/remotes/team/develop",
+    });
+    expect(await reloadedWorkspaces.get(workspace.workspaceId)).toMatchObject({
+      baseBranch: "main",
+      archivedAt: timestamp,
+      diffComparison: { mode: "uncommitted" },
+    });
+    await reloadedProjects.update(project.projectId, (record) => ({
+      ...record,
+      diffComparison: undefined,
+      diffComparisonV2: { mode: "all" },
+    }));
+    await reloadedWorkspaces.update(workspace.workspaceId, (record) => ({
+      ...record,
+      diffComparison: undefined,
+      diffComparisonV2: { mode: "base", baseRef: "refs/remotes/team/develop" },
+    }));
+    const reopenedProjects = new FileBackedProjectRegistry(
+      path.join(tmpDir, "projects", "projects.json"),
+      logger,
+    );
+    const reopenedWorkspaces = new FileBackedWorkspaceRegistry(
+      path.join(tmpDir, "projects", "workspaces.json"),
+      logger,
+    );
+    await reopenedProjects.initialize();
+    await reopenedWorkspaces.initialize();
+    expect((await reopenedProjects.get(project.projectId))?.diffComparisonV2).toEqual({
+      mode: "all",
+    });
+    expect((await reopenedWorkspaces.get(workspace.workspaceId))?.diffComparisonV2).toEqual({
+      mode: "base",
+      baseRef: "refs/remotes/team/develop",
+    });
+    await reloadedWorkspaces.update(workspace.workspaceId, (record) => ({
+      ...record,
+      archivedAt: null,
+      diffComparison: undefined,
+    }));
+    expect((await reloadedWorkspaces.get(workspace.workspaceId))?.diffComparison).toBeUndefined();
+    expect((await reloadedWorkspaces.get(workspace.workspaceId))?.baseBranch).toBe("main");
+  });
+
   test("creates, updates, archives, deletes, and lists project records", async () => {
     await projectRegistry.initialize();
     await projectRegistry.upsert(
@@ -603,5 +691,39 @@ describe("workspace registries", () => {
       title: "Payments work",
       pinnedAt: "2026-03-03T00:00:00.000Z",
     });
+  });
+
+  test("sets workspace parents, rejects cycles, and reparents children on removal", async () => {
+    await workspaceRegistry.initialize();
+    const base = {
+      projectId: "project-one",
+      cwd: "/tmp/repo",
+      kind: "local_checkout" as const,
+      displayName: "workspace",
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    };
+    await workspaceRegistry.upsert(
+      createPersistedWorkspaceRecord({ ...base, workspaceId: "root" }),
+    );
+    await workspaceRegistry.upsert(
+      createPersistedWorkspaceRecord({ ...base, workspaceId: "child", parentWorkspaceId: "root" }),
+    );
+    await workspaceRegistry.upsert(
+      createPersistedWorkspaceRecord({
+        ...base,
+        workspaceId: "grandchild",
+        parentWorkspaceId: "child",
+      }),
+    );
+
+    await expect(
+      workspaceRegistry.setWorkspaceParent({
+        workspaceId: "root",
+        parentWorkspaceId: "grandchild",
+      }),
+    ).rejects.toThrow("cycle");
+    await workspaceRegistry.remove("child");
+    expect((await workspaceRegistry.get("grandchild"))?.parentWorkspaceId).toBe("root");
   });
 });

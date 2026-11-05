@@ -13,6 +13,7 @@ vi.mock("./checkout-git-utils.js", () => ({
 
 import type pino from "pino";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
+import { comparisonBaseResolver } from "./git-comparison/base.js";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 
 interface Deferred<T> {
@@ -440,6 +441,31 @@ describe("CheckoutDiffManager", () => {
     expect(getCheckoutDiff).toHaveBeenCalledTimes(1);
   });
 
+  test("working branch diffs watch edits and retain their working-tree comparison", async () => {
+    const { manager, workspaceGitService, getOnChange } = createManager();
+    const subscription = await manager.subscribe(
+      {
+        cwd: "/tmp/repo",
+        compare: { mode: "base", baseRef: "refs/heads/main", includeWorkingTree: true },
+      },
+      () => {},
+    );
+    expect(workspaceGitService.registerWorkspace).toHaveBeenCalledTimes(1);
+    expect(workspaceGitService.requestWorkingTreeWatch).toHaveBeenCalledTimes(1);
+    expect(workspaceGitService.getCheckoutDiff).toHaveBeenCalledWith(
+      "/tmp/repo",
+      expect.objectContaining({
+        mode: "all",
+        baseRef: "refs/heads/main",
+      }),
+      undefined,
+    );
+    getOnChange()?.();
+    await vi.advanceTimersByTimeAsync(150);
+    expect(workspaceGitService.getCheckoutDiff).toHaveBeenCalledTimes(2);
+    subscription.unsubscribe();
+  });
+
   test("base diff subscriptions refresh for structural workspace changes", async () => {
     const getCheckoutDiff = vi.fn(async () => ({ diff: "", structured: [] }));
     const { manager, getOnWorkspaceSnapshot, workspaceGitService } = createManager({
@@ -466,6 +492,54 @@ describe("CheckoutDiffManager", () => {
     getOnWorkspaceSnapshot()?.(createWorkspaceSnapshot({ aheadBehind: { ahead: 2, behind: 0 } }));
     await vi.advanceTimersByTimeAsync(150);
     expect(getCheckoutDiff).toHaveBeenCalledTimes(3);
+  });
+
+  test("automatic comparison refreshes when the pull request target changes", async () => {
+    const snapshot = (baseRefName: string): WorkspaceGitRuntimeSnapshot => ({
+      ...createWorkspaceSnapshot(),
+      forge: {
+        ...createWorkspaceSnapshot().forge,
+        pullRequest: {
+          url: "https://github.com/acme/repo/pull/1",
+          title: "Change",
+          state: "open",
+          baseRefName,
+          headRefName: "feature",
+          isMerged: false,
+        },
+      },
+    });
+    const resolver = vi
+      .spyOn(comparisonBaseResolver, "resolve")
+      .mockImplementation(async (input) => ({
+        baseRef: `refs/remotes/origin/${input.snapshot?.forge.pullRequest?.baseRefName}`,
+        source: "pull_request",
+      }));
+    try {
+      const { manager, workspaceGitService, getOnWorkspaceSnapshot } = createManager();
+      workspaceGitService.getSnapshot.mockResolvedValue(snapshot("next"));
+      const subscription = await manager.subscribe(
+        { cwd: "/tmp/repo", compare: { mode: "all" } },
+        vi.fn(),
+      );
+      expect(workspaceGitService.getCheckoutDiff).toHaveBeenLastCalledWith(
+        "/tmp/repo",
+        expect.objectContaining({ baseRef: "refs/remotes/origin/next" }),
+        undefined,
+      );
+      const changed = snapshot("release");
+      workspaceGitService.getSnapshot.mockResolvedValue(changed);
+      getOnWorkspaceSnapshot()?.(changed);
+      await vi.advanceTimersByTimeAsync(150);
+      expect(workspaceGitService.getCheckoutDiff).toHaveBeenLastCalledWith(
+        "/tmp/repo",
+        expect.objectContaining({ baseRef: "refs/remotes/origin/release" }),
+        undefined,
+      );
+      subscription.unsubscribe();
+    } finally {
+      resolver.mockRestore();
+    }
   });
 
   test("falls back to cwd when the working tree watch returns no repo root", async () => {

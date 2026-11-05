@@ -192,6 +192,36 @@ describe("BrowserKeyboard", () => {
           control: true,
           key: "b",
           meta: false,
+          phase: "keydown",
+          repeat: false,
+          shift: false,
+        },
+      },
+    ]);
+  });
+
+  test("forwards modifier release so a hidden browser can commit an MRU cycle", () => {
+    const { attach } = createBrowserKeyboard();
+    const guest = new FakeBrowserContents(55);
+    const host = new FakeBrowserContents(56);
+    attach({ browserId: "browser-a", contents: guest, hostContents: host });
+
+    const wasPrevented = guest.input(
+      electronInput({ code: "ControlLeft", key: "Control", type: "keyUp" }),
+    );
+
+    expect(wasPrevented).toBe(false);
+    expect(host.sent).toEqual([
+      {
+        channel: "paseo:event:browser-shortcut-input",
+        payload: {
+          alt: false,
+          browserId: "browser-a",
+          code: "ControlLeft",
+          control: false,
+          key: "Control",
+          meta: false,
+          phase: "keyup",
           repeat: false,
           shift: false,
         },

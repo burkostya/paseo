@@ -2,9 +2,9 @@ import { expect, test } from "../support/fixtures";
 import {
   applyProfileFromPicker,
   closeModelPicker,
-  expectComposerDoesNotName,
   expectAgentProfilesEmptyPrompt,
   expectProfileEditTooltip,
+  expectProfileRowSelected,
   expectComposerMode,
   expectCreateProfileFromModelRow,
   expectComposerModel,
@@ -20,6 +20,23 @@ import {
 import { expectWorkspaceAgentConfiguration } from "../support/helpers/command-center-agent-controls";
 import { expectComposerVisible } from "../support/helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+
+// This picker contract uses the mock catalog, independent of installed provider binaries.
+test.use({
+  e2eDaemonConfig: {
+    version: 1,
+    agents: {
+      providers: {
+        claude: { enabled: false },
+        codex: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+        omp: { enabled: false },
+      },
+    },
+  },
+});
 
 const PROFILE = {
   id: "agent_profile_e2e_ui_work",
@@ -53,7 +70,7 @@ test.describe("Agent profiles in the model picker", () => {
     }
   });
 
-  test("applying a pinned profile materializes it into the composer and is then forgotten", async ({
+  test("applying a pinned profile materializes it and keeps its identity in the composer", async ({
     page,
   }) => {
     const seed = await seedAgentProfiles([PROFILE]);
@@ -89,7 +106,7 @@ test.describe("Agent profiles in the model picker", () => {
 
       await test.step("applying it writes its model and mode into the composer", async () => {
         await applyProfileFromPicker(page, PROFILE.name);
-        await expectComposerModel(page, "One minute stream");
+        await expectComposerModel(page, `${PROFILE.name} · One minute stream`);
         await expectComposerMode(page, "Approval test");
         await expectWorkspaceAgentConfiguration(workspace, {
           id: workspace.agentId,
@@ -99,8 +116,8 @@ test.describe("Agent profiles in the model picker", () => {
         });
       });
 
-      await test.step("the composer names the model, never the profile", async () => {
-        await expectComposerDoesNotName(page, PROFILE.name);
+      await test.step("the composer keeps the profile name visible", async () => {
+        await expectComposerModel(page, `${PROFILE.name} · One minute stream`);
       });
 
       await test.step("reopening returns directly to the provider models", async () => {
@@ -110,6 +127,7 @@ test.describe("Agent profiles in the model picker", () => {
           name: PROFILE.name,
           summary: PROFILE_SUMMARY,
         });
+        await expectProfileRowSelected(page, PROFILE.name);
         await expectModelRowSelected(page, { provider: "mock", modelId: "one-minute-stream" });
         await closeModelPicker(page);
       });

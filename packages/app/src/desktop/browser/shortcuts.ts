@@ -21,6 +21,7 @@ export interface BrowserShortcutPrefix {
 
 export interface BrowserShortcutInput extends KeyboardShortcutInput {
   browserId: string;
+  phase: "keydown" | "keyup";
 }
 
 export interface BrowserKeyboardPolicy {
@@ -65,7 +66,8 @@ export function parseBrowserShortcutInput(value: unknown): BrowserShortcutInput 
     typeof value.control !== "boolean" ||
     typeof value.meta !== "boolean" ||
     typeof value.shift !== "boolean" ||
-    (value.repeat !== undefined && typeof value.repeat !== "boolean")
+    (value.repeat !== undefined && typeof value.repeat !== "boolean") ||
+    (value.phase !== undefined && value.phase !== "keydown" && value.phase !== "keyup")
   ) {
     return null;
   }
@@ -77,6 +79,7 @@ export function parseBrowserShortcutInput(value: unknown): BrowserShortcutInput 
     altKey: value.alt,
     ctrlKey: value.control,
     metaKey: value.meta,
+    phase: value.phase === "keyup" ? "keyup" : "keydown",
     shiftKey: value.shift,
     repeat: value.repeat ?? false,
   };

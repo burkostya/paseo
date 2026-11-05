@@ -91,7 +91,8 @@ export function useActiveWorkspaceSelection(): ActiveWorkspaceSelection | null {
     if (!serverId || !workspaceId) {
       return;
     }
-    lastWorkspaceSelectionStore.remember({ serverId, workspaceId });
+    const observedSelection = { serverId, workspaceId };
+    lastWorkspaceSelectionStore.remember(observedSelection);
   }, [serverId, workspaceId]);
   return selection;
 }
@@ -113,3 +114,4 @@ export function useIsLastWorkspaceSelectionHydrated(): boolean {
 }
 
 void hydrateLastWorkspaceSelection();
+void AsyncStorage.removeItem("paseo:workspace-navigation-history").catch(() => undefined);

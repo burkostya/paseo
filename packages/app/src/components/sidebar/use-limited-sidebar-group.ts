@@ -8,27 +8,32 @@ import {
 import type { ActiveWorkspaceSelection } from "@/stores/last-workspace-selection";
 
 const PINNED_POLICY = { kind: "pinned" } as const;
-
 interface LimitedSidebarGroupInput<T> {
   items: readonly T[];
   selection: ActiveWorkspaceSelection | null;
   policy?: SidebarGroupVisibilityPolicy<T>;
+  expanded?: boolean;
+  onToggleExpanded?: () => void;
 }
-
 export function useLimitedSidebarGroup<T extends SidebarGroupItem>({
   items,
   selection,
   policy = PINNED_POLICY,
+  expanded: controlledExpanded,
+  onToggleExpanded,
 }: LimitedSidebarGroupInput<T>): SidebarGroupVisibility<T> & {
   expanded: boolean;
   toggleExpanded: () => void;
 } {
-  const [expanded, setExpanded] = useState(false);
+  const [localExpanded, setExpanded] = useState(false);
+  const expanded = controlledExpanded ?? localExpanded;
   const visibility = useMemo(
     () => selectSidebarGroupVisibility({ items, expanded, policy, selection }),
     [expanded, items, policy, selection],
   );
-  const toggleExpanded = useCallback(() => setExpanded((current) => !current), []);
-
+  const toggleExpanded = useCallback(() => {
+    if (onToggleExpanded) onToggleExpanded();
+    else setExpanded((current) => !current);
+  }, [onToggleExpanded]);
   return { ...visibility, expanded, toggleExpanded };
 }

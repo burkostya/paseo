@@ -77,6 +77,7 @@ function sourceTimelineItem(item: StreamItem): AgentTimelineItem | null {
     case "plugin":
       return null;
   }
+  return null;
 }
 
 function transformSourceItem(

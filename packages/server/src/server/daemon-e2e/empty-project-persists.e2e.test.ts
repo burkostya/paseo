@@ -140,3 +140,61 @@ test("archiving the last workspace leaves the project parent with no workspaces"
     restoreEnv("PASEO_SUPERVISED", previousSupervised);
   }
 }, 30_000);
+
+test("comparison settings survive a daemon restart and workspace inheritance", async () => {
+  const repoRoot = realpathSync(mkdtempSync(path.join(os.tmpdir(), "paseo-comparison-repo-")));
+  const paseoHomeRoot = realpathSync(mkdtempSync(path.join(os.tmpdir(), "paseo-comparison-home-")));
+  cleanupPaths.add(repoRoot);
+  cleanupPaths.add(paseoHomeRoot);
+  execSync("git init -b main", { cwd: repoRoot, stdio: "pipe" });
+  execSync("git config user.email 'test@getpaseo.dev'", { cwd: repoRoot, stdio: "pipe" });
+  execSync("git config user.name 'Paseo Test'", { cwd: repoRoot, stdio: "pipe" });
+  writeFileSync(path.join(repoRoot, "README.md"), "# repo\n", "utf8");
+  execSync("git add README.md", { cwd: repoRoot, stdio: "pipe" });
+  execSync("git -c commit.gpgSign=false commit -m 'initial'", { cwd: repoRoot, stdio: "pipe" });
+
+  const start = async () => {
+    const daemon = await createTestPaseoDaemon({
+      paseoHomeRoot,
+      staticDir: repoRoot,
+      cleanup: false,
+    });
+    cleanupDaemons.add(daemon);
+    const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+    cleanupClients.add(client);
+    await client.connect();
+    return { daemon, client };
+  };
+  const first = await start();
+  const created = await first.client.createWorkspace({
+    source: { kind: "directory", path: repoRoot },
+  });
+  expect(created.error).toBeNull();
+  const workspace = created.workspace!;
+  await first.client.setDiffComparisonV2(
+    { kind: "project", projectId: workspace.projectId },
+    { mode: "all", baseRef: "refs/heads/main" },
+  );
+  await first.client.setDiffComparisonV2(
+    { kind: "workspace", workspaceId: workspace.id },
+    { mode: "uncommitted" },
+  );
+  await first.client.close();
+  cleanupClients.delete(first.client);
+  await first.daemon.close();
+  cleanupDaemons.delete(first.daemon);
+
+  const second = await start();
+  const readWorkspace = async () =>
+    (await second.client.fetchWorkspaces()).entries.find((entry) => entry.id === workspace.id);
+  await expect.poll(readWorkspace).toMatchObject({
+    diffComparisonV2: { mode: "uncommitted" },
+    diffComparisonOverrideV2: { mode: "uncommitted" },
+    projectDiffComparisonV2: { mode: "all", baseRef: "refs/heads/main" },
+  });
+  await second.client.setDiffComparisonV2({ kind: "workspace", workspaceId: workspace.id }, null);
+  await expect.poll(readWorkspace).toMatchObject({
+    diffComparisonV2: { mode: "all", baseRef: "refs/heads/main" },
+    diffComparisonOverrideV2: null,
+  });
+}, 30_000);

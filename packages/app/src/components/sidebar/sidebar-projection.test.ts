@@ -12,6 +12,7 @@ function makeWorkspace(
   statusBucket: SidebarWorkspaceEntry["statusBucket"] = "done",
   labels: string[] = [],
   projectViewKey = "project",
+  parentWorkspaceId: string | null = null,
 ) {
   const placement: SidebarWorkspacePlacement = {
     workspaceKey: `srv:${id}`,
@@ -22,6 +23,7 @@ function makeWorkspace(
     projectKind: "git",
     workspaceKind: "worktree",
     name: id,
+    parentWorkspaceId,
   };
   const entry: SidebarWorkspaceEntry = {
     ...placement,
@@ -39,6 +41,7 @@ function makeWorkspace(
     scripts: [],
     hasRunningScripts: false,
     labels,
+    parentWorkspaceId,
   };
   return { placement, entry };
 }
@@ -67,6 +70,7 @@ function makeProject(
 function projectionInput(options?: {
   groupMode?: "project" | "status";
   pinnedCollapsed?: boolean;
+  shortcutLimit?: number;
 }) {
   const pinned = makeWorkspace("pinned", "running");
   const unpinned = makeWorkspace("unpinned", "needs_input");
@@ -87,6 +91,7 @@ function projectionInput(options?: {
     collapsedProjectKeys: new Set<string>(),
     collapsedWorkspaceGroupKeys: new Set<string>(),
     t: i18n.t,
+    shortcutLimit: options?.shortcutLimit,
   };
 }
 
@@ -174,5 +179,93 @@ describe("buildSidebarProjection", () => {
     expect(projection.shortcutModel.shortcutTargets).toEqual([
       { serverId: "srv", workspaceId: "unpinned" },
     ]);
+  });
+
+  it("keeps project shortcuts available beyond the displayed row limit", () => {
+    const roots = Array.from({ length: 21 }, (_, index) => makeWorkspace(`root-${index}`));
+    const input = projectionInput();
+    input.projects = [makeProject(roots.map(({ placement }) => placement))];
+    input.workspaceEntriesByKey = new Map(roots.map(({ entry }) => [entry.workspaceKey, entry]));
+    input.shortcutLimit = 100;
+
+    const projection = buildSidebarProjection(input);
+    expect(projection.shortcutModel.shortcutTargets).toHaveLength(21);
+    expect(projection.shortcutModel.shortcutIndexByWorkspaceKey.get("srv:root-20")).toBe(21);
+  });
+
+  it("numbers active descendants and their ancestors without reopening collapsed branches", () => {
+    const roots = Array.from({ length: 7 }, (_, index) => makeWorkspace(`root-${index}`));
+    const parent = makeWorkspace("parent");
+    const child = makeWorkspace("child", "running", [], "project", "parent");
+    const workspaces = [...roots, parent, child];
+    const input = projectionInput();
+    input.projects = [makeProject(workspaces.map(({ placement }) => placement))];
+    input.workspaceEntriesByKey = new Map(
+      workspaces.map(({ entry }) => [entry.workspaceKey, entry]),
+    );
+    input.shortcutLimit = 100;
+
+    const expandedTree = buildSidebarProjection(input).shortcutModel.shortcutTargets;
+    expect(expandedTree.slice(-2)).toEqual([
+      { serverId: "srv", workspaceId: "parent" },
+      { serverId: "srv", workspaceId: "child" },
+    ]);
+    const collapsedTree = buildSidebarProjection({
+      ...input,
+      collapsedWorkspaceKeys: new Set(["srv:parent"]),
+    }).shortcutModel.shortcutTargets;
+    expect(collapsedTree).toHaveLength(8);
+    expect(collapsedTree.at(-1)).toEqual({ serverId: "srv", workspaceId: "parent" });
+  });
+
+  it("respects a collapsed visible ancestor through a filtered-out parent", () => {
+    const ancestor = makeWorkspace("ancestor");
+    const hidden = makeWorkspace("hidden", "done", [], "project", "ancestor");
+    const child = makeWorkspace("child", "running", [], "project", "hidden");
+    const input = projectionInput();
+    input.projects = [makeProject([ancestor.placement, child.placement])];
+    input.workspaceEntriesByKey = new Map(
+      [ancestor, child].map(({ entry }) => [entry.workspaceKey, entry]),
+    );
+    const projection = buildSidebarProjection({
+      ...input,
+      allWorkspaceEntriesByKey: new Map(
+        [ancestor, hidden, child].map(({ entry }) => [entry.workspaceKey, entry]),
+      ),
+      collapsedWorkspaceKeys: new Set(["srv:ancestor"]),
+    });
+    expect(projection.shortcutModel.shortcutTargets).toEqual([
+      { serverId: "srv", workspaceId: "ancestor" },
+    ]);
+  });
+
+  it("keeps status shortcuts available beyond the displayed row limit", () => {
+    const workspaces = Array.from({ length: 21 }, (_, index) => makeWorkspace(`status-${index}`));
+    const input = projectionInput({ groupMode: "status" });
+    input.projects = [makeProject(workspaces.map(({ placement }) => placement))];
+    input.workspaceEntriesByKey = new Map(
+      workspaces.map(({ entry }) => [entry.workspaceKey, entry]),
+    );
+    input.shortcutLimit = 100;
+
+    expect(buildSidebarProjection(input).shortcutModel.shortcutTargets).toHaveLength(21);
+  });
+
+  it("numbers active and completed status rows beyond the displayed row limit", () => {
+    const workspaces = [
+      ...Array.from({ length: 10 }, (_, index) => makeWorkspace(`running-${index}`, "running")),
+      ...Array.from({ length: 10 }, (_, index) => makeWorkspace(`done-${index}`)),
+    ];
+    const input = projectionInput({ groupMode: "status" });
+    input.projects = [makeProject(workspaces.map(({ placement }) => placement))];
+    input.workspaceEntriesByKey = new Map(
+      workspaces.map(({ entry }) => [entry.workspaceKey, entry]),
+    );
+    input.shortcutLimit = 100;
+    const targets = buildSidebarProjection(input).shortcutModel.shortcutTargets;
+    expect(targets.filter(({ workspaceId }) => workspaceId.startsWith("running-"))).toHaveLength(
+      10,
+    );
+    expect(targets.filter(({ workspaceId }) => workspaceId.startsWith("done-"))).toHaveLength(10);
   });
 });

@@ -37,7 +37,11 @@ export function resolveWorkspaceRouteState(input: {
 }): WorkspaceRouteState {
   if (input.workspace) {
     if (input.connectionStatus === "online") {
-      if (input.recovery.kind === "recoverable" && input.recovery.phase === "restoring") {
+      if (
+        input.recovery.kind === "recoverable" &&
+        (input.recovery.phase === "restoring" ||
+          (input.recovery.phase === "failed" && input.recovery.failedWorkspaceIds.length > 0))
+      ) {
         return { kind: "archived", hostName: input.hostName, recovery: input.recovery };
       }
       return { kind: "ready" };

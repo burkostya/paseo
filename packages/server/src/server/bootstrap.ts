@@ -7,6 +7,7 @@ import {
   createJsonFinishSubscriptionStore,
 } from "./agent/finish-subscriptions/index.js";
 import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
+import type { AgentMessageSchedule } from "./agent/agent-messages/index.js";
 import type { PluginRegistries } from "@getpaseo/protocol/plugin-registry";
 import { describeHookWorkspace } from "./plugins/lifecycle/index.js";
 import express from "express";
@@ -512,6 +513,7 @@ export interface PaseoDaemonDependencies {
   hubRelationshipClock?: HubRelationshipClock;
   hubRelationshipRetryPolicy?: HubRelationshipRetryPolicy;
   createHubDaemonId?: () => string;
+  agentMessageSchedule?: AgentMessageSchedule;
   serverFeatureOverrides?: {
     daemonStatusRpc?: boolean;
     relayConfig?: boolean;
@@ -1096,6 +1098,7 @@ export async function createPaseoDaemon(
   const checkoutDiffManager = new CheckoutDiffManager({
     logger,
     paseoHome: config.paseoHome,
+    worktreesRoot: config.worktreesRoot,
     workspaceGitService,
     workspaceRuntimeStore,
   });
@@ -1829,6 +1832,7 @@ export async function createPaseoDaemon(
                 daemonStatusRpc: dependencies.serverFeatureOverrides?.daemonStatusRpc,
                 relayConfig: dependencies.serverFeatureOverrides?.relayConfig,
                 startPaused: true,
+                agentMessageSchedule: dependencies.agentMessageSchedule,
               },
               workspaceAutoName,
               workspaceRuntimeStore,

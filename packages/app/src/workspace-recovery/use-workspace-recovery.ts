@@ -4,7 +4,11 @@ import { useFetchQuery } from "@/data/query";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import { toErrorMessage } from "@/utils/error-messages";
-import { resolveWorkspaceRecoveryModel, type WorkspaceRecoveryController } from "./model";
+import {
+  recoverWorkspaceSelection,
+  resolveWorkspaceRecoveryModel,
+  type WorkspaceRecoveryController,
+} from "./model";
 
 export type { WorkspaceRecoveryController, WorkspaceRecoveryModel } from "./model";
 
@@ -28,12 +32,14 @@ function waitForMinimumRecoveryLoadingTime(): Promise<void> {
 export function useWorkspaceRecovery(input: {
   serverId: string;
   workspaceId: string;
+  agentId?: string | null;
   enabled: boolean;
 }): WorkspaceRecoveryController {
   const client = useHostRuntimeClient(input.serverId);
   const isConnected = useHostRuntimeIsConnected(input.serverId);
   const serverInfo = useSessionStore((store) => store.sessions[input.serverId]?.serverInfo ?? null);
   const supportsRecovery = serverInfo?.features?.workspaceRecovery === true;
+  const supportsHierarchy = serverInfo?.features?.workspaceHierarchy === true;
 
   const inspection = useFetchQuery({
     queryKey: ["workspaceRecovery", input.serverId, input.workspaceId],
@@ -49,6 +55,22 @@ export function useWorkspaceRecovery(input: {
     retry: false,
   });
 
+  const hierarchyInspection = useFetchQuery({
+    queryKey: ["workspaceHierarchyRecovery", input.serverId, input.workspaceId],
+    dataShape: "value",
+    staleTimeMs: 5_000,
+    enabled: Boolean(
+      input.enabled && client && isConnected && supportsRecovery && supportsHierarchy,
+    ),
+    queryFn: async () => {
+      if (!client) {
+        throw new Error("The host client is unavailable.");
+      }
+      return client.inspectWorkspaceSubtree(input.workspaceId, "restore");
+    },
+    retry: false,
+  });
+
   const restoreMutation = useMutation({
     mutationFn: async () => {
       if (!client || !isConnected) {
@@ -56,7 +78,15 @@ export function useWorkspaceRecovery(input: {
       }
       await waitForRecoveryLoadingPresentation();
       await waitForMinimumRecoveryLoadingTime();
-      await client.restoreWorkspace(input.workspaceId);
+      return recoverWorkspaceSelection({
+        client,
+        workspaceId: input.workspaceId,
+        agentId: input.agentId,
+        expectedWorkspaceIds:
+          supportsHierarchy && hierarchyInspection.data?.error === null
+            ? hierarchyInspection.data.expectedWorkspaceIds
+            : undefined,
+      });
     },
   });
 
@@ -68,14 +98,21 @@ export function useWorkspaceRecovery(input: {
         hasClient: client !== null,
         hasServerInfo: serverInfo !== null,
         supportsRecovery,
+        supportsHierarchy,
         inspection: {
           pending: inspection.isPending,
           error: inspection.isError ? toErrorMessage(inspection.error) : null,
           data: inspection.data,
         },
+        hierarchyInspection: {
+          pending: hierarchyInspection.isPending,
+          error: hierarchyInspection.isError ? toErrorMessage(hierarchyInspection.error) : null,
+          data: hierarchyInspection.data,
+        },
         restore: {
           pending: restoreMutation.isPending,
           error: restoreMutation.isError ? toErrorMessage(restoreMutation.error) : null,
+          data: restoreMutation.data,
         },
       }),
     [
@@ -86,11 +123,17 @@ export function useWorkspaceRecovery(input: {
       inspection.isError,
       inspection.isPending,
       isConnected,
+      hierarchyInspection.data,
+      hierarchyInspection.error,
+      hierarchyInspection.isError,
+      hierarchyInspection.isPending,
+      restoreMutation.data,
       restoreMutation.error,
       restoreMutation.isError,
       restoreMutation.isPending,
       serverInfo,
       supportsRecovery,
+      supportsHierarchy,
     ],
   );
 
@@ -99,7 +142,10 @@ export function useWorkspaceRecovery(input: {
   }, [restoreMutation]);
   const retryInspection = useCallback(() => {
     void inspection.refetch();
-  }, [inspection]);
+    if (supportsHierarchy) {
+      void hierarchyInspection.refetch();
+    }
+  }, [hierarchyInspection, inspection, supportsHierarchy]);
 
   return { state, restore, retryInspection };
 }

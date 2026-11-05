@@ -34,6 +34,7 @@ vi.mock("@/attachments/service", () => ({
 vi.mock("@/hooks/use-agent-form-state", () => ({
   useAgentFormState: () => ({
     selectedServerId: "host-1",
+    selectedAgentProfileId: null,
     selectedProvider: "codex",
     setProviderFromUser: () => undefined,
     selectedMode: "auto",
@@ -42,6 +43,7 @@ vi.mock("@/hooks/use-agent-form-state", () => ({
     setModelFromUser: () => undefined,
     selectedThinkingOptionId: "",
     setThinkingOptionFromUser: () => undefined,
+    clearAgentProfileFromUser: () => undefined,
     workingDir: "/repo",
     providerDefinitions: [{ id: "codex", label: "Codex", modes: [{ id: "auto", label: "Auto" }] }],
     providerDefinitionMap: new Map(),

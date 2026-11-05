@@ -6,6 +6,7 @@ import type {
   AgentSession,
   AgentStreamEvent,
   AgentRuntimeInfo,
+  AgentPermissionRequest,
   SteerActiveTurnOptions,
   SteerResult,
   ImportedTimelineEntry,
@@ -29,6 +30,7 @@ const OPTIONAL_AGENT_SESSION_METHOD_NAMES = [
   "revertConversation",
   "revertFiles",
   "revertBoth",
+  "resolveRewindTarget",
   "tryHandleOutOfBand",
 ] as const satisfies readonly OptionalAgentSessionMethodName[];
 
@@ -68,6 +70,9 @@ class FakeSession implements AgentSession {
   readonly steers: Array<{ prompt: AgentPromptInput; options: SteerActiveTurnOptions }> = [];
   readonly features = [];
   readonly recordedCalls: string[] = [];
+  readonly pendingPermissions: AgentPermissionRequest[] = [];
+  readonly history: AgentStreamEvent[] = [];
+  readonly listeners = new Set<(event: AgentStreamEvent) => void>();
 
   async run() {
     this.recordedCalls.push("run");
@@ -88,14 +93,17 @@ class FakeSession implements AgentSession {
     return { status: "accepted" };
   }
 
-  subscribe(_callback: (event: AgentStreamEvent) => void) {
+  subscribe(callback: (event: AgentStreamEvent) => void) {
     this.recordedCalls.push("subscribe");
-    return () => {};
+    this.listeners.add(callback);
+    return () => {
+      this.listeners.delete(callback);
+    };
   }
 
   async *streamHistory() {
     this.recordedCalls.push("streamHistory");
-    yield* emptyHistory();
+    yield* this.history;
   }
 
   async getRuntimeInfo() {
@@ -119,7 +127,7 @@ class FakeSession implements AgentSession {
 
   getPendingPermissions() {
     this.recordedCalls.push("getPendingPermissions");
-    return [];
+    return this.pendingPermissions;
   }
 
   async respondToPermission() {
@@ -168,6 +176,11 @@ class FakeSession implements AgentSession {
     this.recordedCalls.push("revertBoth");
   }
 
+  async resolveRewindTarget() {
+    this.recordedCalls.push("resolveRewindTarget");
+    return "checkpoint-1";
+  }
+
   tryHandleOutOfBand(_prompt: AgentPromptInput) {
     this.recordedCalls.push("tryHandleOutOfBand");
     return {
@@ -178,13 +191,65 @@ class FakeSession implements AgentSession {
   }
 }
 
-async function* emptyHistory(): AsyncGenerator<AgentStreamEvent> {
-  for (const event of [] as AgentStreamEvent[]) {
-    yield event;
-  }
-}
-
 describe("wrapSessionProvider", () => {
+  test("keeps plan permission identity consistent across live events, history and pending requests", async () => {
+    const session = new FakeSession();
+    const request: AgentPermissionRequest = {
+      id: "plan-1",
+      provider: session.provider,
+      name: "plan_approval",
+      kind: "plan",
+      input: { plan: "Implement the proposed changes" },
+      metadata: { planText: "Implement the proposed changes" },
+    };
+    const requested: AgentStreamEvent = {
+      type: "permission_requested",
+      provider: session.provider,
+      request,
+      turnId: "turn-1",
+    };
+    const approved: AgentStreamEvent = {
+      type: "timeline",
+      provider: session.provider,
+      turnId: "turn-1",
+      item: {
+        type: "tool_call",
+        callId: request.id,
+        name: "plan_approval",
+        status: "completed",
+        error: null,
+        detail: { type: "plan", text: "Implement the proposed changes" },
+        metadata: { approved: true, planResolution: "approved" },
+      },
+    };
+    session.pendingPermissions.push(request);
+    session.history.push(requested, approved);
+    const originalRequest = structuredClone(request);
+    const originalEvents = structuredClone(session.history);
+    const wrapped = wrapSessionProvider("custom-claude", session);
+    const live: AgentStreamEvent[] = [];
+    const unsubscribe = wrapped.subscribe((event) => live.push(event));
+    for (const event of session.history) {
+      for (const listener of session.listeners) listener(event);
+    }
+    unsubscribe();
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of wrapped.streamHistory()) history.push(event);
+    const mappedRequest = { ...request, provider: "custom-claude" };
+    const expectedEvents = [
+      { ...requested, provider: "custom-claude", request: mappedRequest },
+      { ...approved, provider: "custom-claude" },
+    ];
+    expect(live).toEqual(expectedEvents);
+    expect(history).toEqual(expectedEvents);
+    expect(wrapped.getPendingPermissions()).toEqual([mappedRequest]);
+    expect(request).toEqual(originalRequest);
+    expect(session.history).toEqual(originalEvents);
+    expect(session.pendingPermissions).toEqual([originalRequest]);
+    expect(session.listeners.size).toBe(0);
+  });
+
   test("forwards every optional AgentSession method", async () => {
     const session = new FakeSession();
     const wrapped = wrapSessionProvider("custom-claude", session);
@@ -197,6 +262,14 @@ describe("wrapSessionProvider", () => {
     await wrapped.revertConversation?.({ messageId: "message-1" });
     await wrapped.revertFiles?.({ messageId: "message-1" });
     await wrapped.revertBoth?.({ messageId: "message-1" });
+    await expect(
+      wrapped.resolveRewindTarget?.({
+        messageId: "message-1",
+        text: "/command",
+        timestamp: "2026-10-07T20:00:00Z",
+        precedingProviderMessageIds: [],
+      }),
+    ).resolves.toBe("checkpoint-1");
     const handler = wrapped.tryHandleOutOfBand?.("/compact");
     await handler?.run({ emit: () => {} });
 
@@ -212,6 +285,7 @@ describe("wrapSessionProvider", () => {
       "revertConversation",
       "revertFiles",
       "revertBoth",
+      "resolveRewindTarget",
       "tryHandleOutOfBand",
       "tryHandleOutOfBand.run",
     ]);

@@ -10,6 +10,7 @@ import {
   type PiExtensionHost,
 } from "./extensions/index.js";
 import type { PiAgentMessage, PiImageContent, PiTextContent } from "./rpc-types.js";
+import type { PiContextCommandCheckpoint } from "./command-checkpoints.js";
 import {
   extractTextFromToolResult,
   mapToolDetail,
@@ -26,6 +27,7 @@ export interface PiCapturedUserMessageEntry {
 }
 
 export interface PiHistoryMapperHooks {
+  commandCheckpoints?: readonly PiContextCommandCheckpoint[];
   mapCustomMessage?: (
     text: string,
     provider: string,
@@ -314,12 +316,31 @@ export async function* streamPiHistory(
   signal?: AbortSignal,
 ): AsyncGenerator<AgentStreamEvent> {
   const mapper = new PiHistoryMapper(provider, userEntries, hooks, extensionHost);
-  for (const message of messages) {
+  const checkpoints = hooks.commandCheckpoints ?? [];
+  let checkpointIndex = 0;
+  for (let messageIndex = 0; messageIndex <= messages.length; messageIndex += 1) {
     if (signal?.aborted) return;
+    while (
+      checkpointIndex < checkpoints.length &&
+      checkpoints[checkpointIndex].messageIndex === messageIndex
+    ) {
+      const checkpoint = checkpoints[checkpointIndex++];
+      yield {
+        type: "timeline",
+        provider,
+        timestamp: checkpoint.timestamp,
+        item: { type: "user_message", text: checkpoint.text, messageId: checkpoint.id },
+      };
+    }
+    const message = messages[messageIndex];
+    if (!message) break;
     for (const event of await mapper.mapMessages([message])) {
       if (signal?.aborted) return;
       yield event;
     }
+  }
+  if (checkpointIndex !== checkpoints.length) {
+    throw new Error("Pi command checkpoints did not match the captured conversation");
   }
   for (const event of await mapper.hydrate()) {
     if (signal?.aborted) return;

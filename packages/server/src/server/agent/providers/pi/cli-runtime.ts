@@ -1,6 +1,9 @@
 import { createExternalProcessEnv } from "../../../paseo-env.js";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Logger } from "pino";
+import { randomUUID } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import {
@@ -10,6 +13,7 @@ import {
 } from "../jsonl-rpc-process.js";
 import {
   buildPiLaunch,
+  resolvePiAgentDir,
   type PiRuntime,
   type PiRuntimeLaunch,
   type PiRuntimeSession,
@@ -52,10 +56,25 @@ export class PiCliRuntime implements PiRuntime {
   }
 
   async startSession(input: PiStartSessionInput): Promise<PiRuntimeSession> {
+    let sessionInput = input;
+    if (input.persistInitialSession && !input.noSession && !input.session) {
+      const env = { ...this.options.runtimeSettings?.env, ...input.env };
+      const cwdName = `--${resolve(input.cwd)
+        .replace(/^[/\\]/, "")
+        .replace(/[/\\:]/g, "-")}--`;
+      const directory = join(resolvePiAgentDir(env), "sessions", cwdName);
+      await mkdir(directory, { recursive: true });
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const sessionFile = join(directory, `${timestamp}_${randomUUID()}.jsonl`);
+      // Pi defers custom-entry persistence until the first user message unless it
+      // opens an existing file. Let Pi initialize its own header and format.
+      await writeFile(sessionFile, "", { flag: "wx", mode: 0o600 });
+      sessionInput = { ...input, session: sessionFile };
+    }
     const launch = buildPiLaunch({
       command: this.command,
       runtimeSettings: this.options.runtimeSettings,
-      session: input,
+      session: sessionInput,
     });
     launch.env = createExternalProcessEnv(globalThis.process.env, launch.env ?? {});
     const [command, ...args] = launch.argv;

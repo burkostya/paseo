@@ -3,7 +3,7 @@ import path from "node:path";
 import type { Page } from "@playwright/test";
 import { waitForTabBar } from "./launcher";
 import { selectWorkspaceInSidebar } from "./sidebar";
-import { createTempGitRepo, resolveTempRoot } from "./workspace";
+import { configureTempComparisonBase, createTempGitRepo, resolveTempRoot } from "./workspace";
 import {
   connectWorkspaceSetupClient,
   openHomeWithProject,
@@ -19,6 +19,7 @@ export interface CreatedWorkspace {
 export interface WithWorkspaceOptions {
   worktree?: boolean;
   prefix?: string;
+  comparisonBase?: boolean;
 }
 
 export type WithWorkspace = (options?: WithWorkspaceOptions) => Promise<CreatedWorkspace>;
@@ -46,6 +47,7 @@ export function createWithWorkspace(page: Page): WithWorkspaceHandle {
     const prefix = options?.prefix ?? (options?.worktree ? "wt-" : "ws-");
     const repo = await createTempGitRepo(prefix);
     repos.push(repo);
+    if (options?.comparisonBase) configureTempComparisonBase(repo.path);
 
     let workspacePath = repo.path;
     if (options?.worktree) {

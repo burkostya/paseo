@@ -5255,6 +5255,65 @@ test("model changes persist the resolved thinking and fresh provider handle befo
   }
 });
 
+test("persists an agent profile identity and clears it after a manual config change", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-profile-identity-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000135",
+  });
+
+  const snapshot = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      agentProfileId: "review",
+      model: "gpt-5.2-codex",
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+  expect(toAgentPayload(snapshot).agentProfileId).toBe("review");
+
+  await manager.setAgentModel(snapshot.id, "gpt-5.4");
+  await manager.flush();
+
+  expect(manager.getAgent(snapshot.id)?.config.agentProfileId).toBeUndefined();
+  expect(toAgentPayload(manager.getAgent(snapshot.id)!)).toMatchObject({
+    agentProfileId: null,
+    model: "gpt-5.4",
+  });
+  expect((await storage.get(snapshot.id))?.config?.agentProfileId).toBeUndefined();
+});
+
+test("applies a profile identity after the bundle's manual config mutations", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-profile-apply-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000136",
+  });
+
+  const snapshot = await manager.createAgent(
+    { provider: "codex", cwd: workdir, model: "gpt-5.2-codex", agentProfileId: "old" },
+    undefined,
+    { workspaceId: undefined },
+  );
+
+  await manager.applyAgentConfig(snapshot.id, {
+    modelId: "gpt-5.4",
+    agentProfileId: "review",
+  });
+  await manager.flush();
+
+  expect(manager.getAgent(snapshot.id)?.config.agentProfileId).toBe("review");
+  expect((await storage.get(snapshot.id))?.config?.agentProfileId).toBe("review");
+});
+
 test("later explicit config mutations win over events emitted by earlier mutations", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-config-mutation-order-"));
   class ConfigMutationSession extends TestAgentSession {
@@ -5475,6 +5534,54 @@ test("session config drift events update state through the stream channel", asyn
   const persisted = await storage.get(snapshot.id);
   expect(persisted?.lastModeId).toBe("build");
   expect(persisted?.config?.modeId).toBe("build");
+});
+
+test("clears profile identity on changed provider config events but keeps it for duplicates", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-profile-drift-events-"));
+  let capturedSession: TestAgentSession | null = null;
+  class ConfigEventClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      capturedSession = new TestAgentSession(config);
+      return capturedSession;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new ConfigEventClient() },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000137",
+  });
+  const snapshot = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      modeId: "plan",
+      model: "gpt-5.2-codex",
+      thinkingOptionId: "low",
+      agentProfileId: "review",
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+
+  capturedSession?.pushEvent({
+    type: "mode_changed",
+    provider: "codex",
+    currentModeId: "build",
+    availableModes: [],
+  });
+  await manager.flush();
+  expect(manager.getAgent(snapshot.id)?.config.agentProfileId).toBeUndefined();
+
+  await manager.applyAgentConfig(snapshot.id, { agentProfileId: "review" });
+  capturedSession?.pushEvent({
+    type: "mode_changed",
+    provider: "codex",
+    currentModeId: "build",
+    availableModes: [],
+  });
+  await manager.flush();
+  expect(manager.getAgent(snapshot.id)?.config.agentProfileId).toBe("review");
 });
 
 test("setLabels merges and persists labels", async () => {
@@ -11281,13 +11388,17 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
   }
 });
 
-test("authoritative timeline records a daemon-handled submitted prompt before its output", async () => {
+test("daemon-handled prompts reconcile checkpoints without duplicate rows and can rewind", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-daemon-handled-prompt-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
   const commandCompleted = deferred<void>();
 
   class DaemonHandledPromptSession extends TestAgentSession {
+    readonly rewindMessageIds: string[] = [];
+    readonly resolvedTargets: Array<
+      Parameters<NonNullable<AgentSession["resolveRewindTarget"]>>[0]
+    > = [];
     override readonly capabilities = {
       ...TEST_CAPABILITIES,
       supportsRewindConversation: true,
@@ -11296,7 +11407,23 @@ test("authoritative timeline records a daemon-handled submitted prompt before it
     override tryHandleOutOfBand(prompt: AgentPromptInput) {
       if (prompt !== "/handled") return null;
       return {
-        run: async ({ emit }: { emit: (event: AgentStreamEvent) => void }) => {
+        run: async ({
+          emit,
+          clientMessageId,
+        }: {
+          emit: (event: AgentStreamEvent) => void;
+          clientMessageId?: string;
+        }) => {
+          emit({
+            type: "timeline",
+            provider: this.provider,
+            item: {
+              type: "user_message",
+              text: "/handled",
+              messageId: "native-command-checkpoint",
+              clientMessageId,
+            },
+          });
           emit({
             type: "timeline",
             provider: this.provider,
@@ -11306,16 +11433,30 @@ test("authoritative timeline records a daemon-handled submitted prompt before it
         },
       };
     }
-  }
 
-  class DaemonHandledPromptClient extends TestAgentClient {
-    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-      return new DaemonHandledPromptSession(config);
+    override async revertConversation(input: { messageId: string }): Promise<void> {
+      this.rewindMessageIds.push(input.messageId);
+    }
+
+    async resolveRewindTarget(
+      input: Parameters<NonNullable<AgentSession["resolveRewindTarget"]>>[0],
+    ): Promise<string | null> {
+      this.resolvedTargets.push(input);
+      return input.text === "/legacy" ? "paseo-leaf:previous-assistant" : null;
     }
   }
 
+  class DaemonHandledPromptClient extends TestAgentClient {
+    session: DaemonHandledPromptSession | null = null;
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.session = new DaemonHandledPromptSession(config);
+      return this.session;
+    }
+  }
+
+  const client = new DaemonHandledPromptClient();
   const manager = new AgentManager({
-    clients: { codex: new DaemonHandledPromptClient() },
+    clients: { codex: client },
     registry: storage,
     logger,
     idFactory: () => "00000000-0000-4000-8000-000000000403",
@@ -11345,18 +11486,58 @@ test("authoritative timeline records a daemon-handled submitted prompt before it
         type: "user_message",
         text: "/handled",
         clientMessageId: "msg-client-daemon-handled",
+        messageId: "msg-client-daemon-handled",
       },
       { type: "assistant_message", text: "Handled by the daemon" },
     ]);
-
     const timeline = manager.fetchTimeline(snapshot.id, { direction: "tail", limit: 20 }).rows;
     expect(timeline.map((row) => row.item)).toEqual([
       {
         type: "user_message",
         text: "/handled",
         clientMessageId: "msg-client-daemon-handled",
+        messageId: "msg-client-daemon-handled",
       },
       { type: "assistant_message", text: "Handled by the daemon" },
+    ]);
+    expect(timeline[0].providerMessageId).toBe("native-command-checkpoint");
+    await manager.rewind(snapshot.id, "msg-client-daemon-handled", "conversation");
+    expect(client.session?.rewindMessageIds).toEqual(["native-command-checkpoint"]);
+    await manager.appendTimelineItem(snapshot.id, {
+      type: "user_message",
+      messageId: "previous-native-user",
+      text: "Previous turn",
+    });
+    await manager.appendTimelineItem(snapshot.id, {
+      type: "user_message",
+      clientMessageId: "legacy-client",
+      text: "/legacy",
+    });
+    await manager.rewind(snapshot.id, "legacy-client", "conversation");
+    expect(client.session?.resolvedTargets).toEqual([
+      {
+        messageId: "legacy-client",
+        text: "/legacy",
+        timestamp: expect.any(String),
+        precedingProviderMessageIds: ["previous-native-user"],
+      },
+    ]);
+    expect(client.session?.rewindMessageIds).toEqual([
+      "native-command-checkpoint",
+      "paseo-leaf:previous-assistant",
+    ]);
+    await manager.appendTimelineItem(snapshot.id, {
+      type: "user_message",
+      clientMessageId: "unconfirmed-client",
+      messageId: "unconfirmed-client",
+      text: "Ordinary prompt without provider acknowledgement",
+    });
+    await expect(manager.rewind(snapshot.id, "unconfirmed-client", "conversation")).rejects.toThrow(
+      "Cannot rewind before the provider acknowledges the submitted prompt",
+    );
+    expect(client.session?.rewindMessageIds).toEqual([
+      "native-command-checkpoint",
+      "paseo-leaf:previous-assistant",
     ]);
   } finally {
     await manager.flush().catch(() => undefined);
@@ -11394,6 +11575,15 @@ test("tryRunOutOfBand gives providers the command another agent sent, not its en
     const pasted = prepareAgentMessage(String(fromAgent.prompt));
     expect(await manager.tryRunOutOfBand(agent.id, pasted.prompt)).toBe(false);
     expect(seenPrompts.at(-1)).toBe(pasted.prompt);
+
+    expect(
+      await manager.tryRunOutOfBand(agent.id, "/handled", { clientMessageId: "command-id" }),
+    ).toBe(true);
+    expect(manager.fetchTimeline(agent.id, { direction: "tail", limit: 20 }).rows).toEqual([
+      expect.objectContaining({
+        item: { type: "user_message", text: "/handled", clientMessageId: "command-id" },
+      }),
+    ]);
   } finally {
     await manager.closeAgent(agent.id);
     rmSync(workdir, { recursive: true, force: true });

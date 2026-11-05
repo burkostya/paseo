@@ -90,6 +90,7 @@ function makeState(
 ): AgentFormReducerState {
   return {
     form: {
+      agentProfileId: null,
       provider: null,
       modeId: "",
       model: "",
@@ -552,6 +553,7 @@ describe("resolveFormState", () => {
       {},
       null,
       {
+        agentProfileId: false,
         provider: true,
         modeId: true,
         model: true,
@@ -1060,6 +1062,7 @@ describe("resolveAgentForm", () => {
     it("drops a stale saved mode for a modeless profile provider", () => {
       const next = resolveAgentForm(makeState({ provider: "codex", modeId: "full-access" }), {
         type: "APPLY_PROFILE_FROM_USER",
+        profileId: "profile-pi",
         provider: "pi",
         modelId: "anthropic/sonnet",
         modeId: "",
@@ -1079,6 +1082,7 @@ describe("resolveAgentForm", () => {
     it("restores thinking for the selected model when the profile omits it", () => {
       const next = resolveAgentForm(makeState(), {
         type: "APPLY_PROFILE_FROM_USER",
+        profileId: "profile-codex",
         provider: "codex",
         modelId: "gpt-5.3-codex",
         modeId: "full-access",

@@ -33,6 +33,33 @@ test("published old daemon keeps workspace navigation and gates sorting", async 
   }
 });
 
+test("published v0.12.0 daemon requires an update for shared comparison settings", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  const daemon = await startIsolatedHostDaemon(`srv_comparison_old_${randomUUID()}`, {
+    publishedVersion: "0.12.0",
+  });
+  try {
+    const project = await seedWorkspace({ repoPrefix: "comparison-old-host-", port: daemon.port });
+    try {
+      await openPublishedHost(page, daemon, project.workspaceId);
+      const row = page.getByTestId(
+        `sidebar-workspace-row-${daemon.serverId}:${project.workspaceId}`,
+      );
+      await expect(row).toBeVisible();
+      await row.click({ button: "right" });
+      await page.getByTestId("comparison-menu").click();
+      await expect(page.getByText("Update the host to choose a comparison.")).toBeVisible();
+      await expect(page.getByTestId("comparison-all-auto")).toHaveCount(0);
+    } finally {
+      await project.cleanup();
+    }
+  } finally {
+    await daemon.close();
+  }
+});
+
 async function openPublishedHost(
   page: Page,
   daemon: { serverId: string; port: number },

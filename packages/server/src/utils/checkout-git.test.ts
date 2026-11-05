@@ -1,3 +1,9 @@
+import { describeWorkspaceComparison } from "../server/git-comparison/snapshot.js";
+import { createNoGitWorkspaceRuntimeSnapshot } from "../server/test-utils/workspace-git-service-stub.js";
+import {
+  createPersistedProjectRecord,
+  createPersistedWorkspaceRecord,
+} from "../server/workspace-registry.js";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { execFileSync, execSync, spawnSync } from "child_process";
 import {
@@ -28,6 +34,9 @@ import {
   getCurrentBranch,
   getCheckoutDiff,
   getCheckoutShortstat,
+  getComparisonShortstat,
+  getComparisonShortstatV2,
+  listComparisonBranches,
   getPullRequestStatus,
   getCheckoutStatus,
   checkoutResolvedBranch,
@@ -40,6 +49,7 @@ import {
   pullCurrentBranch,
   pushCurrentBranch,
   resolveBranchCheckout,
+  resolveComparisonBase,
   resolveRepositoryDefaultBranch,
   parseWorktreeList,
   renameCurrentBranch,
@@ -1440,6 +1450,10 @@ const x = 1;
       ).toEqual(expectedFiles);
       expect(result.diff).toContain(patch);
       expect(result.diff.length === 0).toBe(expectedFiles.length === 0);
+      expect(await getComparisonShortstatV2(repoDir, { mode: "all", baseRef: "main" })).toEqual({
+        additions: expectedFiles[0]?.additions ?? 0,
+        deletions: expectedFiles[0]?.deletions ?? 0,
+      });
       expect(readFileSync(join(repoDir, indexPath))).toEqual(beforeIndex);
       expect(execFileSync("git", ["status", "--porcelain=v1", "-z"], { cwd: repoDir })).toEqual(
         beforeStatus,
@@ -3842,8 +3856,49 @@ const x = 1;
     });
 
     await expect(
-      getCheckoutDiff(worktree.worktreePath, { mode: "base", baseRef: "other" }, { paseoHome }),
+      mergeFromBase(worktree.worktreePath, { baseRef: "other" }, { paseoHome }),
     ).rejects.toThrow("Base ref mismatch: stored refs/heads/main, requested other");
+  });
+
+  it("allows a read-only Paseo worktree diff against a different base branch", async () => {
+    execFileSync("git", ["checkout", "-b", "develop"], { cwd: repoDir });
+    writeFileSync(join(repoDir, "develop.txt"), "develop\n");
+    execFileSync("git", ["add", "develop.txt"], { cwd: repoDir });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "develop commit"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["checkout", "main"], { cwd: repoDir });
+
+    const worktree = await createLegacyWorktreeForTest({
+      branchName: "feature",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "alternate-diff-base",
+      paseoHome,
+    });
+    writeFileSync(join(worktree.worktreePath, "feature.txt"), "feature\n");
+    execFileSync("git", ["add", "feature.txt"], { cwd: worktree.worktreePath });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "feature commit"], {
+      cwd: worktree.worktreePath,
+    });
+
+    const diff = await getCheckoutDiff(
+      worktree.worktreePath,
+      { mode: "base", baseRef: "develop" },
+      { paseoHome },
+    );
+
+    expect(diff.diff).toContain("feature.txt");
+    await expect(
+      getCheckoutDiff(
+        worktree.worktreePath,
+        { mode: "base", baseRef: "missing-branch" },
+        { paseoHome },
+      ),
+    ).rejects.toThrow("Base branch not found locally or on origin: missing-branch");
+    await expect(
+      mergeFromBase(worktree.worktreePath, { baseRef: "develop" }, { paseoHome }),
+    ).rejects.toThrow("Base ref mismatch: stored refs/heads/main, requested develop");
   });
 
   it("excludes dirty working tree changes from Paseo worktree base diffs", async () => {
@@ -4191,6 +4246,297 @@ describe("discardChanges", () => {
 
       expect(readTextFile(join(repoDir, "foo[ab].txt"))).toBe("literal original\n");
       expect(readTextFile(join(repoDir, "fooa.txt"))).toBe("sibling changed\n");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("workspace comparison shortstat", () => {
+  it("matches the working diff and keeps explicit branches separate from uncommitted changes", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "paseo-comparison-"));
+    const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" });
+    try {
+      git("init", "-b", "main");
+      git("config", "user.email", "test@example.com");
+      git("config", "user.name", "Test");
+      writeFileSync(join(cwd, "file.txt"), "original\n");
+      expect(await getComparisonShortstat(cwd, { mode: "uncommitted" })).toEqual({
+        additions: 1,
+        deletions: 0,
+      });
+      git("add", ".");
+      git("commit", "-m", "initial");
+      git("checkout", "-b", "task");
+      writeFileSync(join(cwd, "file.txt"), "original\ncommitted\n");
+      git("commit", "-am", "task");
+      writeFileSync(join(cwd, "file.txt"), "original\ncommitted\nstaged\n");
+      git("add", ".");
+      writeFileSync(join(cwd, "file.txt"), "original\ncommitted\nstaged\nunstaged\n");
+      writeFileSync(join(cwd, "new.txt"), "untracked\n");
+      expect(await getComparisonShortstat(cwd, { mode: "uncommitted" })).toEqual({
+        additions: 3,
+        deletions: 0,
+      });
+      expect(
+        await getComparisonShortstat(cwd, { mode: "base", baseRef: "refs/heads/main" }),
+      ).toEqual({ additions: 4, deletions: 0 });
+      const diff = await getCheckoutDiff(cwd, {
+        mode: "base",
+        baseRef: "refs/heads/main",
+        includeWorkingTree: true,
+      });
+      expect(diff.diff).toContain("+untracked");
+      expect(diff.diff).toContain("+unstaged");
+      git("update-ref", "refs/remotes/team/main", "main");
+      expect(await listComparisonBranches(cwd, "main")).toEqual([
+        "refs/heads/main",
+        "refs/remotes/team/main",
+      ]);
+      const snapshot = createNoGitWorkspaceRuntimeSnapshot(cwd);
+      snapshot.git.isGit = true;
+      const timestamp = "2026-10-02T00:00:00.000Z";
+      const project = createPersistedProjectRecord({
+        projectId: "project",
+        rootPath: cwd,
+        kind: "git",
+        displayName: "project",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      project.diffComparison = { mode: "uncommitted" };
+      const workspace = createPersistedWorkspaceRecord({
+        workspaceId: "one",
+        projectId: project.projectId,
+        cwd,
+        kind: "local_checkout",
+        displayName: "task",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      const owner = {};
+      const ready = Promise.withResolvers<void>();
+      const input = { workspace, project, snapshot, owner, onReady: () => ready.resolve() };
+      expect(describeWorkspaceComparison(input)).toMatchObject({
+        diffComparison: { mode: "uncommitted" },
+        diffStat: null,
+      });
+      const otherReady = Promise.withResolvers<void>();
+      const otherInput = {
+        ...input,
+        project: {
+          ...project,
+          diffComparison: { mode: "base" as const, baseRef: "refs/heads/main" },
+        },
+        owner: {},
+        onReady: () => otherReady.resolve(),
+      };
+      expect(describeWorkspaceComparison(otherInput).diffStat).toBeNull();
+      await Promise.all([ready.promise, otherReady.promise]);
+      expect(describeWorkspaceComparison(input).diffStat).toEqual({ additions: 3, deletions: 0 });
+      expect(describeWorkspaceComparison(otherInput).diffStat).toEqual({
+        additions: 4,
+        deletions: 0,
+      });
+      expect(
+        describeWorkspaceComparison({
+          ...otherInput,
+          workspace: { ...workspace, diffComparison: { mode: "uncommitted" } },
+        }).diffStat,
+      ).toEqual({ additions: 3, deletions: 0 });
+
+      git("remote", "add", "team", "https://github.com/team/repo.git");
+      git("symbolic-ref", "refs/remotes/team/HEAD", "refs/remotes/team/main");
+      const autoReady = Promise.withResolvers<void>();
+      const autoInput = {
+        ...input,
+        project: { ...project, diffComparison: undefined },
+        owner: {},
+        onReady: () => autoReady.resolve(),
+      };
+      expect(describeWorkspaceComparison(autoInput).diffComparisonV2).toEqual({ mode: "all" });
+      await autoReady.promise;
+      expect(describeWorkspaceComparison(autoInput)).toMatchObject({
+        diffComparisonV2: { mode: "all" },
+        diffComparisonResolvedBase: "refs/remotes/team/main",
+        diffComparisonBaseSource: "remote_head",
+        diffComparison: { mode: "base", baseRef: "refs/remotes/team/main" },
+        diffStat: { additions: 4, deletions: 0 },
+      });
+      const committedReady = Promise.withResolvers<void>();
+      const committedInput = {
+        ...input,
+        project: {
+          ...project,
+          diffComparison: undefined,
+          diffComparisonV2: { mode: "base" as const, baseRef: "refs/heads/main" },
+        },
+        owner: {},
+        onReady: () => committedReady.resolve(),
+      };
+      expect(describeWorkspaceComparison(committedInput).diffStat).toBeNull();
+      await committedReady.promise;
+      expect(describeWorkspaceComparison(committedInput)).toMatchObject({
+        diffComparisonV2: { mode: "base", baseRef: "refs/heads/main" },
+        diffComparison: { mode: "base", baseRef: "refs/heads/main" },
+        diffStat: { additions: 1, deletions: 0 },
+      });
+
+      git("remote", "add", "other", "https://github.com/other/repo.git");
+      const failedReady = Promise.withResolvers<void>();
+      const failedInput = {
+        ...autoInput,
+        snapshot: {
+          ...snapshot,
+          forge: { ...snapshot.forge, error: { message: "forge offline" } },
+        },
+        owner: {},
+        onReady: () => failedReady.resolve(),
+      };
+      describeWorkspaceComparison(failedInput);
+      await failedReady.promise;
+      expect(describeWorkspaceComparison(failedInput)).toMatchObject({
+        diffStat: null,
+        diffComparisonError: expect.stringContaining("uniquely identify"),
+        diffComparisonWarning: "forge offline",
+      });
+      git("remote", "remove", "other");
+
+      git("add", ".");
+      git("commit", "-m", "save");
+      expect(await getComparisonShortstat(cwd, { mode: "uncommitted" })).toEqual({
+        additions: 0,
+        deletions: 0,
+      });
+      await expect(
+        getComparisonShortstat(cwd, { mode: "base", baseRef: "refs/heads/missing" }),
+      ).rejects.toThrow();
+      await expect(
+        getCheckoutDiff(cwd, {
+          mode: "base",
+          baseRef: "refs/heads/missing",
+          includeWorkingTree: true,
+        }),
+      ).rejects.toThrow();
+      git("checkout", "--detach");
+      expect(
+        await getComparisonShortstat(cwd, { mode: "base", baseRef: "refs/heads/main" }),
+      ).toEqual({ additions: 4, deletions: 0 });
+      git("checkout", "--orphan", "unrelated");
+      git("commit", "-m", "Independent history");
+      await expect(
+        getComparisonShortstat(cwd, { mode: "base", baseRef: "refs/heads/main" }),
+      ).rejects.toThrow();
+      await expect(
+        getCheckoutDiff(cwd, {
+          mode: "base",
+          baseRef: "refs/heads/main",
+          includeWorkingTree: true,
+        }),
+      ).rejects.toThrow();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("automatic comparison base", () => {
+  it("uses the PR target remote and exact ref before the branch remote default", async () => {
+    const { tempDir, repoDir } = initRepo();
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: repoDir, encoding: "utf8" });
+    try {
+      git("checkout", "-b", "task");
+      git("remote", "add", "origin", "git@github.com:fork/repo.git");
+      git("remote", "add", "upstream", "https://github.com/team/repo.git");
+      git("config", "branch.task.remote", "origin");
+      git("update-ref", "refs/remotes/origin/main", "HEAD");
+      git("update-ref", "refs/remotes/upstream/next", "HEAD");
+      git("update-ref", "refs/remotes/upstream/release", "HEAD");
+      git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+      await expect(
+        resolveComparisonBase({
+          cwd: repoDir,
+          pullRequest: { url: "https://github.com/team/repo/pull/12", baseRefName: "next" },
+        }),
+      ).resolves.toEqual({ baseRef: "refs/remotes/upstream/next", source: "pull_request" });
+      await expect(
+        resolveComparisonBase({
+          cwd: repoDir,
+          pullRequest: { url: "https://github.com/team/repo/pull/12", baseRefName: "release" },
+        }),
+      ).resolves.toEqual({ baseRef: "refs/remotes/upstream/release", source: "pull_request" });
+      await expect(resolveComparisonBase({ cwd: repoDir })).resolves.toEqual({
+        baseRef: "refs/remotes/origin/main",
+        source: "remote_head",
+      });
+      await expect(
+        resolveComparisonBase({
+          cwd: repoDir,
+          forgeError: "forge unavailable",
+          previousPullRequestBase: "refs/remotes/upstream/next",
+        }),
+      ).resolves.toEqual({
+        baseRef: "refs/remotes/upstream/next",
+        source: "pull_request",
+        warning: "forge unavailable",
+      });
+      git("remote", "remove", "upstream");
+      git("config", "branch.task.remote", ".");
+      await expect(resolveComparisonBase({ cwd: repoDir })).resolves.toEqual({
+        baseRef: "refs/remotes/origin/main",
+        source: "remote_head",
+      });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("requires an unambiguous remote and a locally available base", async () => {
+    const { tempDir, repoDir } = initRepo();
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: repoDir, encoding: "utf8" });
+    try {
+      git("remote", "add", "one", "https://github.com/team/one.git");
+      git("remote", "add", "two", "https://github.com/team/two.git");
+      await expect(resolveComparisonBase({ cwd: repoDir })).rejects.toThrow("uniquely identify");
+      await expect(
+        resolveComparisonBase({
+          cwd: repoDir,
+          explicitBaseRef: "refs/remotes/one/missing",
+        }),
+      ).rejects.toThrow("Base ref not found");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the exact saved worktree base instead of a same-named local branch", async () => {
+    const { tempDir, repoDir } = initRepo();
+    const paseoHome = join(tempDir, "paseo-home");
+    const worktreeDir = join(paseoHome, "worktrees", "repo", "task");
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: repoDir, encoding: "utf8" });
+    try {
+      mkdirSync(join(paseoHome, "worktrees", "repo"), { recursive: true });
+      git("branch", "next");
+      git("update-ref", "refs/remotes/upstream/next", "HEAD");
+      git("worktree", "add", "-b", "task", worktreeDir, "HEAD");
+      writePaseoWorktreeMetadata(worktreeDir, {
+        baseRefName: "next",
+        baseRef: "refs/remotes/upstream/next",
+      });
+      await expect(
+        resolveComparisonBase({ cwd: worktreeDir, context: { paseoHome } }),
+      ).resolves.toEqual({
+        baseRef: "refs/remotes/upstream/next",
+        source: "worktree",
+      });
+      git("update-ref", "refs/remotes/origin/next", "HEAD");
+      writePaseoWorktreeMetadata(worktreeDir, { baseRefName: "next" });
+      await expect(
+        resolveComparisonBase({ cwd: worktreeDir, context: { paseoHome } }),
+      ).resolves.toEqual({ baseRef: "refs/heads/next", source: "worktree" });
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

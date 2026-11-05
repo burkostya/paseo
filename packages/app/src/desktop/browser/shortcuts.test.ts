@@ -270,11 +270,27 @@ describe("parseBrowserShortcutInput", () => {
       key: "t",
       code: "KeyT",
       metaKey: false,
+      phase: "keydown",
       ctrlKey: true,
       shiftKey: false,
       altKey: false,
       repeat: false,
     });
+  });
+
+  it("preserves modifier keyup events used to finish a workspace history cycle", () => {
+    expect(
+      parseBrowserShortcutInput({
+        browserId: "browser-1",
+        key: "Control",
+        code: "ControlLeft",
+        meta: false,
+        control: false,
+        shift: false,
+        alt: false,
+        phase: "keyup",
+      }),
+    ).toMatchObject({ key: "Control", phase: "keyup" });
   });
 
   it("keeps browser identities exact", () => {

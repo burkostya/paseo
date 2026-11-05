@@ -73,6 +73,7 @@ export interface Agent {
   serverId: string;
   id: string;
   provider: AgentProvider;
+  agentProfileId?: string | null;
   status: AgentLifecycleStatus;
   turn: TurnLiveness;
   createdAt: Date;
@@ -105,6 +106,16 @@ export interface Agent {
 export interface WorkspaceDescriptor {
   createdAt: Date | null;
   lastUserMessageAt: Date | null;
+  diffComparison?: WorkspaceDescriptorPayload["diffComparison"];
+  diffComparisonOverride?: WorkspaceDescriptorPayload["diffComparisonOverride"];
+  projectDiffComparison?: WorkspaceDescriptorPayload["projectDiffComparison"];
+  diffComparisonError?: string | null;
+  diffComparisonV2?: WorkspaceDescriptorPayload["diffComparisonV2"];
+  diffComparisonOverrideV2?: WorkspaceDescriptorPayload["diffComparisonOverrideV2"];
+  projectDiffComparisonV2?: WorkspaceDescriptorPayload["projectDiffComparisonV2"];
+  diffComparisonResolvedBase?: WorkspaceDescriptorPayload["diffComparisonResolvedBase"];
+  diffComparisonBaseSource?: WorkspaceDescriptorPayload["diffComparisonBaseSource"];
+  diffComparisonWarning?: WorkspaceDescriptorPayload["diffComparisonWarning"];
   id: string;
   projectId: string;
   projectDisplayName: string;
@@ -120,6 +131,8 @@ export interface WorkspaceDescriptor {
   name: string;
   title?: string | null;
   pinnedAt?: string | null;
+  // Manually assigned sidebar parent; null means the project root.
+  parentWorkspaceId?: string | null;
   labels?: string[];
   status: WorkspaceDescriptorPayload["status"];
   statusEnteredAt: Date | null;
@@ -163,12 +176,23 @@ export function normalizeWorkspaceDescriptor(
     name: payload.name,
     title: payload.title ?? null,
     pinnedAt: payload.pinnedAt ?? null,
+    parentWorkspaceId: payload.parentWorkspaceId ?? null,
     // COMPAT(workspaceLabels): old daemons omit assignments.
     labels: payload.labels ?? [],
     status: payload.status,
     statusEnteredAt,
     archivingAt: payload.archivingAt ?? null,
     diffStat: payload.diffStat ?? null,
+    diffComparison: payload.diffComparison,
+    diffComparisonOverride: payload.diffComparisonOverride,
+    projectDiffComparison: payload.projectDiffComparison,
+    diffComparisonError: payload.diffComparisonError,
+    diffComparisonV2: payload.diffComparisonV2,
+    diffComparisonOverrideV2: payload.diffComparisonOverrideV2,
+    projectDiffComparisonV2: payload.projectDiffComparisonV2,
+    diffComparisonResolvedBase: payload.diffComparisonResolvedBase,
+    diffComparisonBaseSource: payload.diffComparisonBaseSource,
+    diffComparisonWarning: payload.diffComparisonWarning,
     scripts: (payload.scripts ?? []).map((s) => Object.assign({}, s)),
     gitRuntime: payload.gitRuntime,
     githubRuntime: payload.githubRuntime,
@@ -178,6 +202,8 @@ export function normalizeWorkspaceDescriptor(
 }
 
 export interface ProjectDescriptor {
+  diffComparison?: WorkspaceProjectDescriptorPayload["diffComparison"];
+  diffComparisonV2?: WorkspaceProjectDescriptorPayload["diffComparisonV2"];
   projectId: string;
   projectKey?: string | null;
   projectDisplayName: string;
@@ -198,6 +224,8 @@ export function normalizeProjectDescriptor(
     projectCustomName: payload.projectCustomName ?? null,
     projectCustomIconRevision: payload.projectCustomIconRevision ?? null,
     projectIconRevision: payload.projectIconRevision,
+    diffComparison: payload.diffComparison,
+    diffComparisonV2: payload.diffComparisonV2,
     projectRootPath: payload.projectRootPath,
     projectKind: payload.projectKind,
   };
@@ -1893,6 +1921,7 @@ export const useSessionStore = create<SessionStore>()(
             lastActivityAt,
             cwd: agent.cwd,
             provider: agent.provider,
+            agentProfileId: agent.agentProfileId ?? null,
             pendingPermissionCount: agent.pendingPermissions.length,
             requiresAttention: agent.requiresAttention ?? false,
             attentionReason: agent.attentionReason ?? null,

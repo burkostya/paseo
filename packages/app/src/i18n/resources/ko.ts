@@ -2,6 +2,20 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ko: TranslationResources = {
+  worktreeImport: {
+    title: "기존 워크트리 추가…",
+    chooseHost: "호스트 선택",
+    updateHost: "워크트리를 가져오려면 호스트를 업데이트하세요.",
+    preserveFiles: "워크스페이스를 보관해도 외부 워크트리는 디스크에 남습니다.",
+    refresh: "새로고침",
+    empty: "연결된 워크트리가 없습니다.",
+    detached: "분리된 HEAD · {{commit}}",
+    unavailable: "디스크에서 사용할 수 없음",
+    restore: "보관됨 · 선택하여 복원",
+    open: "열기",
+    add: "선택 항목 추가 ({{count}})",
+  },
+  diffComparison: en.diffComparison,
   paneFind: {
     connectionFailure: "이 채팅을 검색할 수 없습니다. 호스트 연결을 확인하고 다시 시도하세요.",
     historyChangedFailure: "검색 중에 채팅이 변경되었습니다. 다시 검색하세요.",
@@ -250,9 +264,18 @@ export const ko: TranslationResources = {
       implement: "구현",
       question: "어떻게 진행할까요?",
       proposedPlan: "제안된 계획",
+      approved: "승인됨",
+      rejected: "거부됨",
+      skipped: "건너뜀",
+      planDisabledAfterMessages: en.agentStream.permission.planDisabledAfterMessages,
     },
   },
   agentPanel: {
+    continue: {
+      label: "계속하기",
+      accessibilityLabel: "오류 후 대화 계속하기",
+      message: "계속하기",
+    },
     states: {
       notFound: "에이전트를 찾을 수 없습니다",
       failedToLoad: "에이전트를 불러오지 못했습니다",
@@ -333,6 +356,7 @@ export const ko: TranslationResources = {
     actions: {
       copyCode: "코드 복사",
       copyTurn: "턴 복사",
+      copyPlan: "계획 복사",
       copyMessage: "메시지 복사",
       forkMenu: "여기에서 채팅 분기",
       forkInNewTab: "새 탭으로 분기",
@@ -462,6 +486,7 @@ export const ko: TranslationResources = {
         restoringAction: "복원 중...",
         unavailableTitle: "워크스페이스를 사용할 수 없습니다",
         checkFailedTitle: "워크스페이스를 확인하지 못했습니다",
+        partialFailure: "일부 중첩 워크스페이스를 복원하지 못했습니다({{count}}).",
       },
     },
     hoverCard: {
@@ -937,6 +962,7 @@ export const ko: TranslationResources = {
         },
       },
       diff: {
+        basePicker: en.workspace.git.diff.basePicker,
         openChangesTab: "변경사항 탭 열기",
         openDiffTab: "Diff 탭 열기",
         closeChangesTab: "변경사항 탭 닫기",
@@ -1325,11 +1351,27 @@ export const ko: TranslationResources = {
         archiving: "보관하는 중...",
         hiding: "숨기는 중...",
       },
+      hierarchy: {
+        title: "워크스페이스 계층",
+        moveTo: "이동 위치…",
+        root: "프로젝트 루트",
+        search: "상위 워크스페이스 검색...",
+        noCandidates: "선택 가능한 상위 워크스페이스가 없습니다",
+        hostUpgrade: "워크스페이스 계층을 관리하려면 호스트를 업데이트하세요.",
+        failed: "워크스페이스 계층을 업데이트하지 못했습니다",
+        invalidDrop: "해당 워크스페이스는 여기에 배치할 수 없습니다",
+        collapse: "워크스페이스 접기",
+        expand: "워크스페이스 펼치기",
+      },
       confirmations: {
         hideTitle: "워크스페이스를 숨길까요?",
         hideMessage:
           '"{{workspaceName}}"을(를) 사이드바에서 숨길까요?\n\n디스크의 파일은 변경되지 않습니다.',
         hideConfirm: "숨기기",
+        archiveSubtreeTitle: "워크스페이스 트리를 보관할까요?",
+        archiveSubtreeMessage:
+          '"{{workspaceName}}" 및 하위 워크스페이스 {{descendantCount}}개를 보관할까요?',
+        archiveSubtreeConfirm: "모두 보관",
         cancel: "취소",
       },
       rename: {
@@ -1344,6 +1386,7 @@ export const ko: TranslationResources = {
         hostDisconnected: "호스트가 연결되어 있지 않습니다",
         hideFailed: "워크스페이스를 숨기지 못했습니다",
         archiveFailed: "워크스페이스를 보관하지 못했습니다.",
+        archivePartial: "워크스페이스 {{failedCount}}개를 보관하지 못했습니다",
       },
     },
   },
@@ -2865,6 +2908,7 @@ export const ko: TranslationResources = {
         sectionTitle: "에이전트 프로필",
         unavailable: "에이전트 프로필을 관리하려면 이 호스트에 연결하세요",
         unsupported: "이 호스트에서 실행 중인 데몬은 아직 에이전트 프로필을 지원하지 않습니다",
+        identityUnsupported: "선택한 에이전트 프로필을 표시하려면 호스트를 업데이트하세요.",
         emptyState:
           "아직 프로필이 없습니다. 저장된 프로바이더와 모델로 에이전트를 시작하려면 하나 추가하세요.",
         addProfileTitle: "에이전트 프로필 추가",

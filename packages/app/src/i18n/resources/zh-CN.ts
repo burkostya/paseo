@@ -2,6 +2,20 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const zhCN: TranslationResources = {
+  worktreeImport: {
+    title: "添加现有工作树…",
+    chooseHost: "选择主机",
+    updateHost: "请更新主机以导入工作树。",
+    preserveFiles: "归档工作区时，外部工作树会保留在磁盘上。",
+    refresh: "刷新",
+    empty: "未找到关联的工作树。",
+    detached: "分离的 HEAD · {{commit}}",
+    unavailable: "磁盘上不可用",
+    restore: "已归档 · 选择以恢复",
+    open: "打开",
+    add: "添加所选项（{{count}}）",
+  },
+  diffComparison: en.diffComparison,
   paneFind: {
     connectionFailure: "无法搜索此聊天。请检查主机连接后重试。",
     historyChangedFailure: "搜索期间聊天已更改。请重新搜索。",
@@ -250,9 +264,18 @@ export const zhCN: TranslationResources = {
       implement: "实施",
       question: "你想如何继续？",
       proposedPlan: "建议计划",
+      approved: "已批准",
+      rejected: "已拒绝",
+      skipped: "已跳过",
+      planDisabledAfterMessages: "此计划之后对话已继续，因此无法再批准。",
     },
   },
   agentPanel: {
+    continue: {
+      label: "继续",
+      accessibilityLabel: "在错误后继续对话",
+      message: "继续",
+    },
     states: {
       notFound: "未找到 Agent",
       failedToLoad: "加载 Agent 失败",
@@ -332,6 +355,7 @@ export const zhCN: TranslationResources = {
     actions: {
       copyCode: "复制代码",
       copyTurn: "复制回合",
+      copyPlan: "复制计划",
       copyMessage: "复制消息",
       forkMenu: "分叉消息",
       forkInNewTab: "分叉到新标签页",
@@ -461,6 +485,7 @@ export const zhCN: TranslationResources = {
         restoringAction: "正在恢复...",
         unavailableTitle: "Workspace 不可用",
         checkFailedTitle: "无法检查 workspace",
+        partialFailure: "部分嵌套 workspace 无法恢复（{{count}}）。",
       },
     },
     hoverCard: {
@@ -958,6 +983,15 @@ export const zhCN: TranslationResources = {
         all: "全部更改",
         uncommitted: "未 commit",
         committed: "已 commit",
+        basePicker: {
+          trigger: "对比 {{baseRef}}",
+          accessibility: "将已 commit 的变更与 {{baseRef}} 比较",
+          placeholder: "选择基础分支",
+          searchPlaceholder: "筛选分支...",
+          empty: "未找到分支",
+          title: "基础分支",
+          default: "默认",
+        },
         branchUnknown: "未知",
         base: "base",
         newFile: "新增",
@@ -1308,10 +1342,25 @@ export const zhCN: TranslationResources = {
         archiving: "正在归档...",
         hiding: "正在隐藏...",
       },
+      hierarchy: {
+        title: "工作区层级",
+        moveTo: "移动到…",
+        root: "项目根目录",
+        search: "搜索父工作区...",
+        noCandidates: "没有符合条件的父工作区",
+        hostUpgrade: "请更新主机以管理工作区层级。",
+        failed: "更新工作区层级失败",
+        invalidDrop: "无法将该 workspace 放置在这里",
+        collapse: "折叠工作区",
+        expand: "展开工作区",
+      },
       confirmations: {
         hideTitle: "隐藏 workspace？",
         hideMessage: "从侧边栏隐藏「{{workspaceName}}」？\n\n磁盘上的文件不会被更改。",
         hideConfirm: "隐藏",
+        archiveSubtreeTitle: "归档工作区树？",
+        archiveSubtreeMessage: "归档「{{workspaceName}}」及其 {{descendantCount}} 个子工作区？",
+        archiveSubtreeConfirm: "全部归档",
         cancel: "取消",
       },
       rename: {
@@ -1326,6 +1375,7 @@ export const zhCN: TranslationResources = {
         hostDisconnected: "Host 未连接",
         hideFailed: "隐藏 workspace 失败",
         archiveFailed: "归档工作区失败",
+        archivePartial: "有 {{failedCount}} 个工作区无法归档",
       },
     },
   },
@@ -2821,6 +2871,7 @@ export const zhCN: TranslationResources = {
         sectionTitle: "Agent 配置",
         unavailable: "连接到这个 Host 以管理 Agent 配置",
         unsupported: "此 Host 运行的 Daemon 尚不支持 Agent 配置",
+        identityUnsupported: "更新此 Host 以显示选中的 Agent 配置。",
         emptyState: "还没有配置。添加一个以便使用保存的 Provider 和 Model 启动 Agent。",
         addProfileTitle: "添加 Agent 配置",
         newProfile: "新建配置",

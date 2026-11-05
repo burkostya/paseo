@@ -8,6 +8,8 @@ import type {
   PiSessionStats,
 } from "./rpc-types.js";
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
+import { homedir } from "node:os";
+import { resolve } from "node:path";
 
 export interface PiRuntimeLaunch {
   cwd: string;
@@ -34,9 +36,18 @@ export interface PiStartSessionInput {
   modeId?: string;
   session?: string;
   noSession?: boolean;
+  persistInitialSession?: boolean;
   mcpConfigPath?: string;
   extensionPaths?: string[];
   extraArgs?: string[];
+}
+
+export function resolvePiAgentDir(env: Record<string, string> | undefined): string {
+  const configured = env?.PI_CODING_AGENT_DIR?.trim() || process.env.PI_CODING_AGENT_DIR?.trim();
+  if (!configured) return resolve(homedir(), ".pi", "agent");
+  if (configured === "~") return homedir();
+  if (configured.startsWith("~/")) return resolve(homedir(), configured.slice(2));
+  return resolve(configured);
 }
 
 export interface PiRuntimeSession {

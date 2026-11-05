@@ -152,7 +152,13 @@
               // Module initialization: the package version is resolved once and cached at import.
               "server/package-version.ts": ["existsSync", "readFileSync"],
               // Startup config and exported synchronous configuration API; runtime DaemonConfigStore uses the async load/save capabilities.
-              "server/persisted-config.ts": ["existsSync", "readFileSync"],
+              "server/persisted-config.ts": [
+                "existsSync",
+                "readFileSync",
+                "readdirSync",
+                "statSync",
+                "unlinkSync"
+              ],
               // Startup pid identity: read and memoize the Linux boot id for the daemon lock.
               "server/pid-lock.ts": ["readFileSync"],
               // Startup builtin loader construction: select the bundled plugin root before loading plugins.

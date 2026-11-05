@@ -12,3 +12,9 @@ export function deriveMacDockBadgeCountFromWorkspaceStatuses(
   const actionableCount = statuses.filter(isWorkspaceActionableForDesktopBadge).length;
   return actionableCount > 0 ? actionableCount : undefined;
 }
+
+export function deriveDesktopWindowAttentionFromWorkspaceStatuses(
+  statuses: readonly DesktopBadgeWorkspaceStatus[],
+): boolean {
+  return statuses.some(isWorkspaceActionableForDesktopBadge);
+}

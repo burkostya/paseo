@@ -3,7 +3,11 @@ import { useTranslation } from "react-i18next";
 import { Keyboard, ScrollView, Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
-import type { AgentProfilePicker, AgentProfileSeed } from "@/agent-profiles";
+import {
+  AgentProfileGlyph,
+  type AgentProfilePicker,
+  type AgentProfileSeed,
+} from "@/agent-profiles";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { useProviderIcon } from "@/components/provider-icons";
@@ -49,6 +53,25 @@ interface CompactModelSheetProps {
 function shortModelLabel(label: string): string {
   const separatorIndex = label.lastIndexOf("/");
   return separatorIndex === -1 ? label : label.slice(separatorIndex + 1);
+}
+
+function formatProfileTriggerLabel(
+  profiles: AgentProfilePicker | null,
+  modelLabel: string,
+): string {
+  const profile = profiles?.selectedProfile;
+  return profile ? `${profile.name} · ${modelLabel}` : modelLabel;
+}
+
+function SelectedProfileGlyph({
+  profile,
+  size,
+}: {
+  profile: AgentProfilePicker["selectedProfile"];
+  size: number;
+}) {
+  if (!profile) return null;
+  return <AgentProfileGlyph icon={profile.icon} color={profile.color} size={size} />;
 }
 
 function resolveModelSheetProfileActions(
@@ -131,6 +154,10 @@ export function CompactModelSheet({
   });
   const ModelIcon = useProviderIcon(selectedProvider, serverId);
   const hasSelectedProvider = selectedProvider.trim().length > 0;
+  const profileTriggerLabel = formatProfileTriggerLabel(
+    profiles,
+    shortModelLabel(rootBrowser.triggerLabel),
+  );
   const rootHeader = useMemo(
     () => ({
       ...rootBrowser.header,
@@ -246,11 +273,11 @@ export function CompactModelSheet({
             icon={ModelIcon}
             surface="sheet"
             label={t("modelSelector.model")}
-            value={rootBrowser.selectedModelLabel}
+            value={profileTriggerLabel}
             disabled={disabled}
             onPress={openModelBrowser}
             accessibilityLabel={t("modelSelector.selectedModel", {
-              model: rootBrowser.selectedModelLabel,
+              model: profileTriggerLabel,
             })}
             testID="agent-controls-model"
           />
@@ -258,7 +285,7 @@ export function CompactModelSheet({
         </View>
       </View>
     ),
-    [ModelIcon, children, disabled, openModelBrowser, rootBrowser.selectedModelLabel, t],
+    [ModelIcon, children, disabled, openModelBrowser, profileTriggerLabel, t],
   );
 
   return (
@@ -270,7 +297,7 @@ export function CompactModelSheet({
         style={triggerStyle}
         accessibilityRole="button"
         accessibilityLabel={t("modelSelector.selectedModel", {
-          model: rootBrowser.selectedModelLabel,
+          model: profileTriggerLabel,
         })}
         testID="combined-model-selector"
         chevron={null}
@@ -280,9 +307,10 @@ export function CompactModelSheet({
             <ModelIcon size={glyphSize} color={styles.providerIcon.color} />
           </ComposerToolbarGlyph>
         ) : null}
+        <SelectedProfileGlyph profile={profiles?.selectedProfile ?? null} size={glyphSize} />
         <View style={styles.triggerLabels}>
           <Text style={styles.triggerText} numberOfLines={1}>
-            {shortModelLabel(rootBrowser.triggerLabel)}
+            {profileTriggerLabel}
           </Text>
           {thinkingLabel ? (
             <Text style={styles.triggerThinking} numberOfLines={1}>

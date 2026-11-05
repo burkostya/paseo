@@ -1,6 +1,6 @@
-import { readFile } from "node:fs/promises";
+import { chmod, readFile, readdir, stat, unlink } from "node:fs/promises";
 import { PluginRegistriesSchema } from "@getpaseo/protocol/plugin-registry";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 
@@ -379,6 +379,8 @@ export type PersistedConfig = Omit<PersistedConfigSchemaOutput, "agents"> & {
 };
 
 const CONFIG_FILENAME = "config.json";
+const CONFIG_LOCAL_FILENAME = "config.local.json";
+const CONFIG_FRAGMENTS_DIRECTORY = "conf.d";
 const DEFAULT_PERSISTED_CONFIG = PersistedConfigSchema.parse({
   version: 1,
   daemon: {
@@ -405,8 +407,401 @@ function getConfigPath(paseoHome: string): string {
   return path.join(paseoHome, CONFIG_FILENAME);
 }
 
+function getConfigLocalPath(paseoHome: string): string {
+  return path.join(paseoHome, CONFIG_LOCAL_FILENAME);
+}
+
+function getConfigFragmentsPath(paseoHome: string): string {
+  return path.join(paseoHome, CONFIG_FRAGMENTS_DIRECTORY);
+}
+
 function getLogger(logger: LoggerLike | undefined): LoggerLike | undefined {
   return logger?.child({ module: "config" });
+}
+
+type JsonObject = Record<string, unknown>;
+
+export interface PersistedConfigWriteState {
+  path: string;
+  layered?: boolean;
+  existed: boolean;
+  contents?: string;
+  mode?: number;
+}
+
+interface PersistedConfigLayers {
+  lower: PersistedConfig;
+  effective: PersistedConfig;
+  localOverride?: JsonObject;
+}
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function cloneJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(cloneJsonValue);
+  }
+  if (isJsonObject(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, cloneJsonValue(entry)]),
+    );
+  }
+  return value;
+}
+
+function mergeConfigLayer(base: JsonObject, overlay: JsonObject): JsonObject {
+  const result = cloneJsonValue(base) as JsonObject;
+
+  for (const [key, value] of Object.entries(overlay)) {
+    if (value === null) {
+      delete result[key];
+      if (key === "hostnames") delete result.allowedHosts;
+      if (key === "allowedHosts") delete result.hostnames;
+      continue;
+    }
+
+    if (isJsonObject(result[key]) && isJsonObject(value)) {
+      result[key] = mergeConfigLayer(result[key] as JsonObject, value);
+      continue;
+    }
+
+    result[key] = cloneJsonValue(value);
+  }
+
+  return result;
+}
+
+function formatConfigIssues(error: z.ZodError): string {
+  return error.issues.map((issue) => `  - ${issue.path.join(".")}: ${issue.message}`).join("\n");
+}
+
+function parseConfigDocument(filePath: string, repairPermissions: boolean): JsonObject {
+  let raw: string;
+  try {
+    if (repairPermissions) {
+      ensurePrivateFile(filePath);
+    }
+    raw = readFileSync(filePath, "utf-8");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`[Config] Failed to read ${filePath}: ${message}`, {
+      cause: err,
+    });
+  }
+
+  return parseConfigDocumentText(filePath, raw);
+}
+
+function parseConfigDocumentText(filePath: string, raw: string): JsonObject {
+  let parsed: unknown;
+  try {
+    parsed = parseConfigText(raw);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`[Config] Invalid JSON in ${filePath}: ${message}`, {
+      cause: err,
+    });
+  }
+
+  if (!isJsonObject(parsed)) {
+    throw new Error(`[Config] Invalid config in ${filePath}: expected a JSON object`);
+  }
+
+  return normalizeConfigAliases(parsed as JsonObject);
+}
+
+function normalizeConfigAliases(document: JsonObject): JsonObject {
+  const daemon = document.daemon;
+  if (!isJsonObject(daemon) || !hasOwn(daemon, "allowedHosts")) {
+    return document;
+  }
+
+  const normalizedDaemon = { ...daemon };
+  if (!hasOwn(normalizedDaemon, "hostnames")) {
+    normalizedDaemon.hostnames = normalizedDaemon.allowedHosts;
+  }
+  delete normalizedDaemon.allowedHosts;
+  return { ...document, daemon: normalizedDaemon };
+}
+
+function parseMergedConfig(
+  value: JsonObject,
+  source: string,
+  logger?: LoggerLike,
+): PersistedConfig {
+  const result = PersistedConfigSchema.safeParse(normalizeSpeechProviderConfig(value, logger));
+  if (!result.success) {
+    throw new Error(
+      `[Config] Invalid config after merging ${source}:\n${formatConfigIssues(result.error)}`,
+    );
+  }
+  return result.data as PersistedConfig;
+}
+
+function isConfigLayeringEnabled(paseoHome: string): boolean {
+  const fragmentsPath = getConfigFragmentsPath(paseoHome);
+  try {
+    return statSync(fragmentsPath).isDirectory();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`[Config] Failed to inspect ${fragmentsPath}: ${message}`, {
+      cause: err,
+    });
+  }
+}
+
+function listConfigFragments(paseoHome: string): string[] {
+  const fragmentsDirectory = getConfigFragmentsPath(paseoHome);
+  let entries: string[];
+  try {
+    entries = readdirSync(fragmentsDirectory);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `[Config] Failed to read config fragments in ${fragmentsDirectory}: ${message}`,
+      {
+        cause: err,
+      },
+    );
+  }
+
+  return entries
+    .filter((entry) => entry.endsWith(".json"))
+    .sort()
+    .flatMap((entry) => {
+      const filePath = path.join(fragmentsDirectory, entry);
+      try {
+        return statSync(filePath).isFile() ? [filePath] : [];
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(`[Config] Failed to inspect ${filePath}: ${message}`, {
+          cause: err,
+        });
+      }
+    });
+}
+
+function readConfigLayers(paseoHome: string, logger?: LoggerLike): PersistedConfigLayers {
+  const log = getLogger(logger);
+  const configPath = getConfigPath(paseoHome);
+  const layered = isConfigLayeringEnabled(paseoHome);
+
+  if (!layered) {
+    if (!existsSync(configPath)) {
+      try {
+        writePrivateFileAtomicSync(
+          configPath,
+          JSON.stringify(DEFAULT_PERSISTED_CONFIG, null, 2) + "\n",
+        );
+        log?.info(`Initialized config file at ${configPath}`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(`[Config] Failed to initialize ${configPath}: ${message}`, { cause: err });
+      }
+    }
+
+    const document = parseConfigDocument(configPath, true);
+    const config = parseMergedConfig(document, configPath, logger);
+    log?.info(`Loaded from ${configPath}`);
+    return { lower: config, effective: config };
+  }
+
+  let lowerDocument: JsonObject;
+  const lowerSources: string[] = [];
+  if (existsSync(configPath)) {
+    lowerDocument = parseConfigDocument(configPath, false);
+    lowerSources.push(configPath);
+  } else {
+    lowerDocument = cloneJsonValue(DEFAULT_PERSISTED_CONFIG) as JsonObject;
+  }
+
+  const fragmentPaths = listConfigFragments(paseoHome);
+  lowerSources.push(...fragmentPaths);
+  for (const fragmentPath of fragmentPaths) {
+    lowerDocument = mergeConfigLayer(lowerDocument, parseConfigDocument(fragmentPath, false));
+  }
+
+  const lower = parseMergedConfig(
+    lowerDocument,
+    lowerSources.length > 0 ? lowerSources.join(", ") : "defaults",
+  );
+
+  const localPath = getConfigLocalPath(paseoHome);
+  const localOverride = existsSync(localPath) ? parseConfigDocument(localPath, true) : undefined;
+  const effectiveDocument = localOverride
+    ? mergeConfigLayer(lowerDocument, localOverride)
+    : lowerDocument;
+  const effective = parseMergedConfig(effectiveDocument, localPath);
+  log?.info(
+    `Loaded config layers from ${configPath} (${fragmentPaths.length} fragment${fragmentPaths.length === 1 ? "" : "s"}${existsSync(localPath) ? ", local override" : ""})`,
+  );
+  return { lower, effective, localOverride };
+}
+
+async function isConfigLayeringEnabledAsync(paseoHome: string): Promise<boolean> {
+  const fragmentsPath = getConfigFragmentsPath(paseoHome);
+  try {
+    return (await stat(fragmentsPath)).isDirectory();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw new Error(`[Config] Failed to inspect ${fragmentsPath}`, { cause: error });
+  }
+}
+
+async function readConfigDocumentAsync(
+  filePath: string,
+  repairPermissions: boolean,
+): Promise<JsonObject> {
+  try {
+    if (repairPermissions) await ensurePrivateFileAsync(filePath);
+    return parseConfigDocumentText(filePath, await readFile(filePath, "utf-8"));
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("[Config]")) throw error;
+    throw new Error(
+      `[Config] Failed to read ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
+}
+
+async function readOptionalConfigDocumentAsync(
+  filePath: string,
+  repairPermissions: boolean,
+): Promise<JsonObject | undefined> {
+  try {
+    await stat(filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  return readConfigDocumentAsync(filePath, repairPermissions);
+}
+
+async function readConfigLayersAsync(
+  paseoHome: string,
+  logger?: LoggerLike,
+): Promise<PersistedConfigLayers> {
+  const configPath = getConfigPath(paseoHome);
+  const sources: string[] = [];
+  let lowerDocument = await readOptionalConfigDocumentAsync(configPath, false);
+  if (lowerDocument) sources.push(configPath);
+  else lowerDocument = cloneJsonValue(DEFAULT_PERSISTED_CONFIG) as JsonObject;
+  const directory = getConfigFragmentsPath(paseoHome);
+  const entries = (await readdir(directory)).filter((entry) => entry.endsWith(".json")).sort();
+  for (const entry of entries) {
+    const filePath = path.join(directory, entry);
+    if (!(await stat(filePath)).isFile()) continue;
+    sources.push(filePath);
+    lowerDocument = mergeConfigLayer(lowerDocument, await readConfigDocumentAsync(filePath, false));
+  }
+  const lower = parseMergedConfig(lowerDocument, sources.length ? sources.join(", ") : "defaults");
+  const localPath = getConfigLocalPath(paseoHome);
+  const localOverride = await readOptionalConfigDocumentAsync(localPath, true);
+  const effective = parseMergedConfig(
+    localOverride ? mergeConfigLayer(lowerDocument, localOverride) : lowerDocument,
+    localPath,
+    logger,
+  );
+  return { lower, effective, localOverride };
+}
+
+function hasOwn(value: JsonObject, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function isEqualJsonValue(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+    return left.every((entry, index) => isEqualJsonValue(entry, right[index]));
+  }
+  if (isJsonObject(left) || isJsonObject(right)) {
+    if (!isJsonObject(left) || !isJsonObject(right)) return false;
+    // `undefined` object properties are omitted by JSON serialization. Treat
+    // them as absent so schema output and a reloaded JSON document compare the
+    // same way.
+    const leftKeys = Object.keys(left).filter((key) => left[key] !== undefined);
+    const rightKeys = Object.keys(right).filter((key) => right[key] !== undefined);
+    if (leftKeys.length !== rightKeys.length) return false;
+    return leftKeys.every((key) => hasOwn(right, key) && isEqualJsonValue(left[key], right[key]));
+  }
+  return false;
+}
+
+function createConfigOverride(base: JsonObject, desired: JsonObject): JsonObject {
+  const override: JsonObject = {};
+  const keys = new Set([...Object.keys(base), ...Object.keys(desired)]);
+
+  for (const key of keys) {
+    // Zod preserves explicitly supplied `undefined` properties. They are
+    // omitted by JSON serialization and must behave like absent keys when we
+    // compute a JSON override.
+    const baseHasKey = hasOwn(base, key) && base[key] !== undefined;
+    const desiredHasKey = hasOwn(desired, key) && desired[key] !== undefined;
+    if (!desiredHasKey) {
+      if (baseHasKey) override[key] = null;
+      continue;
+    }
+    if (!baseHasKey) {
+      override[key] = cloneJsonValue(desired[key]);
+      continue;
+    }
+
+    const baseValue = base[key];
+    const desiredValue = desired[key];
+    if (isJsonObject(baseValue) && isJsonObject(desiredValue)) {
+      const nested = createConfigOverride(baseValue, desiredValue);
+      if (Object.keys(nested).length > 0) override[key] = nested;
+      continue;
+    }
+    if (!isEqualJsonValue(baseValue, desiredValue)) {
+      override[key] = cloneJsonValue(desiredValue);
+    }
+  }
+
+  return override;
+}
+
+function applyConfigOverride(
+  current: JsonObject,
+  override: JsonObject,
+  lower: JsonObject,
+): JsonObject {
+  const result = cloneJsonValue(current) as JsonObject;
+
+  for (const [key, value] of Object.entries(override)) {
+    if (value === null) {
+      if (hasOwn(lower, key)) {
+        result[key] = null;
+      } else {
+        delete result[key];
+      }
+      continue;
+    }
+
+    if (isJsonObject(value)) {
+      const nestedCurrent = isJsonObject(result[key]) ? (result[key] as JsonObject) : {};
+      const nestedLower = isJsonObject(lower[key]) ? (lower[key] as JsonObject) : {};
+      const nestedResult = applyConfigOverride(nestedCurrent, value, nestedLower);
+      if (Object.keys(nestedResult).length > 0 && !isEqualJsonValue(nestedResult, lower[key])) {
+        result[key] = nestedResult;
+      } else {
+        delete result[key];
+      }
+      continue;
+    }
+
+    if (hasOwn(lower, key) && isEqualJsonValue(value, lower[key])) {
+      delete result[key];
+    } else {
+      result[key] = cloneJsonValue(value);
+    }
+  }
+
+  return result;
 }
 
 function isConfigRecord(value: unknown): value is Record<string, unknown> {
@@ -500,36 +895,7 @@ function warnDiscardedSpeechKeys(
 }
 
 export function loadPersistedConfig(paseoHome: string, logger?: LoggerLike): PersistedConfig {
-  const log = getLogger(logger);
-  const configPath = getConfigPath(paseoHome);
-
-  if (!existsSync(configPath)) {
-    try {
-      writePrivateFileAtomicSync(
-        configPath,
-        JSON.stringify(DEFAULT_PERSISTED_CONFIG, null, 2) + "\n",
-      );
-      log?.info(`Initialized config file at ${configPath}`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`[Config] Failed to initialize ${configPath}: ${message}`, { cause: err });
-    }
-  }
-
-  let raw: string;
-  try {
-    ensurePrivateFile(configPath);
-    raw = readFileSync(configPath, "utf-8");
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`[Config] Failed to read ${configPath}: ${message}`, {
-      cause: err,
-    });
-  }
-
-  const config = parseConfigFile(configPath, raw, log);
-  log?.info(`Loaded from ${configPath}`);
-  return config;
+  return readConfigLayers(paseoHome, logger).effective;
 }
 
 /** Runtime config IO. Startup and offline CLI consumers retain their synchronous entry points. */
@@ -537,6 +903,8 @@ export async function loadPersistedConfigAsync(
   paseoHome: string,
   logger?: LoggerLike,
 ): Promise<PersistedConfig> {
+  if (await isConfigLayeringEnabledAsync(paseoHome))
+    return (await readConfigLayersAsync(paseoHome, logger)).effective;
   const log = getLogger(logger);
   const configPath = getConfigPath(paseoHome);
   let raw: string;
@@ -571,6 +939,7 @@ export function readPersistedConfig(
   paseoHome: string,
   options: { defaultsIfMissing?: boolean } = {},
 ): PersistedConfig {
+  if (isConfigLayeringEnabled(paseoHome)) return readConfigLayers(paseoHome).effective;
   const configPath = getConfigPath(paseoHome);
   let raw: string;
   try {
@@ -681,9 +1050,62 @@ export function savePersistedConfig(
   paseoHome: string,
   config: PersistedConfig,
   logger?: LoggerLike,
-): void {
+): string {
   const log = getLogger(logger);
+  const result = PersistedConfigSchema.safeParse(config);
+  if (!result.success) {
+    throw new Error(`[Config] Invalid config to save:\n${formatConfigIssues(result.error)}`);
+  }
+
   const configPath = getConfigPath(paseoHome);
+  if (isConfigLayeringEnabled(paseoHome)) {
+    const localPath = getConfigLocalPath(paseoHome);
+    const layers = readConfigLayers(paseoHome, logger);
+    const requestedOverride = createConfigOverride(
+      layers.effective as unknown as JsonObject,
+      result.data as unknown as JsonObject,
+    );
+    let override = applyConfigOverride(
+      layers.localOverride ?? {},
+      requestedOverride,
+      layers.lower as unknown as JsonObject,
+    );
+    const lowerDocument = layers.lower as unknown as JsonObject;
+    let candidate = parseMergedConfig(mergeConfigLayer(lowerDocument, override), localPath);
+    if (!isEqualJsonValue(candidate, result.data)) {
+      override = applyConfigOverride(
+        override,
+        createConfigOverride(
+          candidate as unknown as JsonObject,
+          result.data as unknown as JsonObject,
+        ),
+        lowerDocument,
+      );
+      candidate = parseMergedConfig(mergeConfigLayer(lowerDocument, override), localPath);
+      if (!isEqualJsonValue(candidate, result.data)) {
+        throw new Error(`[Config] Failed to resolve local override ${localPath}`);
+      }
+    }
+
+    try {
+      if (Object.keys(override).length === 0) {
+        unlinkSync(localPath);
+      } else {
+        writePrivateFileAtomicSync(localPath, JSON.stringify(override, null, 2) + "\n");
+      }
+      log?.info(`Saved local config override to ${localPath}`);
+      return localPath;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT" && Object.keys(override).length === 0) {
+        log?.info(`Local config override already absent at ${localPath}`);
+        return localPath;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`[Config] Failed to write ${localPath}: ${message}`, {
+        cause: err,
+      });
+    }
+  }
 
   const data = serializePersistedConfig(config);
 
@@ -696,6 +1118,40 @@ export function savePersistedConfig(
       cause: err,
     });
   }
+  return configPath;
+}
+
+export async function capturePersistedConfigWriteState(
+  paseoHome: string,
+): Promise<PersistedConfigWriteState> {
+  const layered = await isConfigLayeringEnabledAsync(paseoHome);
+  const configPath = layered ? getConfigLocalPath(paseoHome) : getConfigPath(paseoHome);
+  try {
+    const [contents, fileStat] = await Promise.all([
+      readFile(configPath, "utf-8"),
+      stat(configPath),
+    ]);
+    return { path: configPath, layered, existed: true, contents, mode: fileStat.mode & 0o777 };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT")
+      return { path: configPath, layered, existed: false };
+    throw new Error(`[Config] Failed to snapshot ${configPath}`, { cause: error });
+  }
+}
+
+export async function restorePersistedConfigWriteState(
+  state: PersistedConfigWriteState,
+): Promise<void> {
+  if (!state.existed) {
+    try {
+      await unlink(state.path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    return;
+  }
+  await writePrivateFileAtomic(state.path, state.contents ?? "");
+  if (state.mode !== undefined && process.platform !== "win32") await chmod(state.path, state.mode);
 }
 
 function serializePersistedConfig(config: PersistedConfig): string {
@@ -715,6 +1171,42 @@ export async function savePersistedConfigAsync(
   config: PersistedConfig,
   logger?: LoggerLike,
 ): Promise<void> {
+  if (await isConfigLayeringEnabledAsync(paseoHome)) {
+    const result = PersistedConfigSchema.safeParse(config);
+    if (!result.success)
+      throw new Error(`[Config] Invalid config to save:\n${formatConfigIssues(result.error)}`);
+    const localPath = getConfigLocalPath(paseoHome);
+    const layers = await readConfigLayersAsync(paseoHome, logger);
+    const desired = result.data as unknown as JsonObject;
+    const lower = layers.lower as unknown as JsonObject;
+    let override = applyConfigOverride(
+      layers.localOverride ?? {},
+      createConfigOverride(layers.effective as unknown as JsonObject, desired),
+      lower,
+    );
+    let candidate = parseMergedConfig(mergeConfigLayer(lower, override), localPath);
+    if (!isEqualJsonValue(candidate, desired)) {
+      override = applyConfigOverride(
+        override,
+        createConfigOverride(candidate as unknown as JsonObject, desired),
+        lower,
+      );
+      candidate = parseMergedConfig(mergeConfigLayer(lower, override), localPath);
+      if (!isEqualJsonValue(candidate, desired))
+        throw new Error(`[Config] Failed to resolve local override ${localPath}`);
+    }
+    if (Object.keys(override).length === 0) {
+      try {
+        await unlink(localPath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    } else {
+      await writePrivateFileAtomic(localPath, JSON.stringify(override, null, 2) + "\n");
+    }
+    getLogger(logger)?.info(`Saved local config override to ${localPath}`);
+    return;
+  }
   const configPath = getConfigPath(paseoHome);
   const data = serializePersistedConfig(config);
   try {

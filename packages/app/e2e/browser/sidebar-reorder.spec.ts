@@ -37,6 +37,7 @@ async function pressWorkspaceRow(rows: Locator) {
 async function quickDragFirstRowAfterSecond(
   rows: Locator,
   pressRow: (rows: Locator) => Promise<void>,
+  treeDropAfter = false,
 ) {
   await expect(rows).toHaveCount(2);
   const before = await rowTestIds(rows);
@@ -45,7 +46,10 @@ async function quickDragFirstRowAfterSecond(
 
   const page = rows.page();
   const source = { x: sourceBox.x + sourceBox.width / 2, y: sourceBox.y + sourceBox.height / 2 };
-  const target = { x: targetBox.x + targetBox.width / 2, y: targetBox.y + targetBox.height / 2 };
+  const target = {
+    x: targetBox.x + targetBox.width / 2,
+    y: targetBox.y + targetBox.height * (treeDropAfter ? 0.9 : 0.5),
+  };
 
   await page.mouse.move(source.x, source.y);
   const trailingScrim = rows.nth(0).getByTestId("sidebar-workspace-trailing-scrim");
@@ -414,10 +418,10 @@ test("Manual restores pre-beta order and keeps drag order across sorting and rel
     await selectWorkspaceSort(page, "Last prompt");
     await selectWorkspaceSort(page, "Manual");
     await expect.poll(() => rowTestIds(rows)).toEqual(ids);
-    await quickDragFirstRowAfterSecond(rows, pressWorkspaceRow);
+    await quickDragFirstRowAfterSecond(rows, pressWorkspaceRow, true);
     await reconnectSidebar(page);
     await expect.poll(() => rowTestIds(rows)).toEqual([ids[1], ids[0]]);
-    await quickDragFirstRowAfterSecond(rows, pressWorkspaceRow);
+    await quickDragFirstRowAfterSecond(rows, pressWorkspaceRow, true);
     await selectWorkspaceSort(page, "Created");
     await reconnectSidebar(page);
     await selectWorkspaceSort(page, "Manual");
@@ -500,6 +504,71 @@ test("a Manual drag in a collapsed group keeps the open workspace's saved place"
     await expectWorkspaceOrder(rows, [ids[9]!, ids[1]!, ids[0]!, ...ids.slice(2, 7)]);
     await toggle.click();
     await expectWorkspaceOrder(rows, [ids[1]!, ids[0]!, ...ids.slice(2)]);
+  } finally {
+    await seed.cleanup();
+  }
+});
+
+test("workspace hierarchy can be created, collapsed and restored after reload", async ({
+  page,
+}) => {
+  const seed = await seedWorkspace({ repoPrefix: "sidebar-hierarchy-" });
+  try {
+    const child = await seed.client.createWorkspace({
+      source: { kind: "directory", path: seed.repoPath, projectId: seed.projectId },
+      title: "Nested workspace",
+    });
+    if (!child.workspace) throw new Error(child.error ?? "Workspace creation failed");
+    const parentKey = `${getServerId()}:${seed.workspaceId}`;
+    const childKey = `${getServerId()}:${child.workspace.id}`;
+    const parentRow = page.getByTestId(`sidebar-workspace-row-${parentKey}`);
+    const childRow = page.getByTestId(`sidebar-workspace-row-${childKey}`);
+    await gotoAppShell(page);
+    await waitForSidebarHydration(page);
+    await childRow.hover();
+    await page.getByTestId(`sidebar-workspace-kebab-${childKey}`).click();
+    await page.getByTestId(`sidebar-workspace-menu-hierarchy-${childKey}`).click();
+    await page.getByTestId(`sidebar-workspace-hierarchy-parent-${parentKey}`).click();
+    const collapse = parentRow.getByRole("button", { name: "Collapse workspace" });
+    await expect(collapse).toBeVisible();
+    await expect(childRow).toBeVisible();
+    await collapse.click();
+    await expect(childRow).toHaveCount(0);
+    await parentRow.getByRole("button", { name: "Expand workspace" }).click();
+    await expect(childRow).toBeVisible();
+    await reconnectSidebar(page);
+    await expect(parentRow.getByRole("button", { name: "Collapse workspace" })).toBeVisible();
+    await expect(childRow).toBeVisible();
+  } finally {
+    await seed.cleanup();
+  }
+});
+
+test("status groups keep the selected overflow workspace visible without expanding", async ({
+  page,
+}) => {
+  const { seed, ids } = await seedCompactProject();
+  try {
+    await gotoAppShell(page);
+    await waitForSidebarHydration(page);
+    await selectSidebarStatusGrouping(page);
+    const done = page.getByTestId("sidebar-status-group-rows-done");
+    const rows = done.locator('[data-testid^="sidebar-workspace-row-"]');
+    await expect(rows).toHaveCount(7);
+    await revealWorkspaces(done, "Show more");
+    await expect(rows).toHaveCount(12);
+    await openWorkspaceRow(page, ids[9]!);
+    await revealWorkspaces(done, "Show less");
+    await expect(rows).toHaveCount(8);
+    await expect(
+      page.getByTestId(`sidebar-workspace-row-${getServerId()}:${ids[9]}`),
+    ).toHaveAttribute("aria-selected", "true");
+    await page.reload();
+    await expect(done).toBeVisible();
+    await expect(rows).toHaveCount(8);
+    await expect(
+      page.getByTestId(`sidebar-workspace-row-${getServerId()}:${ids[9]}`),
+    ).toHaveAttribute("aria-selected", "true");
   } finally {
     await seed.cleanup();
   }

@@ -9,15 +9,21 @@ import {
   PersistedCollapsedProjectsSchema,
   serializeCollapsedProjects,
   setProjectCollapsed,
+  setWorkspaceCollapsed,
+  setWorkspaceGroupCollapsed,
   togglePinnedCollapsed,
   toggleProjectCollapsed,
   toggleWorkspaceGroupCollapsed,
+  toggleWorkspaceCollapsed,
 } from "./state";
 
 interface SidebarCollapsedSectionsState extends CollapsedProjectsState {
   toggleProjectCollapsed: (projectKey: string) => void;
   setProjectCollapsed: (projectKey: string, collapsed: boolean) => void;
   toggleWorkspaceGroupCollapsed: (workspaceGroupKey: string) => void;
+  setWorkspaceGroupCollapsed: (workspaceGroupKey: string, collapsed: boolean) => void;
+  toggleWorkspaceCollapsed: (workspaceKey: string) => void;
+  setWorkspaceCollapsed: (workspaceKey: string, collapsed: boolean) => void;
   togglePinnedCollapsed: () => void;
 }
 
@@ -26,6 +32,7 @@ export const useSidebarCollapsedSectionsStore = create<SidebarCollapsedSectionsS
     (set) => ({
       collapsedProjectKeys: new Set(),
       collapsedWorkspaceGroupKeys: new Set(),
+      collapsedWorkspaceKeys: new Set(),
       collapsedPinned: false,
       toggleProjectCollapsed: (projectKey) =>
         set((state) => toggleProjectCollapsed(state, projectKey)),
@@ -33,6 +40,12 @@ export const useSidebarCollapsedSectionsStore = create<SidebarCollapsedSectionsS
         set((state) => setProjectCollapsed(state, projectKey, collapsed)),
       toggleWorkspaceGroupCollapsed: (workspaceGroupKey) =>
         set((state) => toggleWorkspaceGroupCollapsed(state, workspaceGroupKey)),
+      setWorkspaceGroupCollapsed: (workspaceGroupKey, collapsed) =>
+        set((state) => setWorkspaceGroupCollapsed(state, workspaceGroupKey, collapsed)),
+      toggleWorkspaceCollapsed: (workspaceKey) =>
+        set((state) => toggleWorkspaceCollapsed(state, workspaceKey)),
+      setWorkspaceCollapsed: (workspaceKey, collapsed) =>
+        set((state) => setWorkspaceCollapsed(state, workspaceKey, collapsed)),
       togglePinnedCollapsed: () => set((state) => togglePinnedCollapsed(state)),
     }),
     {

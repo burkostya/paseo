@@ -8,6 +8,9 @@ export function useSidebarShortcutModel(input: { projects: SidebarProjectEntry[]
   const collapsedProjectKeys = useSidebarCollapsedSectionsStore(
     (state) => state.collapsedProjectKeys,
   );
+  const collapsedWorkspaceKeys = useSidebarCollapsedSectionsStore(
+    (state) => state.collapsedWorkspaceKeys,
+  );
   const setProjectCollapsed = useSidebarCollapsedSectionsStore(
     (state) => state.setProjectCollapsed,
   );
@@ -20,8 +23,9 @@ export function useSidebarShortcutModel(input: { projects: SidebarProjectEntry[]
       buildSidebarShortcutModel({
         projects,
         collapsedProjectKeys,
+        collapsedWorkspaceKeys,
       }),
-    [collapsedProjectKeys, projects],
+    [collapsedProjectKeys, collapsedWorkspaceKeys, projects],
   );
 
   return {

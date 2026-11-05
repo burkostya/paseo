@@ -597,6 +597,8 @@ export interface ImportedProviderSession {
 export interface AgentSessionConfig {
   provider: AgentProvider;
   cwd: string;
+  /** Paseo-owned identity of the launch profile used for this agent. */
+  agentProfileId?: string | null;
   /**
    * Provider-agnostic system/developer instruction string.
    * Mapped by each provider to its native instruction field.
@@ -718,6 +720,12 @@ export interface AgentSession {
   revertConversation?(input: { messageId: string }): Promise<void>;
   revertFiles?(input: { messageId: string }): Promise<void>;
   revertBoth?(input: { messageId: string }): Promise<void>;
+  resolveRewindTarget?(input: {
+    messageId: string;
+    text: string;
+    timestamp: string;
+    precedingProviderMessageIds: readonly string[];
+  }): Promise<string | null>;
   /**
    * Out-of-band prompt handler. When non-null, the manager runs the returned
    * handler instead of allocating a turn. The handler emits stream events
@@ -727,7 +735,7 @@ export interface AgentSession {
    * (e.g. /goal pause) reach the provider without canceling the running turn.
    */
   tryHandleOutOfBand?(prompt: AgentPromptInput): {
-    run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void>;
+    run(ctx: { emit: (event: AgentStreamEvent) => void; clientMessageId?: string }): Promise<void>;
   } | null;
 }
 

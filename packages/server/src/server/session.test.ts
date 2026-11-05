@@ -4338,7 +4338,10 @@ describe("session workspace descriptors", () => {
     expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
     expect(checkoutGitMocks.getCachedCheckoutShortstat).not.toHaveBeenCalled();
     expect(checkoutGitMocks.warmCheckoutShortstatInBackground).not.toHaveBeenCalled();
-    expect(descriptor.diffStat).toEqual({ additions: 7, deletions: 2 });
+    expect(descriptor.diffStat).toBeNull();
+    expect(descriptor.diffComparisonV2).toEqual({ mode: "all" });
+    expect(descriptor.diffComparison).toBeUndefined();
+    expect(descriptor.diffComparisonOverride).toBeNull();
   });
 
   test("does not cold-load git data while describing a workspace", async () => {

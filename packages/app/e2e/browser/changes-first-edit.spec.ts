@@ -67,7 +67,7 @@ test("Changes follows the first edit to a clean workspace without reloading", as
   page,
   withWorkspace,
 }) => {
-  const workspace = await withWorkspace();
+  const workspace = await withWorkspace({ comparisonBase: true });
   await page.setViewportSize({ width: 1400, height: 900 });
   await workspace.navigateTo();
   await openChangesTreePanel(page);
@@ -84,7 +84,7 @@ test("the full diff follows the first edit to a clean workspace without reloadin
   page,
   withWorkspace,
 }) => {
-  const workspace = await withWorkspace();
+  const workspace = await withWorkspace({ comparisonBase: true });
   await page.setViewportSize({ width: 1400, height: 900 });
   await workspace.navigateTo();
   await openChangesTreePanel(page);
@@ -102,7 +102,7 @@ test("a directly opened Diff tab follows the first edit without an active Change
   page,
   withWorkspace,
 }) => {
-  const workspace = await withWorkspace();
+  const workspace = await withWorkspace({ comparisonBase: true });
   await page.setViewportSize({ width: 1400, height: 900 });
   await workspace.navigateTo();
   await openDiffFromNewTabMenu(page);

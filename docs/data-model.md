@@ -44,7 +44,10 @@ Store APIs own persistence atomicity and should not make services coordinate raw
 
 ```
 $PASEO_HOME/
-├── config.json                          # Daemon configuration
+├── config.json                          # Base daemon configuration
+├── conf.d/                               # Optional ordered configuration fragments
+│   └── 20-agent-profiles.json
+├── config.local.json                     # Local override written by the app/CLI
 ├── server-id                            # Stable daemon identifier (plain text, "srv_<base64url>")
 ├── daemon-keypair.json                  # E2EE keypair for relay (mode 0600)
 ├── paseo.pid                            # Daemon PID lock file
@@ -71,8 +74,6 @@ $PASEO_HOME/
 ```
 
 The `agents/{sanitized-cwd}/` directory name is derived from the agent's `cwd` by stripping the filesystem root and replacing path separators with `-` (Windows drive letters become a `C-` style prefix). Persistent server stores write atomically by writing a temp file in the target directory and then renaming it into place.
-
----
 
 ## 1. Agent Record
 
@@ -107,16 +108,17 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 
 ### Nested: SerializableConfig
 
-| Field              | Type                       | Description                  |
-| ------------------ | -------------------------- | ---------------------------- |
-| `title`            | `string?`                  | Configured title             |
-| `modeId`           | `string?`                  | Configured mode              |
-| `model`            | `string?`                  | Configured model             |
-| `thinkingOptionId` | `string?`                  | Thinking/reasoning level     |
-| `featureValues`    | `Record<string, unknown>?` | Feature preference overrides |
-| `extra`            | `Record<string, any>?`     | Provider-specific config     |
-| `systemPrompt`     | `string?`                  | Custom system prompt         |
-| `mcpServers`       | `Record<string, any>?`     | MCP server configurations    |
+| Field              | Type                       | Description                                                                            |
+| ------------------ | -------------------------- | -------------------------------------------------------------------------------------- |
+| `agentProfileId`   | `string?`                  | Host-wide agent profile bound to this session; manual config changes clear the binding |
+| `title`            | `string?`                  | Configured title                                                                       |
+| `modeId`           | `string?`                  | Configured mode                                                                        |
+| `model`            | `string?`                  | Configured model                                                                       |
+| `thinkingOptionId` | `string?`                  | Thinking/reasoning level                                                               |
+| `featureValues`    | `Record<string, unknown>?` | Feature preference overrides                                                           |
+| `extra`            | `Record<string, any>?`     | Provider-specific config                                                               |
+| `systemPrompt`     | `string?`                  | Custom system prompt                                                                   |
+| `mcpServers`       | `Record<string, any>?`     | MCP server configurations                                                              |
 
 ### Nested: RuntimeInfo
 
@@ -179,7 +181,26 @@ Terminal activity contributes to the workspace status bucket **per `workspaceId`
 
 **Path:** `$PASEO_HOME/config.json`
 
-Single file, validated with `PersistedConfigSchema`.
+Without `$PASEO_HOME/conf.d`, the daemon uses one file, validated with
+`PersistedConfigSchema`, and writes changes back to `config.json`.
+
+Creating `$PASEO_HOME/conf.d` enables layered configuration. The daemon reads the base
+`config.json` when it exists, then the immediate `*.json` files in `conf.d` in lexical filename
+order, and finally `$PASEO_HOME/config.local.json`. A missing base file is allowed in this mode and
+uses the normal defaults without creating a Fleet-managed file. Nested objects merge; arrays,
+including `terminalProfiles` and `agentProfiles`, replace the value from lower layers. A `null` in
+an override removes the inherited key. Fragment and local files must contain JSON objects; the
+merged result is validated before it is applied. Symlinks to regular fragment files are supported;
+directories and other entries are ignored.
+
+Environment variables and daemon launch flags are applied after the persisted layers and remain
+authoritative for the settings they provide.
+
+The app and CLI write only the minimal delta needed to `config.local.json` when layering is enabled.
+The base file and fragment files remain untouched, so a Fleet update can replace `config.json`
+without removing local profiles. Delete a key from the local file to inherit the lower-layer value;
+delete the local file when no local overrides remain. Run `paseo daemon reload` after editing a base
+or fragment file by hand.
 
 `agents.skills.selection` is the daemon host's orchestration-skill preference. Missing means
 `{ mode: "all" }`. Installed state is not persisted; the daemon derives it from the shared
@@ -187,7 +208,7 @@ Single file, validated with `PersistedConfigSchema`.
 one serialized owner. Codex discovers the shared directory. Updates retire unchanged files from
 Paseo-managed copies in `~/.codex/skills`, preserving user edits and untracked files.
 
-`paseo reload` reads and validates this file once inside the daemon. That snapshot drives resolution,
+`paseo daemon reload` reads and validates these files once inside the daemon. That snapshot drives resolution,
 classification, application, and reload bookkeeping. `DaemonConfigStore` owns applying runtime-safe
 fields and their removal/default semantics; session handlers and the CLI only relay the structured
 result. Normal config patches persist only the requested fields, so launch overrides and resolved
@@ -267,12 +288,14 @@ and remove. List order is the display order.
 
 Absent and empty mean different things for terminal profiles — omitting the key falls back to
 `DEFAULT_TERMINAL_PROFILES`, while `[]` means the user removed them all. Agent profiles have no
-defaults, so both mean none.
+defaults, so both mean none. An agent record stores the selected profile ID in its serializable
+config; the app uses that ID to keep the profile identity visible across chat, lists, and reloads.
 
 `PersistedConfigSchema` parses strictly, so a daemon that predates a field drops it on write
-rather than storing something it cannot describe. That is why the client gates the agent profiles
-UI on `server_info.features.agentProfiles` instead of letting a save appear to succeed against an
-older daemon.
+rather than storing something it cannot describe. The client gates profile management on
+`server_info.features.agentProfiles` and `agentConfigApply`; profile identity surfaces additionally
+require `agentProfileIdentity`, so an older daemon can still apply profiles without claiming to
+persist their selection.
 
 ### Agent provider Paseo tools
 
@@ -335,7 +358,7 @@ the number of Git processes that have started but not exited. Every Git command 
 including initial workspace reads, filesystem-triggered refreshes, background checks, and explicit
 requests.
 
-Environment variables override `config.json`:
+Environment variables override the merged persisted configuration:
 
 | Environment variable                 | Setting                  |
 | ------------------------------------ | ------------------------ |
@@ -343,8 +366,8 @@ Environment variables override `config.json`:
 | `PASEO_GIT_MAX_PROCESS_CONCURRENCY`  | `maxProcessConcurrency`  |
 | `PASEO_GIT_CONCURRENCY`              | Legacy concurrency alias |
 
-`PASEO_GIT_MAX_PROCESS_CONCURRENCY` wins when it and the legacy alias are both set. Run `paseo reload`
-after changing `config.json`. Environment changes require a daemon restart; the launch environment
+`PASEO_GIT_MAX_PROCESS_CONCURRENCY` wins when it and the legacy alias are both set. Run `paseo daemon reload`
+after changing a persisted config layer. Environment changes require a daemon restart; the launch environment
 remains authoritative during reload.
 
 ### Speech configuration
@@ -460,28 +483,38 @@ workspace together with its owning project.
 
 Array of workspace records. A workspace is a specific working directory within a project.
 
-| Field                          | Type                                                         | Description                                                                                                                                                                                   |
-| ------------------------------ | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `workspaceId`                  | `string`                                                     | Opaque stable identifier (`wks_<hex>`), generated independently of the directory. MUST NOT be treated as a path; compare by exact equality. Use the `cwd` field for directory access.         |
-| `projectId`                    | `string`                                                     | FK to Project.projectId; the workspace's stable project membership                                                                                                                            |
-| `cwd`                          | `string`                                                     | Exact execution directory selected for agents, files, scripts, and setup                                                                                                                      |
-| `kind`                         | `"local_checkout" \| "worktree" \| "directory"`              | Mutable checkout classification                                                                                                                                                               |
-| `displayName`                  | `string`                                                     | The human name (the generated/derived title). Decoupled from `branch` by construction.                                                                                                        |
-| `title`                        | `string \| null`                                             | User-set name override layered over `displayName`. Null means "use `displayName`".                                                                                                            |
-| `branch`                       | `string \| null`                                             | The current Git branch for git-backed workspaces. Separate from `displayName`/`title`; a background branch refresh never rewrites the name.                                                   |
-| `worktreeRoot`                 | `string \| null`                                             | Backing checkout/worktree root. May differ from `cwd` for exact subprojects and remains persisted after the worktree is deleted so restore can reproduce the placement.                       |
-| `baseBranch`                   | `string \| null`                                             | Comparison base retained across archive and restore. Branch-off creation stores the resolved ref; legacy and PR-checkout records hold a bare name. Null means no recorded base.               |
-| `isPaseoOwnedWorktree`         | `boolean`                                                    | Whether Paseo owns and may remove/recreate the backing `worktreeRoot`                                                                                                                         |
-| `mainRepoRoot`                 | `string \| null`                                             | Main repository root for worktree checkouts, independent of both exact `cwd` and backing `worktreeRoot`                                                                                       |
-| `createdAt`                    | `string` (ISO 8601)                                          |                                                                                                                                                                                               |
-| `updatedAt`                    | `string` (ISO 8601)                                          |                                                                                                                                                                                               |
-| `archivedAt`                   | `string \| null` (ISO 8601)                                  | Soft-delete; required nullable                                                                                                                                                                |
-| `autoArchivedChangeRequestUrl` | `string \| null`                                             | Change request whose merged state triggered auto-archive. Restore replaces it with the current merged change request, when present, so repeated snapshots cannot archive the workspace again. |
-| `labels`                       | `string[]?`                                                  | Normalized display names assigned from this host's shared label catalog. Missing means unlabelled.                                                                                            |
-| `pinnedAt`                     | `string \| null` (ISO 8601)                                  | Pinned-to-top-of-sidebar timestamp; null means "not pinned"                                                                                                                                   |
-| `untrustedSource`              | `{ kind: "change_request", forge, number, headRepository }?` | Provenance captured when a cross-repository change request creates the workspace. Missing means repository automation is allowed; explicit setup removes the field.                           |
+| Field                          | Type                                                         | Description                                                                                                                                                                                     |
+| ------------------------------ | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `workspaceId`                  | `string`                                                     | Opaque stable identifier (`wks_<hex>`), generated independently of the directory. MUST NOT be treated as a path; compare by exact equality. Use the `cwd` field for directory access.           |
+| `projectId`                    | `string`                                                     | FK to Project.projectId; the workspace's stable project membership                                                                                                                              |
+| `cwd`                          | `string`                                                     | Exact execution directory selected for agents, files, scripts, and setup                                                                                                                        |
+| `kind`                         | `"local_checkout" \| "worktree" \| "directory"`              | Mutable checkout classification                                                                                                                                                                 |
+| `displayName`                  | `string`                                                     | The human name (the generated/derived title). Decoupled from `branch` by construction.                                                                                                          |
+| `title`                        | `string \| null`                                             | User-set name override layered over `displayName`. Null means "use `displayName`".                                                                                                              |
+| `branch`                       | `string \| null`                                             | The current Git branch for git-backed workspaces. Separate from `displayName`/`title`; a background branch refresh never rewrites the name.                                                     |
+| `worktreeRoot`                 | `string \| null`                                             | Backing checkout/worktree root. May differ from `cwd` for exact subprojects and remains persisted after the worktree is deleted so restore can reproduce the placement.                         |
+| `baseBranch`                   | `string \| null`                                             | Comparison base retained across archive and restore. Branch-off creation stores the resolved ref; legacy and PR-checkout records hold a bare name. Null means no recorded base.                 |
+| `isPaseoOwnedWorktree`         | `boolean`                                                    | Whether Paseo owns and may remove/recreate the backing `worktreeRoot`                                                                                                                           |
+| `mainRepoRoot`                 | `string \| null`                                             | Main repository root for worktree checkouts, independent of both exact `cwd` and backing `worktreeRoot`                                                                                         |
+| `createdAt`                    | `string` (ISO 8601)                                          |                                                                                                                                                                                                 |
+| `updatedAt`                    | `string` (ISO 8601)                                          |                                                                                                                                                                                                 |
+| `archivedAt`                   | `string \| null` (ISO 8601)                                  | Soft-delete; required nullable                                                                                                                                                                  |
+| `autoArchivedChangeRequestUrl` | `string \| null`                                             | Change request whose merged state triggered auto-archive. Restore replaces it with the current merged change request, when present, so repeated snapshots cannot archive the workspace again.   |
+| `labels`                       | `string[]?`                                                  | Normalized display names assigned from this host's shared label catalog. Missing means unlabelled.                                                                                              |
+| `pinnedAt`                     | `string \| null` (ISO 8601)                                  | Pinned-to-top-of-sidebar timestamp; null means "not pinned"                                                                                                                                     |
+| `parentWorkspaceId`            | `string \| null`                                             | Optional direct parent in the same project for the project-grouped sidebar tree; null means the project root. The daemon rejects archived parents, cross-project links, self-links, and cycles. |
+| `untrustedSource`              | `{ kind: "change_request", forge, number, headRepository }?` | Provenance captured when a cross-repository change request creates the workspace. Missing means repository automation is allowed; explicit setup removes the field.                             |
 
 > **Opaque-ID invariant:** `workspaceId` is opaque identity, never a filesystem path. Filesystem and git operations take `cwd`/`workspaceDirectory` only — never the id. A compatibility-only first-materialization bootstrap still groups pre-registry agent records by path and Git remote so existing installs retain their legacy records. That grouping never runs against a live registry, and its keys are not runtime project or workspace identity.
+
+### Changes comparison
+
+Project and workspace records hold a host-owned comparison setting. Workspace overrides inherit
+the project value when absent; an absent project value means All changes with an automatic base.
+Legacy `base` records keep their combined committed and working-tree behavior. New settings use a
+separate optional wire field so older clients can still parse the legacy projection. Keep this
+preference separate from `baseBranch`, which owns worktree recovery and merge behavior.
+See [Changes comparison](explorer-sidebar.md#changes-comparison) for the user-facing contract.
 
 ### Workspace label catalog
 
@@ -551,7 +584,7 @@ These live in React Native `AsyncStorage` or browser `IndexedDB`, not on the dae
 Right-sidebar client state splits on whether it is determined by the directory or owned by the workspace (two workspaces can share one `cwd`). The split is enforced by the cache key, so changing a key changes the sharing semantics — see [architecture.md](architecture.md#right-sidebar-boundary-directory-backed-vs-workspace-owned) for the full table.
 
 - **Directory-backed** (shared by same-`cwd` workspaces): keyed by `(serverId, cwd)`. Git status/diff, GitHub PR status, PR timeline, file preview content. These are TanStack Query caches, not persisted stores.
-- **Workspace-owned** (independent per workspace): keyed by `workspaceId`, with `cwd` used only as a fallback when no `workspaceId` is present. Review draft comments (`@paseo:review-draft-store`), diff-mode overrides (in-memory), workspace composer attachments, and file-explorer nav/expand state. The `workspaceId` part of these keys is **opaque** — never parse it back into a path.
+- **Workspace-owned** (independent per workspace): keyed by `workspaceId`, with `cwd` used only as a fallback when no `workspaceId` is present. Review draft comments (`@paseo:review-draft-store`), [comparison overrides](explorer-sidebar.md#changes-comparison) (host-persisted), workspace composer attachments, and file-explorer nav/expand state. The `workspaceId` part of these keys is **opaque** — never parse it back into a path.
 
 ### Replica row store
 

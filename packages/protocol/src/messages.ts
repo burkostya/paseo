@@ -487,6 +487,8 @@ const ToolPolicySchema = z
 const AgentSessionConfigSchema = z.object({
   provider: AgentProviderSchema,
   cwd: z.string(),
+  // COMPAT(agentProfileIdentity): added in v0.3.3, remove after 2027-02-12 once old daemons are unsupported.
+  agentProfileId: z.string().nullable().optional(),
   modeId: z.string().optional(),
   model: z.string().optional(),
   thinkingOptionId: z.string().optional(),
@@ -864,6 +866,8 @@ export const AgentSnapshotPayloadSchema = z.object({
   id: z.string(),
   provider: AgentProviderSchema,
   cwd: z.string(),
+  // COMPAT(agentProfileIdentity): added in v0.3.3, remove after 2027-02-12 once old daemons are unsupported.
+  agentProfileId: z.string().nullable().optional(),
   workspaceId: z.string().optional(),
   model: z.string().nullable(),
   features: z.array(AgentFeatureSchema).optional(),
@@ -900,6 +904,8 @@ export const AgentListItemPayloadSchema = z.object({
   shortId: z.string(),
   title: z.string().nullable(),
   provider: AgentProviderSchema,
+  // COMPAT(agentProfileIdentity): added in v0.3.3, remove after 2027-02-12 once old daemons are unsupported.
+  agentProfileId: z.string().nullable().optional(),
   model: z.string().nullable(),
   thinkingOptionId: z.string().nullable().optional(),
   effectiveThinkingOptionId: z.string().nullable().optional(),
@@ -1001,6 +1007,35 @@ export const ProjectIconSourceSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("upload"), data: z.string() }),
 ]);
 
+export const DiffComparisonSchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("uncommitted") }),
+  z.object({ mode: z.literal("base"), baseRef: z.string().min(1) }),
+]);
+export type DiffComparison = z.infer<typeof DiffComparisonSchema>;
+
+export const DiffComparisonV2Schema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("uncommitted") }),
+  z.object({ mode: z.literal("base"), baseRef: z.string().min(1).optional() }),
+  z.object({ mode: z.literal("all"), baseRef: z.string().min(1).optional() }),
+]);
+export type DiffComparisonV2 = z.infer<typeof DiffComparisonV2Schema>;
+
+export const DiffComparisonSetRequestSchema = z.object({
+  type: z.literal("git.comparison.set.request"),
+  target: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("project"), projectId: z.string() }),
+    z.object({ kind: z.literal("workspace"), workspaceId: z.string() }),
+  ]),
+  comparison: DiffComparisonSchema.nullable(),
+  // COMPAT(workspaceDiffComparisonV2): added in v0.13.2, remove after 2027-04-28 when old fork clients are unsupported.
+  comparisonV2: DiffComparisonV2Schema.nullable().optional(),
+  requestId: z.string(),
+});
+export const DiffComparisonSetResponseSchema = z.object({
+  type: z.literal("git.comparison.set.response"),
+  payload: z.object({ requestId: z.string(), accepted: z.boolean(), error: z.string().nullable() }),
+});
+
 export const ProjectRenameRequestSchema = z.object({
   type: z.literal("project.rename.request"),
   projectId: z.string(),
@@ -1034,6 +1069,38 @@ export const WorkspacePinSetRequestSchema = z.object({
   type: z.literal("workspace.pin.set.request"),
   workspaceId: z.string(),
   pinned: z.boolean(),
+  requestId: z.string(),
+});
+
+// Manual workspace hierarchy. The field is nullable so clearing a parent is an
+// explicit operation and remains compatible with clients that omit it.
+export const WorkspaceHierarchySetParentRequestSchema = z.object({
+  type: z.literal("workspace.hierarchy.setParent.request"),
+  workspaceId: z.string(),
+  parentWorkspaceId: z.string().nullable(),
+  requestId: z.string(),
+});
+
+export const WorkspaceHierarchyActionSchema = z.enum(["archive", "restore"]);
+
+export const WorkspaceHierarchyInspectSubtreeRequestSchema = z.object({
+  type: z.literal("workspace.hierarchy.inspectSubtree.request"),
+  workspaceId: z.string(),
+  action: WorkspaceHierarchyActionSchema,
+  requestId: z.string(),
+});
+
+export const WorkspaceHierarchyArchiveSubtreeRequestSchema = z.object({
+  type: z.literal("workspace.hierarchy.archiveSubtree.request"),
+  workspaceId: z.string(),
+  expectedWorkspaceIds: z.array(z.string()),
+  requestId: z.string(),
+});
+
+export const WorkspaceHierarchyRestoreSubtreeRequestSchema = z.object({
+  type: z.literal("workspace.hierarchy.restoreSubtree.request"),
+  workspaceId: z.string(),
+  expectedWorkspaceIds: z.array(z.string()),
   requestId: z.string(),
 });
 
@@ -2061,6 +2128,8 @@ export const SetAgentFeatureResponseMessageSchema = z.object({
  * clears them, matching the single-field RPCs above.
  */
 export const AgentConfigApplySchema = z.object({
+  // COMPAT(agentProfileIdentity): added in v0.3.3, remove after 2027-02-12 once old daemons are unsupported.
+  agentProfileId: z.string().nullable().optional(),
   modelId: z.string().nullable().optional(),
   modeId: z.string().optional(),
   thinkingOptionId: z.string().nullable().optional(),
@@ -2185,6 +2254,75 @@ export const WorkspacePinSetResponseSchema = z.object({
   payload: WorkspacePinSetResponsePayloadSchema,
 });
 
+export const WorkspaceHierarchySetParentResponsePayloadSchema = z.object({
+  requestId: z.string(),
+  workspaceId: z.string(),
+  parentWorkspaceId: z.string().nullable(),
+  accepted: z.boolean(),
+  error: z.string().nullable(),
+});
+
+export const WorkspaceHierarchySetParentResponseSchema = z.object({
+  type: z.literal("workspace.hierarchy.setParent.response"),
+  payload: WorkspaceHierarchySetParentResponsePayloadSchema,
+});
+
+export const WorkspaceHierarchySubtreeEntrySchema = z.object({
+  workspaceId: z.string(),
+  projectId: z.string(),
+  workspaceName: z.string(),
+  // COMPAT(workspaceHierarchyArchiveRisk): added in v0.8.0, keep optional while older hierarchy
+  // handlers may omit archive warning metadata.
+  workspaceKind: z.enum(["local_checkout", "worktree", "directory"]).optional(),
+  parentWorkspaceId: z.string().nullable(),
+  archivedAt: z.string().nullable(),
+  archived: z.boolean(),
+  archiveHasUncommittedChanges: z.boolean().nullable().optional(),
+  archiveUnpushedCommitCount: z.number().int().nonnegative().nullable().optional(),
+  diffStat: z.object({ additions: z.number(), deletions: z.number() }).nullable().optional(),
+});
+
+export const WorkspaceHierarchyWorkspaceResultSchema = z.object({
+  workspaceId: z.string(),
+  status: z.enum(["succeeded", "unchanged", "failed"]),
+  error: z.string().nullable(),
+});
+
+export const WorkspaceHierarchyInspectSubtreeResponseSchema = z.object({
+  type: z.literal("workspace.hierarchy.inspectSubtree.response"),
+  payload: z.object({
+    requestId: z.string(),
+    workspaceId: z.string(),
+    action: WorkspaceHierarchyActionSchema,
+    entries: z.array(WorkspaceHierarchySubtreeEntrySchema),
+    expectedWorkspaceIds: z.array(z.string()),
+    changingWorkspaceIds: z.array(z.string()),
+    error: z.string().nullable(),
+  }),
+});
+
+export const WorkspaceHierarchyArchiveSubtreeResponseSchema = z.object({
+  type: z.literal("workspace.hierarchy.archiveSubtree.response"),
+  payload: z.object({
+    requestId: z.string(),
+    workspaceId: z.string(),
+    accepted: z.boolean(),
+    error: z.string().nullable(),
+    results: z.array(WorkspaceHierarchyWorkspaceResultSchema),
+  }),
+});
+
+export const WorkspaceHierarchyRestoreSubtreeResponseSchema = z.object({
+  type: z.literal("workspace.hierarchy.restoreSubtree.response"),
+  payload: z.object({
+    requestId: z.string(),
+    workspaceId: z.string(),
+    accepted: z.boolean(),
+    error: z.string().nullable(),
+    results: z.array(WorkspaceHierarchyWorkspaceResultSchema),
+  }),
+});
+
 export const WorkspaceRecoveryStateSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("recoverable"),
@@ -2253,6 +2391,7 @@ const CheckoutErrorSchema = z.object({
 });
 
 const CheckoutDiffCompareSchema = z.object({
+  includeWorkingTree: z.boolean().optional(),
   mode: z.enum(["uncommitted", "base", "all"]),
   baseRef: z.string().optional(),
   ignoreWhitespace: z.boolean().optional(),
@@ -2498,6 +2637,7 @@ export const StashListRequestSchema = z.object({
 });
 
 export const BranchSuggestionsRequestSchema = z.object({
+  exactRefs: z.boolean().optional(),
   type: z.literal("branch_suggestions_request"),
   cwd: z.string(),
   query: z.string().optional(),
@@ -2573,6 +2713,19 @@ export const PaseoWorktreeListRequestSchema = z.object({
   type: z.literal("paseo_worktree_list_request"),
   cwd: z.string().optional(),
   repoRoot: z.string().optional(),
+  requestId: z.string(),
+});
+
+export const ProjectWorktreeListRequestSchema = z.object({
+  type: z.literal("project.worktree.list.request"),
+  projectId: z.string(),
+  requestId: z.string(),
+});
+
+export const ProjectWorktreeImportRequestSchema = z.object({
+  type: z.literal("project.worktree.import.request"),
+  projectId: z.string(),
+  path: z.string(),
   requestId: z.string(),
 });
 
@@ -3311,11 +3464,16 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ArchiveAgentRequestMessageSchema,
   CloseItemsRequestMessageSchema,
   UpdateAgentRequestMessageSchema,
+  DiffComparisonSetRequestSchema,
   ProjectRenameRequestSchema,
   ProjectIconSetRequestSchema,
   ProjectRemoveRequestSchema,
   WorkspaceTitleSetRequestSchema,
   WorkspacePinSetRequestSchema,
+  WorkspaceHierarchySetParentRequestSchema,
+  WorkspaceHierarchyInspectSubtreeRequestSchema,
+  WorkspaceHierarchyArchiveSubtreeRequestSchema,
+  WorkspaceHierarchyRestoreSubtreeRequestSchema,
   WorkspaceLabelListRequestSchema,
   WorkspaceLabelAssignmentSetRequestSchema,
   WorkspaceLabelUpdateRequestSchema,
@@ -3427,6 +3585,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   GitHubSearchRequestSchema,
   DirectorySuggestionsRequestSchema,
   PaseoWorktreeListRequestSchema,
+  ProjectWorktreeListRequestSchema,
+  ProjectWorktreeImportRequestSchema,
   PaseoWorktreeArchiveRequestSchema,
   CreatePaseoWorktreeRequestSchema,
   WorkspaceSetupStatusRequestSchema,
@@ -3697,6 +3857,8 @@ export const ServerInfoStatusPayloadSchema = z
         directorySync: z.boolean().optional(),
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
         workspaceLabels: z.boolean().optional(),
+        // COMPAT(workspaceHierarchy): added in v0.8.0, remove after 2027-09-13.
+        workspaceHierarchy: z.boolean().optional(),
         // COMPAT(workspaceSetupRun): added in v0.8.0, remove gate after 2027-09-02.
         workspaceSetupRun: z.boolean().optional(),
         // COMPAT(workspaceTerminals): added in v0.8.0, remove gate after 2027-09-05.
@@ -3773,6 +3935,7 @@ export const ServerInfoStatusPayloadSchema = z
         checkoutRefresh: z.boolean().optional(),
         // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
         workspaceMultiplicity: z.boolean().optional(),
+        projectWorktreeImport: z.boolean().optional(),
         // COMPAT(projectRemove): added in v0.1.97, drop the gate when floor >= v0.1.97.
         projectRemove: z.boolean().optional(),
         // COMPAT(projectAdd): added in v0.1.97, drop the gate when floor >= v0.1.97.
@@ -3877,6 +4040,13 @@ export const ServerInfoStatusPayloadSchema = z
         agentProfiles: z.boolean().optional(),
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: z.boolean().optional(),
+        // COMPAT(agentProfileIdentity): added in v0.3.3, remove gate after 2027-02-12.
+        agentProfileIdentity: z.boolean().optional(),
+        // COMPAT(checkoutDiffBaseSelection): added in the v0.1.109 fork, remove after 2027-01-16.
+        checkoutDiffBaseSelection: z.boolean().optional(),
+        workspaceDiffComparison: z.boolean().optional(),
+        // COMPAT(workspaceDiffComparisonV2): added in v0.13.2, remove after 2027-04-28 when old daemons are unsupported.
+        workspaceDiffComparisonV2: z.boolean().optional(),
       })
       .optional(),
   })
@@ -4158,6 +4328,20 @@ export const WorkspaceDescriptorPayloadSchema = z
     // value (customName) and projectCustomName mirrors the raw override so the
     // settings UI can prefill its input and offer a "reset" action.
     projectCustomName: z.string().nullable().optional(),
+    projectDiffComparison: DiffComparisonSchema.optional(),
+    diffComparisonOverride: DiffComparisonSchema.nullable().optional(),
+    diffComparison: DiffComparisonSchema.optional(),
+    diffComparisonError: z.string().nullable().optional(),
+    // COMPAT(workspaceDiffComparisonV2): added in v0.13.2, remove after 2027-04-28 when old daemons are unsupported.
+    projectDiffComparisonV2: DiffComparisonV2Schema.optional(),
+    diffComparisonOverrideV2: DiffComparisonV2Schema.nullable().optional(),
+    diffComparisonV2: DiffComparisonV2Schema.optional(),
+    diffComparisonResolvedBase: z.string().nullable().optional(),
+    diffComparisonBaseSource: z
+      .enum(["explicit", "pull_request", "worktree", "remote_head"])
+      .nullable()
+      .optional(),
+    diffComparisonWarning: z.string().nullable().optional(),
     // Identifies the project's stored custom icon; null means automatic.
     // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
     projectCustomIconRevision: z.string().nullable().optional(),
@@ -4185,6 +4369,8 @@ export const WorkspaceDescriptorPayloadSchema = z
     // Retained for wire parsing of older daemon descriptors.
     internal: z.boolean().optional(),
     background: z.boolean().optional(),
+    // COMPAT(workspaceHierarchy): added in v0.8.0, remove optional after 2027-09-13.
+    parentWorkspaceId: z.string().nullable().optional(),
     archivingAt: z.string().nullable().optional().default(null),
     status: WorkspaceStateBucketSchema,
     // Best-effort workspace status entry timestamp. Old daemons omit the
@@ -4356,6 +4542,9 @@ export const WorkspaceProjectDescriptorPayloadSchema = z.object({
   projectKey: z.string().optional(),
   projectDisplayName: z.string(),
   projectCustomName: z.string().nullable().optional(),
+  diffComparison: DiffComparisonSchema.optional(),
+  // COMPAT(workspaceDiffComparisonV2): added in v0.13.2, remove after 2027-04-28 when old daemons are unsupported.
+  diffComparisonV2: DiffComparisonV2Schema.optional(),
   // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
   projectCustomIconRevision: z.string().nullable().optional(),
   // Fingerprints the effective icon, including automatic discovery and the
@@ -6137,6 +6326,34 @@ export const PaseoWorktreeListResponseSchema = z.object({
   }),
 });
 
+export const ProjectWorktreeCandidateSchema = z.object({
+  path: z.string(),
+  branch: z.string().nullable(),
+  head: z.string(),
+  unavailable: z.boolean(),
+  workspaceId: z.string().nullable(),
+  archived: z.boolean(),
+});
+export type ProjectWorktreeCandidate = z.infer<typeof ProjectWorktreeCandidateSchema>;
+
+export const ProjectWorktreeListResponseSchema = z.object({
+  type: z.literal("project.worktree.list.response"),
+  payload: z.object({
+    worktrees: z.array(ProjectWorktreeCandidateSchema),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+});
+
+export const ProjectWorktreeImportResponseSchema = z.object({
+  type: z.literal("project.worktree.import.response"),
+  payload: z.object({
+    workspaceId: z.string().nullable(),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+});
+
 export const PaseoWorktreeArchiveResponseSchema = z.object({
   type: z.literal("paseo_worktree_archive_response"),
   payload: z.object({
@@ -7162,11 +7379,16 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentDetachResponseMessageSchema,
   AgentRewindResponseMessageSchema,
   UpdateAgentResponseMessageSchema,
+  DiffComparisonSetResponseSchema,
   ProjectRenameResponseSchema,
   ProjectIconSetResponseSchema,
   ProjectRemoveResponseSchema,
   WorkspaceTitleSetResponseSchema,
   WorkspacePinSetResponseSchema,
+  WorkspaceHierarchySetParentResponseSchema,
+  WorkspaceHierarchyInspectSubtreeResponseSchema,
+  WorkspaceHierarchyArchiveSubtreeResponseSchema,
+  WorkspaceHierarchyRestoreSubtreeResponseSchema,
   WorkspaceRecoveryInspectResponseSchema,
   WorkspaceRecoveryRestoreResponseSchema,
   WaitForFinishResponseMessageSchema,
@@ -7208,6 +7430,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   GitHubSearchResponseSchema,
   DirectorySuggestionsResponseSchema,
   PaseoWorktreeListResponseSchema,
+  ProjectWorktreeListResponseSchema,
+  ProjectWorktreeImportResponseSchema,
   PaseoWorktreeArchiveResponseSchema,
   CreatePaseoWorktreeResponseSchema,
   FileExplorerResponseSchema,
@@ -7375,6 +7599,26 @@ export type WorkspaceTitleSetResponsePayload = z.infer<
 >;
 export type WorkspacePinSetResponse = z.infer<typeof WorkspacePinSetResponseSchema>;
 export type WorkspacePinSetResponsePayload = z.infer<typeof WorkspacePinSetResponsePayloadSchema>;
+export type WorkspaceHierarchySetParentResponse = z.infer<
+  typeof WorkspaceHierarchySetParentResponseSchema
+>;
+export type WorkspaceHierarchySetParentResponsePayload = z.infer<
+  typeof WorkspaceHierarchySetParentResponsePayloadSchema
+>;
+export type WorkspaceHierarchyAction = z.infer<typeof WorkspaceHierarchyActionSchema>;
+export type WorkspaceHierarchySubtreeEntry = z.infer<typeof WorkspaceHierarchySubtreeEntrySchema>;
+export type WorkspaceHierarchyWorkspaceResult = z.infer<
+  typeof WorkspaceHierarchyWorkspaceResultSchema
+>;
+export type WorkspaceHierarchyInspectSubtreeResponse = z.infer<
+  typeof WorkspaceHierarchyInspectSubtreeResponseSchema
+>;
+export type WorkspaceHierarchyArchiveSubtreeResponse = z.infer<
+  typeof WorkspaceHierarchyArchiveSubtreeResponseSchema
+>;
+export type WorkspaceHierarchyRestoreSubtreeResponse = z.infer<
+  typeof WorkspaceHierarchyRestoreSubtreeResponseSchema
+>;
 export type WorkspaceRecoveryState = z.infer<typeof WorkspaceRecoveryStateSchema>;
 export type WorkspaceRecoveryInspectResponse = z.infer<
   typeof WorkspaceRecoveryInspectResponseSchema
@@ -7528,6 +7772,18 @@ export type ProjectIconSetRequest = z.infer<typeof ProjectIconSetRequestSchema>;
 export type ProjectRemoveRequest = z.infer<typeof ProjectRemoveRequestSchema>;
 export type WorkspaceTitleSetRequest = z.infer<typeof WorkspaceTitleSetRequestSchema>;
 export type WorkspacePinSetRequest = z.infer<typeof WorkspacePinSetRequestSchema>;
+export type WorkspaceHierarchySetParentRequest = z.infer<
+  typeof WorkspaceHierarchySetParentRequestSchema
+>;
+export type WorkspaceHierarchyInspectSubtreeRequest = z.infer<
+  typeof WorkspaceHierarchyInspectSubtreeRequestSchema
+>;
+export type WorkspaceHierarchyArchiveSubtreeRequest = z.infer<
+  typeof WorkspaceHierarchyArchiveSubtreeRequestSchema
+>;
+export type WorkspaceHierarchyRestoreSubtreeRequest = z.infer<
+  typeof WorkspaceHierarchyRestoreSubtreeRequestSchema
+>;
 export type WorkspaceRecoveryInspectRequest = z.infer<typeof WorkspaceRecoveryInspectRequestSchema>;
 export type WorkspaceRecoveryRestoreRequest = z.infer<typeof WorkspaceRecoveryRestoreRequestSchema>;
 export type SetAgentModeRequestMessage = z.infer<typeof SetAgentModeRequestMessageSchema>;

@@ -1,0 +1,14 @@
+{
+  "daemon": {
+    "agentProfiles": [
+      {
+        "id": "review",
+        "name": "Review",
+        "icon": "🔎",
+        "provider": "codex",
+        "thinkingOptionId": "high",
+        "notes": "Review the change and call out likely regressions."
+      }
+    ]
+  }
+}

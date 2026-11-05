@@ -73,6 +73,13 @@ export function createTestRegistries() {
       workspaces.set(id, updated);
       return updated;
     },
+    setWorkspaceParent: async ({ workspaceId, parentWorkspaceId }) => {
+      const existing = workspaces.get(workspaceId);
+      if (!existing) return null;
+      const updated = { ...existing, parentWorkspaceId };
+      workspaces.set(workspaceId, updated);
+      return updated;
+    },
     upsert: async (record: PersistedWorkspaceRecord) => {
       workspaces.set(record.workspaceId, record);
     },
