@@ -6,7 +6,7 @@ export interface ReviewCommentWriter {
   saveComment: (input: {
     key: string;
     id: string | null;
-    comment: Pick<ReviewDraftComment, "filePath" | "side" | "lineNumber" | "body">;
+    comment: Pick<ReviewDraftComment, "filePath" | "side" | "lineNumber" | "body" | "content">;
   }) => void;
   deleteComment: (input: { key: string; id: string }) => void;
 }
@@ -53,6 +53,7 @@ function buildReviewEditor(key: string, writer: ReviewCommentWriter, onUnused: (
           side: editor.target.side,
           lineNumber: editor.target.lineNumber,
           body: trimmedBody,
+          content: editor.target.content,
         },
       });
       publish(null);

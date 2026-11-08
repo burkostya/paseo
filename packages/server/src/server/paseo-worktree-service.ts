@@ -1,3 +1,4 @@
+import type { VcsPlugins } from "./workspace-vcs-service.js";
 import type { PluginLifecycle } from "./plugins/lifecycle/index.js";
 import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -60,6 +61,7 @@ export interface AttemptFirstAgentBranchAutoNameResult {
 }
 
 export interface CreatePaseoWorktreeDeps extends CreateWorktreeCoreDeps {
+  vcsPlugins?: VcsPlugins;
   lifecycle?: Pick<PluginLifecycle, "wait" | "before">;
   workspaceGitService: WorkspaceGitService;
   workspaceProvisioning: Pick<WorkspaceProvisioningService, "createWorkspaceForWorktree">;
@@ -87,6 +89,34 @@ async function createPaseoWorktreeWithPriority(
           sourceCheckout: workspaceCwdPlan.sourceCheckout,
         },
       });
+      const plugins = deps.vcsPlugins;
+      // COMPAT(legacyWorktreeVcsHooks): added in v0.15.2, remove after 2027-05-06 when legacy creation is provider-backed.
+      // Legacy callers can run without the VCS runtime; production ships the Git registration.
+      if (plugins?.listVcsProviders().some((provider) => provider.id === "git")) {
+        const source = await plugins.invokeVcs("git", {
+          kind: "detect",
+          cwd: workspaceCwdPlan.sourceCheckout,
+        });
+        const target = await plugins.invokeVcs("git", {
+          kind: "detect",
+          cwd: createdWorktree.worktree.worktreePath,
+        });
+        if (
+          source.kind !== "detect" ||
+          source.detection.status !== "available" ||
+          target.kind !== "detect" ||
+          target.detection.status !== "available"
+        )
+          throw new Error("Git provider could not bind the created working copy");
+        await deps.lifecycle?.wait("working-copy.create.after", {
+          source: source.detection.binding,
+          workingCopy: {
+            binding: target.detection.binding,
+            source: source.detection.binding,
+            owned: true,
+          },
+        });
+      }
     }
     await maybeMarkFirstAgentBranchAutoNameEligible({ createdWorktree });
     const workspaceCwd = mapWorkspaceRelativeCwdToWorktree({

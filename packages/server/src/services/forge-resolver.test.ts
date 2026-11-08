@@ -374,3 +374,33 @@ describe("createForgeResolver", () => {
     expect(probeForge).toHaveBeenCalledTimes(1);
   });
 });
+
+it("scopes publication adapters to explicit repositories after resolving SSH aliases", async () => {
+  const createService = vi.fn((forge, options) => createForgeService(forge, options));
+  const resolver = createForgeResolver({
+    createService,
+    resolveSshHostname: async () => "github.com",
+  });
+  const first = await resolver.resolveRepository("git@work:acme/first.git");
+  const second = await resolver.resolveRepository("git@work:acme/second.git");
+  expect(first?.service).not.toBe(second?.service);
+  expect(await resolver.resolveRepository("git@work:acme/first.git")).toBe(first);
+  expect(createService).toHaveBeenCalledWith("github", {
+    repositoryUrl: "https://github.com/acme/first",
+  });
+  expect(createService).toHaveBeenCalledWith("github", {
+    repositoryUrl: "https://github.com/acme/second",
+  });
+  first?.service.dispose?.();
+  second?.service.dispose?.();
+});
+
+it("preserves the explicit HTTP transport and port for a publication repository", async () => {
+  const createService = vi.fn((forge, options) => createForgeService(forge, options));
+  const resolver = createForgeResolver({ createService, probeForge: async () => "gitlab" });
+  const resolution = await resolver.resolveRepository("http://forge.test:8080/group/sub/repo.git");
+  expect(resolution?.forge).toBe("gitlab");
+  expect(createService).toHaveBeenCalledWith("gitlab", {
+    repositoryUrl: "http://forge.test:8080/group/sub/repo",
+  });
+});

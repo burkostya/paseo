@@ -89,7 +89,19 @@ export function renderPromptAttachmentAsText(attachment: AgentAttachment): strin
       return attachment.text;
     }
     case "review": {
-      const lines = [`Paseo review attachment (${attachment.mode})`, `CWD: ${attachment.cwd}`];
+      const lines = [
+        `Paseo review attachment (${attachment.vcs?.providerId ?? attachment.mode})`,
+        `CWD: ${attachment.cwd}`,
+      ];
+      if (attachment.vcs) {
+        lines.push(
+          `VCS: ${attachment.vcs.providerId}`,
+          `Snapshot: ${attachment.vcs.version}`,
+          `Repository: ${attachment.vcs.repositoryId}`,
+          `Working copy: ${attachment.vcs.workingCopyId}`,
+          `Comparison: ${JSON.stringify(attachment.vcs.comparison)}`,
+        );
+      }
       if (attachment.baseRef) {
         lines.push(`Base: ${attachment.baseRef}`);
       }

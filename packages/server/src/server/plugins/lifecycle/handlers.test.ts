@@ -253,3 +253,34 @@ test("checkout-branch hooks reject a branch-off baseRef", async () => {
     validateBeforeResult("worktree.create.before", request, { ...request, baseRef: "main" }),
   ).rejects.toThrow(/baseRef/);
 });
+
+test("working-copy hooks can select a revision but cannot redirect creation", async () => {
+  const request = {
+    binding: {
+      providerId: "fixture",
+      repositoryId: "repo",
+      workingCopyId: "source",
+      root: "/source",
+      cwd: "/source/sub",
+    },
+    input: { root: "/copies/task", name: "task", revision: "one" },
+  };
+  expect(
+    await validateBeforeResult("working-copy.create.before", request, {
+      ...request,
+      input: { ...request.input, revision: "two" },
+    }),
+  ).toEqual({ ...request, input: { ...request.input, revision: "two" } });
+  await expect(
+    validateBeforeResult("working-copy.create.before", request, {
+      ...request,
+      input: { ...request.input, root: "/elsewhere" },
+    }),
+  ).rejects.toThrow("cannot change the source or destination");
+  await expect(
+    validateBeforeResult("working-copy.create.before", request, {
+      ...request,
+      binding: { ...request.binding, cwd: "/another" },
+    }),
+  ).rejects.toThrow("cannot change the source or destination");
+});

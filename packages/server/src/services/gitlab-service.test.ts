@@ -1601,3 +1601,66 @@ describe("createGitLabService", () => {
     );
   });
 });
+
+it("uses the publication repository without discovering the current Git remote", async () => {
+  const service = createGitLabService({
+    repositoryUrl: "https://gitlab.test/group/subgroup/selected",
+    resolveGlabPath: async () => "/glab",
+    resolveRemoteUrl: async () => {
+      throw new Error("Must not discover Git");
+    },
+    runner: async (args, options) => {
+      expect(args).toEqual(
+        expect.arrayContaining([
+          "mr",
+          "create",
+          "--source-branch",
+          "feature",
+          "--target-branch",
+          "main",
+        ]),
+      );
+      expect(options).toMatchObject({
+        cwd: "/jj/workspace",
+        envOverlay: { GITLAB_REPO: "https://gitlab.test/group/subgroup/selected" },
+      });
+      return ok("https://gitlab.test/group/subgroup/selected/-/merge_requests/7");
+    },
+  });
+  await expect(
+    service.createPullRequest({
+      cwd: "/jj/workspace",
+      title: "Task",
+      head: "feature",
+      base: "main",
+    }),
+  ).resolves.toEqual({
+    url: "https://gitlab.test/group/subgroup/selected/-/merge_requests/7",
+    number: 7,
+  });
+});
+
+it("routes publication API calls and placeholders without a Git working directory", async () => {
+  const service = createGitLabService({
+    repositoryUrl: "https://gitlab.test/group/subgroup/selected",
+    resolveGlabPath: async () => "/glab",
+    runner: async (args, options) => {
+      expect(args).toEqual([
+        "api",
+        "--method",
+        "POST",
+        "projects/group%2Fsubgroup%2Fselected/merge_requests/7/cancel_merge_when_pipeline_succeeds",
+        "--hostname",
+        "gitlab.test",
+      ]);
+      expect(options.envOverlay).toMatchObject({
+        GITLAB_HOST: "gitlab.test",
+        GITLAB_REPO: "https://gitlab.test/group/subgroup/selected",
+      });
+      return ok("{}");
+    },
+  });
+  await expect(
+    service.disablePullRequestAutoMerge({ cwd: "/jj/workspace", prNumber: 7 }),
+  ).resolves.toEqual({ success: true });
+});

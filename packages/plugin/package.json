@@ -57,6 +57,11 @@
       "types": "./dist/server/lifecycle.d.ts",
       "source": "./src/server/lifecycle.ts",
       "default": "./dist/server/lifecycle.js"
+    },
+    "./server/vcs": {
+      "types": "./dist/server/vcs.d.ts",
+      "source": "./src/server/vcs.ts",
+      "default": "./dist/server/vcs.js"
     }
   },
   "publishConfig": {

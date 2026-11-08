@@ -104,6 +104,9 @@ export interface Agent {
 }
 
 export interface WorkspaceDescriptor {
+  vcsProviderId?: string;
+  vcsComparisonDefaults?: WorkspaceDescriptorPayload["vcsComparisonDefaults"];
+  vcsSavedComparison?: WorkspaceDescriptorPayload["vcsSavedComparison"];
   createdAt: Date | null;
   lastUserMessageAt: Date | null;
   diffComparison?: WorkspaceDescriptorPayload["diffComparison"];
@@ -158,6 +161,9 @@ export function normalizeWorkspaceDescriptor(
     createdAt: payload.createdAt ? new Date(payload.createdAt) : null,
     lastUserMessageAt: payload.lastUserMessageAt ? new Date(payload.lastUserMessageAt) : null,
     id: normalizeWorkspaceOpaqueId(payload.id) ?? payload.id,
+    vcsProviderId: payload.vcsProviderId,
+    vcsComparisonDefaults: payload.vcsComparisonDefaults,
+    vcsSavedComparison: payload.vcsSavedComparison,
     projectId: payload.projectId,
     projectDisplayName: payload.projectDisplayName,
     projectCustomName: payload.projectCustomName ?? null,

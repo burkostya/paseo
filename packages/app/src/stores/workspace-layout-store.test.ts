@@ -1,3 +1,4 @@
+import { WorkspaceLayoutPersistedStateSchema } from "./workspace-layout-storage";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@react-native-async-storage/async-storage", () => {
@@ -5242,5 +5243,47 @@ describe("pending workspace opens", () => {
     ).toEqual([{ kind: "agent", agentId: "b" }]);
     expect(store.getState().pinnedAgentIdsByWorkspace["server:beta"]).toEqual(new Set(["b"]));
     expect(store.getState().pendingOpenByWorkspace).toEqual({});
+  });
+});
+
+describe("VCS action navigation persistence", () => {
+  it("restores the action target and its consumed marker without discarding the layout", () => {
+    const target = {
+      kind: "working_diff",
+      vcsAction: { providerId: "external", actionId: "change.describe", requestId: "request-1" },
+    };
+    const state = {
+      layoutByWorkspace: {
+        workspace: {
+          focusedPaneId: "pane",
+          root: {
+            kind: "pane",
+            pane: {
+              id: "pane",
+              focusedTabId: "working_diff",
+              tabIds: ["working_diff"],
+              tabs: [
+                {
+                  tabId: "working_diff",
+                  target,
+                  createdAt: 1,
+                  state: {
+                    vcs: {
+                      providerId: "external",
+                      view: "changes",
+                      selection: { kind: "workspace" },
+                      consumedActionRequestId: "request-1",
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    };
+    expect(WorkspaceLayoutPersistedStateSchema.parse(JSON.parse(JSON.stringify(state)))).toEqual(
+      state,
+    );
   });
 });

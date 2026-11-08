@@ -4,7 +4,7 @@ import type {
   ProjectCheckoutLitePayload,
   ProjectPlacementPayload,
 } from "@getpaseo/protocol/messages";
-import type { PersistedWorkspaceRecord } from "./workspace-registry.js";
+import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "./workspace-registry.js";
 
 export type PersistedProjectKind = "git" | "non_git";
 export type PersistedWorkspaceKind = "local_checkout" | "worktree" | "directory";
@@ -145,11 +145,15 @@ export function reconcileWorkspacePlacement(input: {
 /** Projects persisted placement onto the checkout shape sent over the wire. */
 export function checkoutFromPersistedWorkspacePlacement(input: {
   workspace: PersistedWorkspaceRecord;
+  vcsProviderId?: string;
   fallbackBranch?: string | null;
   fallbackWorktreeRoot?: string | null;
 }): ProjectPlacementPayload["checkout"] {
   const { workspace } = input;
-  if (workspace.kind === "directory") {
+  if (
+    workspace.kind === "directory" ||
+    (input.vcsProviderId !== undefined && input.vcsProviderId !== "git")
+  ) {
     return {
       cwd: workspace.cwd,
       isGit: false,
@@ -230,4 +234,21 @@ export function checkoutLiteFromGitSnapshot(
     isPaseoOwnedWorktree: false,
     mainRepoRoot: git.mainRepoRoot,
   };
+}
+
+/** Legacy Git surfaces cannot interpret the state of another VCS provider. */
+export function legacyProjectKind(
+  project?: Pick<PersistedProjectRecord, "kind" | "vcsProviderId"> | null,
+): PersistedProjectKind {
+  if (project?.vcsProviderId && project.vcsProviderId !== "git") return "non_git";
+  return project?.kind ?? "non_git";
+}
+export function legacyWorkspaceKinds(
+  project: PersistedProjectRecord | null,
+  workspace: PersistedWorkspaceRecord,
+): { projectKind: PersistedProjectKind; workspaceKind: PersistedWorkspaceKind } {
+  const projectKind = legacyProjectKind(project);
+  const workspaceKind =
+    project?.vcsProviderId && project.vcsProviderId !== "git" ? "directory" : workspace.kind;
+  return { projectKind, workspaceKind };
 }

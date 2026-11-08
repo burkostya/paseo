@@ -1,3 +1,8 @@
+import { savedVcsComparison, workspaceComparisonDefaults } from "./vcs-comparison-settings.js";
+import { handleVcsObservation } from "./session/vcs/observation.js";
+import { resolveWorkspaceVcsService } from "./workspace-vcs-service.js";
+import { VcsInboundMessageSchema } from "@getpaseo/protocol/vcs-rpc";
+import { handleWorkspaceVcsRequest } from "./session/vcs/index.js";
 import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import type { AgentMessageDelivery } from "./agent/agent-messages/index.js";
 import { AgentDirectory } from "./agent/directory.js";
@@ -150,6 +155,8 @@ import { listProjectSuggestions, ProjectSuggestionsRequestError } from "./projec
 import {
   checkoutLiteFromGitSnapshot,
   checkoutFromPersistedWorkspacePlacement,
+  legacyProjectKind,
+  legacyWorkspaceKinds,
   deriveWorkspaceDisplayName,
 } from "./workspace-registry-model.js";
 import { resolveWorkspaceIdForPath } from "./resolve-workspace-id-for-path.js";
@@ -255,6 +262,7 @@ import {
 import { WorkspaceAutoName } from "./workspace-auto-name.js";
 import {
   createPaseoWorktreeWorkflow as createWorktreeWorkflow,
+  runWorktreeSetupInBackground,
   type CreatePaseoWorktreeWorkflowResult,
   handleCreatePaseoWorktreeRequest as handleCreateWorktreeRequest,
   handlePaseoWorktreeArchiveRequest as handleWorktreeArchiveRequest,
@@ -452,6 +460,23 @@ const nodeSessionFileSystem: SessionFileSystem = {
 // Stub types for features under development (modules not yet available)
 type AgentMcpTransportFactory = () => Promise<unknown>;
 
+const LEGACY_GIT_MUTATIONS = new Set([
+  "checkout_switch_branch_request",
+  "checkout.rename_branch.request",
+  "checkout_commit_request",
+  "checkout_merge_request",
+  "checkout_merge_from_base_request",
+  "checkout_pull_request",
+  "checkout_push_request",
+  "checkout.discard_changes.request",
+  "checkout_pr_create_request",
+  "checkout_pr_merge_request",
+  "checkout.forge.set_auto_merge.request",
+  "checkout.github.set_auto_merge.request",
+  "stash_save_request",
+  "stash_pop_request",
+]);
+
 export interface SessionOptions {
   connectedHosts?: ConnectedHosts;
   sourceId?: string;
@@ -533,6 +558,8 @@ export interface SessionOptions {
     subscribe(listener: (pluginId: string) => void): () => void;
     subscribeSettings?(listener: (pluginId: string, settingsId: string) => void): () => void;
     catalog(): Array<{ id: string; clientBundle: string; clientBundleHash?: string }>;
+    listVcsProviders: import("./plugins/index.js").PluginService["listVcsProviders"];
+    invokeVcs: import("./plugins/index.js").PluginService["invokeVcs"];
     invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown>;
     listUsageReports(options?: {
       forceRefresh?: boolean;
@@ -981,6 +1008,8 @@ export class Session {
     });
     this.workspaceAutoName = workspaceAutoName;
     this.workspaceProvisioning = createWorkspaceProvisioningService({
+      paseoHome: this.paseoHome,
+      vcsPlugins: this.pluginRuntime,
       lifecycle: this.pluginRuntime,
       serverId,
       workspaceRegistry: this.workspaceRegistry,
@@ -990,6 +1019,13 @@ export class Session {
       logger: this.sessionLogger,
     });
     this.workspaceRecovery = createWorkspaceRecoveryService({
+      vcs: this.pluginRuntime
+        ? resolveWorkspaceVcsService({
+            projects: this.projectRegistry,
+            workspaces: this.workspaceRegistry,
+            plugins: this.pluginRuntime,
+          })
+        : undefined,
       paseoHome: this.paseoHome,
       worktreesRoot: this.worktreesRoot,
       getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
@@ -2215,6 +2251,7 @@ export class Session {
     const snapshot = this.workspaceRuntimeStore.get(workspace.cwd);
     const checkout = checkoutFromPersistedWorkspacePlacement({
       workspace,
+      vcsProviderId: project.vcsProviderId,
       // COMPAT(workspacePlacementBackfill): added in v0.1.107, remove after 2027-01-15.
       // Legacy records can lack branch and worktreeRoot because persisted registries
       // are not migrated in place.
@@ -2479,6 +2516,7 @@ export class Session {
       this.dispatchCreationMessage(msg, source) ??
       this.dispatchAgentLifecycleMessage(msg) ??
       this.dispatchAgentConfigMessage(msg) ??
+      this.dispatchVcsMessage(msg) ??
       this.dispatchCheckoutMessage(msg) ??
       this.dispatchWorkspaceLifecycleMessage(msg) ??
       this.dispatchWorkspaceFileMessage(msg, source) ??
@@ -3019,8 +3057,50 @@ export class Session {
     }
   }
 
-  // eslint-disable-next-line complexity
+  private dispatchVcsMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    if (!msg.type.startsWith("vcs.")) return undefined;
+    if (msg.type === "vcs.snapshot.get.request" && msg.subscribe)
+      return handleVcsObservation(msg, {
+        plugins: this.pluginRuntime,
+        workspaces: this.workspaceRegistry,
+        projects: this.projectRegistry,
+        delivery: this.delivery,
+        supports: (capability) => this.supports(capability),
+        emit: (message) => this.emit(message),
+      });
+    return handleWorkspaceVcsRequest(VcsInboundMessageSchema.parse(msg), {
+      runtime: this.workspaceRuntimeStore,
+      plugins: this.pluginRuntime,
+      workspaces: this.workspaceRegistry,
+      projects: this.projectRegistry,
+    }).then((response) => {
+      this.emit(response);
+      return undefined;
+    });
+  }
+
   private dispatchCheckoutMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    if (
+      this.pluginRuntime &&
+      LEGACY_GIT_MUTATIONS.has(msg.type) &&
+      "cwd" in msg &&
+      typeof msg.cwd === "string"
+    ) {
+      const vcs = resolveWorkspaceVcsService({
+        projects: this.projectRegistry,
+        workspaces: this.workspaceRegistry,
+        plugins: this.pluginRuntime,
+      });
+      return vcs.runLegacyGit(
+        msg.cwd,
+        () => this.dispatchLegacyCheckoutMessage(msg) ?? Promise.resolve(),
+      );
+    }
+    return this.dispatchLegacyCheckoutMessage(msg);
+  }
+
+  // eslint-disable-next-line complexity
+  private dispatchLegacyCheckoutMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     if (msg.type === "git.comparison.set.request") return this.handleDiffComparisonSetRequest(msg);
     switch (msg.type) {
       case "checkout_status_request":
@@ -3710,6 +3790,13 @@ export class Session {
       if (request.target.kind === "project") {
         const updated = await this.projectRegistry.update(request.target.projectId, (record) => ({
           ...record,
+          vcsComparisonSettings: {
+            ...record.vcsComparisonSettings,
+            git: savedVcsComparison(
+              useV2 ? { diffComparisonV2: comparisonV2 } : { diffComparison: comparison },
+              "git",
+            ),
+          },
           diffComparison: useV2 ? undefined : comparison,
           diffComparisonV2: useV2 ? comparisonV2 : undefined,
           updatedAt,
@@ -3721,6 +3808,13 @@ export class Session {
           request.target.workspaceId,
           (record) => ({
             ...record,
+            vcsComparisonSettings: {
+              ...record.vcsComparisonSettings,
+              git: savedVcsComparison(
+                useV2 ? { diffComparisonV2: comparisonV2 } : { diffComparison: comparison },
+                "git",
+              ),
+            },
             diffComparison: useV2 ? undefined : comparison,
             diffComparisonV2: useV2 ? comparisonV2 : undefined,
             updatedAt,
@@ -4370,10 +4464,17 @@ export class Session {
         continue;
       }
       try {
-        await archiveByScope(
+        const removal = await archiveByScope(
           {
             paseoHome: this.paseoHome,
             paseoWorktreesBaseRoot: this.worktreesRoot,
+            vcs: this.pluginRuntime
+              ? resolveWorkspaceVcsService({
+                  projects: this.projectRegistry,
+                  workspaces: this.workspaceRegistry,
+                  plugins: this.pluginRuntime,
+                })
+              : undefined,
             github: this.github,
             workspaceGitService: this.workspaceGitService,
             agentManager: this.agentManager,
@@ -4405,6 +4506,9 @@ export class Session {
           workspaceId: record.workspaceId,
           status: archived?.archivedAt ? "succeeded" : "failed",
           error: archived?.archivedAt ? null : "Workspace remained active after archive",
+          warning: removal.directoryLeftBehind
+            ? `Working copy retained at ${removal.directoryLeftBehind.path}: ${removal.directoryLeftBehind.reason}`
+            : undefined,
         });
       } catch (error) {
         results.set(record.workspaceId, {
@@ -5819,6 +5923,13 @@ export class Session {
       {
         paseoHome: this.paseoHome,
         paseoWorktreesBaseRoot: this.worktreesRoot,
+        vcs: this.pluginRuntime
+          ? resolveWorkspaceVcsService({
+              projects: this.projectRegistry,
+              workspaces: this.workspaceRegistry,
+              plugins: this.pluginRuntime,
+            })
+          : undefined,
         github: this.github,
         workspaceGitService: this.workspaceGitService,
         agentManager: this.agentManager,
@@ -6240,8 +6351,17 @@ export class Session {
       workspaceDirectory: workspace.cwd,
       setupStatus: this.workspaceSetupObservation.status(workspace),
       worktreeSlug,
-      projectKind: (resolvedProjectRecord?.kind ?? "directory") === "git" ? "git" : "non_git",
-      workspaceKind: workspace.kind,
+      vcsProviderId: resolvedProjectRecord?.vcsProviderId,
+      vcsSavedComparison: resolvedProjectRecord?.vcsProviderId
+        ? (savedVcsComparison(workspace, resolvedProjectRecord.vcsProviderId) ??
+          savedVcsComparison(resolvedProjectRecord, resolvedProjectRecord.vcsProviderId))
+        : null,
+      vcsComparisonDefaults: workspaceComparisonDefaults(
+        workspace,
+        resolvedProjectRecord,
+        comparison,
+      ),
+      ...legacyWorkspaceKinds(resolvedProjectRecord, workspace),
       name: resolveWorkspaceDisplayName(workspace),
       title: workspace.title,
       pinnedAt: workspace.pinnedAt,
@@ -6297,7 +6417,7 @@ export class Session {
   ): Promise<WorkspaceDescriptorPayload> {
     const base = await this.describeWorkspaceRecord(workspace, projectRecord);
     const snapshot = this.workspaceRuntimeStore.get(workspace.cwd);
-    if (!snapshot) {
+    if (!snapshot || (base.vcsProviderId && base.vcsProviderId !== "git")) {
       return base;
     }
 
@@ -6518,6 +6638,7 @@ export class Session {
     const icon = await this.projectIcons.snapshot(project);
     return {
       projectId: project.projectId,
+      vcsProviderId: project.vcsProviderId,
       ...(project.projectKey ? { projectKey: project.projectKey } : {}),
       projectDisplayName: resolveProjectDisplayName(project),
       projectCustomName: project.customName ?? null,
@@ -6526,7 +6647,7 @@ export class Session {
       projectCustomIconRevision: project.customIconRevision ?? null,
       projectIconRevision: icon.revision,
       projectRootPath: project.rootPath,
-      projectKind: project.kind,
+      projectKind: legacyProjectKind(project),
     };
   }
 
@@ -6576,6 +6697,7 @@ export class Session {
     },
   ): Promise<CreatePaseoWorktreeResult> {
     const result = await createPaseoWorktree(input, {
+      vcsPlugins: this.pluginRuntime,
       lifecycle: this.pluginRuntime,
       github: this.github,
       ...(options?.resolveDefaultBranch
@@ -6609,6 +6731,8 @@ export class Session {
         worktreeRoot: workspace.worktreeRoot,
         isPaseoOwnedWorktree: workspace.isPaseoOwnedWorktree,
         mainRepoRoot: workspace.mainRepoRoot,
+        vcsWorkingCopy: workspace.vcsWorkingCopy,
+        vcsBinding: workspace.vcsBinding,
       }));
   }
 
@@ -7421,6 +7545,8 @@ export class Session {
       const transformed = await this.pluginRuntime.before("workspace.create.before", input);
       creationRequest = { ...transformed, type, requestId };
     }
+    if (creationRequest.source.kind === "working-copy")
+      return this.handleWorkspaceCreateWorkingCopy(creationRequest, workspaceId);
     return creationRequest.source.kind === "directory"
       ? this.handleWorkspaceCreateLocal(creationRequest, workspaceId)
       : this.handleWorkspaceCreateWorktree(creationRequest, workspaceId);
@@ -7529,6 +7655,65 @@ export class Session {
         { currentSelection: this.getFocusedAgentSelectionForCwd(workspace.cwd) },
       );
     }
+    return descriptor;
+  }
+
+  private async handleWorkspaceCreateWorkingCopy(
+    request: Extract<SessionInboundMessage, { type: "workspace.create.request" }>,
+    workspaceId?: string,
+  ): Promise<WorkspaceDescriptorPayload> {
+    if (request.source.kind !== "working-copy") throw new Error("Unexpected workspace source");
+    const sourceCwd = await resolveWorktreeSourceCwd(request.source, this.projectRegistry);
+    const workspace = await this.workspaceProvisioning.createWorkspaceForWorkingCopy({
+      projectId: request.source.projectId,
+      cwd: sourceCwd,
+      revision: request.source.revision,
+      providerId: request.source.providerId,
+      providerData: request.source.providerData,
+      workspaceId,
+      title: request.title?.trim() || resolveFirstAgentPromptTitle(request.firstAgentContext),
+      expectsInitialAgent: Boolean(request.firstAgentContext),
+      background: request.background,
+      callerWorkspaceId: this.getCallerWorkspaceId(request.callerAgentId),
+    });
+    const record = workspace.vcsWorkingCopy;
+    if (!record) throw new Error("Created workspace has no working copy record");
+    this.workspaceSetupRuntime.start(workspace.workspaceId, (signal) =>
+      runWorktreeSetupInBackground(
+        {
+          emitWorkspaceUpdateForWorkspaceId: (id) => this.emitWorkspaceUpdateForWorkspaceId(id),
+          cacheWorkspaceSetupSnapshot: (id, snapshot) =>
+            this.workspaceSetupObservation.cache(id, snapshot),
+          emit: (message) => this.emit(message),
+          sessionLogger: this.sessionLogger,
+          terminalManager: this.terminalManager,
+          serviceProxy: this.serviceProxy,
+          scriptRuntimeStore: this.scriptRuntimeStore,
+          getDaemonTcpPort: this.getDaemonTcpPort,
+          getDaemonTcpHost: this.getDaemonTcpHost,
+          serviceProxyPublicBaseUrl: this.serviceProxyPublicBaseUrl,
+          onScriptsChanged: (id, directory) =>
+            this.workspaceScripts.emitStatusUpdate(id, directory),
+        },
+        {
+          requestCwd: sourceCwd,
+          repoRoot: sourceCwd,
+          workspaceId: workspace.workspaceId,
+          worktree: { worktreePath: record.binding.root, branchName: "" },
+          shouldBootstrap: true,
+          slug: workspace.workspaceId,
+          worktreePath: record.binding.root,
+          workspaceCwd: workspace.cwd,
+          workingCopy: record,
+        },
+        signal,
+      ),
+    );
+    const descriptor = await this.describeWorkspaceRecord(workspace);
+    await this.emitCreatedWorkspaceUpdate(
+      descriptor,
+      request.firstAgentContext ? "running" : undefined,
+    );
     return descriptor;
   }
 
@@ -7703,7 +7888,7 @@ export class Session {
           requestedCwd,
           resolvedCwd: cwd,
           projectId: project.projectId,
-          projectKind: project.kind,
+          projectKind: legacyProjectKind(project),
           projectTransition: describeRegistryTransition(
             projectsBefore.get(project.projectId) ?? null,
           ),
@@ -8172,11 +8357,18 @@ export class Session {
         throw new Error(`Workspace not found: ${request.workspaceId}`);
       }
 
-      const archivedAt = await this.runWithWorkspaceHierarchyLock(request.workspaceId, async () => {
-        await archiveByScope(
+      const outcome = await this.runWithWorkspaceHierarchyLock(request.workspaceId, async () => {
+        const removal = await archiveByScope(
           {
             paseoHome: this.paseoHome,
             paseoWorktreesBaseRoot: this.worktreesRoot,
+            vcs: this.pluginRuntime
+              ? resolveWorkspaceVcsService({
+                  projects: this.projectRegistry,
+                  workspaces: this.workspaceRegistry,
+                  plugins: this.pluginRuntime,
+                })
+              : undefined,
             github: this.github,
             workspaceGitService: this.workspaceGitService,
             agentManager: this.agentManager,
@@ -8204,14 +8396,20 @@ export class Session {
         );
 
         const archivedWorkspace = await this.workspaceRegistry.get(request.workspaceId);
-        return archivedWorkspace?.archivedAt ?? new Date().toISOString();
+        return {
+          archivedAt: archivedWorkspace?.archivedAt ?? new Date().toISOString(),
+          warning: removal.directoryLeftBehind
+            ? `Working copy retained at ${removal.directoryLeftBehind.path}: ${removal.directoryLeftBehind.reason}`
+            : undefined,
+        };
       });
       this.emit({
         type: "archive_workspace_response",
         payload: {
           requestId: request.requestId,
           workspaceId: request.workspaceId,
-          archivedAt,
+          archivedAt: outcome.archivedAt,
+          warning: outcome.warning,
           error: null,
         },
       });

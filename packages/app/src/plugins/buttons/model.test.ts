@@ -24,6 +24,7 @@ function installation(): InstalledPlugin {
     legacySidebarItems: [],
     filePanels: [],
     workspacePanels: [],
+    vcsContributions: [],
     commandCenterItems: [],
     clientSlashCommands: [],
     attachmentSources: [],

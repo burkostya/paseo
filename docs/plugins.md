@@ -99,9 +99,11 @@ Built-in plugins ship from `plugins/<id>/`, with `paseo-plugin.json`, `index.ser
 `packages/server/src/server/plugins/builtin/index.ts`; the workspace, build copy, and CI
 checks cover that registry. Unlisted directories do not load.
 
-The `worktree-include` built-in copies gitignored files selected by
+The `worktree-include` built-in copies ignored files selected by
 [`.worktreeinclude`](../public-docs/worktrees.md#copy-local-files-with-worktreeinclude)
-before setup and agents, through `worktree.create.after`.
+before setup and agents, through `working-copy.create.after`. Both Git creation
+paths and Jujutsu use this hook. The plugin queries the owning VCS through
+`server.vcs.listLocalFiles`; it does not choose or execute a VCS itself.
 
 Desktop packaging ships the entire built-in plugin directory as an external resource,
 including declarations. The external esbuild compiler cannot read Electron's `app.asar`
@@ -545,6 +547,142 @@ owns author workflow, lifecycle, testing, and distribution guidance.
 It must resolve inside that directory to a regular file that passes the shared SVG icon rules
 (see [Plugin icons](#plugin-icons)). Paseo reads and validates the file when the plugin starts; the
 string is never inline SVG or a URL.
+
+## VCS providers
+
+`server.registerVcsProvider()` registers a VCS implementation through
+`@getpaseo/plugin/server/vcs`. Shared bindings, revisions, comparisons, and the RPC
+contract live at `@getpaseo/plugin`. Git and Jujutsu use the same registration in
+`plugins/git-vcs` and `plugins/jj-vcs`.
+
+Use [checkpoint-vcs](../plugin-examples/checkpoint-vcs/README.md) as a runnable
+external example for frozen comparisons, history, observation, actions and panel
+contributions. Its small file-based store keeps the SDK integration visible
+without requiring another executable.
+
+Connected clients use `paseo.workspaces.ref(id).vcs`. The daemon resolves the
+workspace directory and constructs provider bindings; clients never submit paths
+or bindings through the workspace API. Read RPCs require `workspace.read`, while
+execution and cancellation require `workspace.write`. Direct plugin RPCs retain
+`daemon.manage`. The SDK gates workspace VCS requests on `features.vcsProviders`.
+
+VCS registrations can declare `detectionPriority`; higher priorities discover
+first. The built-in jj provider takes precedence in new colocated repositories.
+An unavailable result still owns its recognized repository. Never probe the next
+provider as a fallback after that result. Persisted selection and binding ownership
+are described in [the data model](data-model.md).
+
+Use `paseo.projects.vcs.get/select` for project selection. Project-scoped
+`snapshot/history` require `features.vcsProjectReads` and `workspace.read`; the
+daemon resolves the saved project root, including its subdirectory. New workspace
+uses these reads because a project can have no active workspace. History carries
+the selected provider and snapshot version; it must not snapshot again per page.
+The Git contribution owns branch/upstream and PR checkout choices through
+`ProjectSource` and prepares them through the project VCS API before creation.
+Workspace requests can
+omit the provider to use that choice; an explicit mismatching provider fails.
+Legacy Git mutations are blocked for projects using another VCS. Provider-managed
+workspaces open the shared Changes surface. Git uses it on hosts advertising
+`features.vcsBaseComparisons`; older hosts retain their existing Git surface.
+Inline review, file menus and base-relative comparisons belong to the shared
+surface. Saved comparison defaults use provider envelopes with workspace → project
+inheritance; the plugin owns validation and fields. See the
+[settings contract](../public-docs/plugins/reference.md#saved-comparison-settings).
+The Git plugin resolves automatic bases from cached host facts and its own refs,
+then publishes the result in its snapshot. Legacy descriptor projections remain
+for old clients. The review-key adapter uses the provider's resolved scope; keep
+those keys until an explicit migration preserves comments across modes and bases.
+Git reconstructs frozen patches in a private index and object store for net
+base comparisons. Reading a diff must not stage files or reread the working tree.
+The shared surface gates on `features.vcsDiffFiles`
+and publication separately on `features.vcsPublication`. The
+[forge contract](forge-providers.md) owns adapter routing.
+
+Client plugins register `client.addVcsContribution()` for their provider. One
+contribution owns its labels, action forms, working-copy fields and extra panels. Multiple owners are
+an error. The host places actions in the toolbar, history rows, reference rows,
+workspace menu and Command Center,
+using the server action catalog for availability. Plugin forms use the existing
+form kit, not generated schemas. Their modal body retains installation and client
+state providers; rendering outside those providers loses plugin hooks when the
+modal moves into a portal. See the
+[client author API](../public-docs/plugins/reference.md#vcs-client-contributions).
+
+Workspace menu and Command Center launches reuse the Changes tab. Actions open
+forms on the same executor and pane-owned operation record; panel shortcuts only
+select a view. Panels opt in to shortcuts through `entryPoints`; Publish uses the
+host and provider publication capabilities. Their catalogs read only while open.
+Recheck availability on arrival and consume navigation requests, including failed
+ones, so restoring a tab or reloading a plugin cannot replay them.
+
+Name comparison views in the client contribution and supply their comparisons
+in the snapshot. Review drafts are scoped by host, workspace, provider, repository,
+working copy and comparison choice. Refreshing a working copy preserves its draft;
+selecting an explicit revision isolates its line coordinates. New comments retain
+the original line content, and changed lines stay in the draft without being sent
+with replacement context. Attachments carry the exact comparison and snapshot
+version. The host never interprets a working-copy comparison's provider
+data. Git retains bounded frozen patches for staged, unstaged and combined views;
+an expired snapshot requires refresh. Do not substitute a live diff for a pinned
+comparison.
+
+Keep operation IDs in pane state before sending mutations. Reconnection looks up
+the result; it never repeats the mutation. A form captures its snapshot version
+when opened so external changes produce a stale-context error at execution. History
+uses that version and diff uses the provider's exact `workingComparison` when
+provided. On hosts advertising `features.vcsObservation`, Changes, the workspace
+menu and Command Center share a snapshot subscription through the query cache.
+Opening a menu must not issue a separate snapshot read: jj refresh can write
+repository metadata. Closing menus and hiding retained panels release their demand;
+the subscription remains until the last visible consumer closes.
+Reconnect replaces the subscription and supplies a fresh snapshot. Older hosts keep
+the established explicit-read path. Do not add independent snapshot timers to child
+components. Provider observation and
+its filesystem lifetime belong to [file observation](file-observation.md).
+The SDK can create isolated copies with `source.kind: "working-copy"`, gated on
+`features.vcsWorkingCopies`. The shared Changes surface exposes creation when the
+provider advertises `working-copies`. Its form pins a revision and persists the
+creation intent before dispatch; result checks reuse that intent's idempotency key.
+The UI requires `features.vcsWorkingCopySelection` and sends `source.providerId`.
+Creation fields supplied by `workingCopy.Form` share plugin installation context
+in Changes and New workspace. Keep their versioned data opaque to the host and
+copy it at the form boundary: a plugin retaining its object must not change a
+persisted retry. Local validation precedes intent allocation; result lookup skips
+it so reloading a plugin cannot block checking a previously accepted request.
+A `ProjectSource` contribution replaces the project picker and extra fields together.
+Keep source selection and search state in its form model. The host pins the selected
+project/cwd and resets the source at the same boundary as other creation inputs.
+Source preparation goes through `projects.vcs.resolveWorkingCopySource`, requiring
+`workspace.read` and `features.vcsWorkingCopySources`. The daemon resolves the
+project binding and the executor serializes the provider's `workingCopies.resolveSource`
+with repository operations without taking another snapshot. Keep this read free
+of fetch, checkout and other mutations; creation revalidates the prepared source.
+Do not use ordinary plugin RPCs for workspace source pickers: those require
+`daemon.manage`. The Git plugin retains its old source RPC only for cached clients.
+See the [public contract](../public-docs/plugins/reference.md) for composer hints,
+attachments and read-only forge checkout resolution. Git creation uses the same
+executor as other providers; the legacy worktree RPC remains for older clients.
+Git writes a tagged metadata projection for existing comparison/forge readers;
+keep ownership and recovery in the provider record.
+Provisioning checks the provider choice under the project lock, so switching the project's
+provider cannot silently redirect a confirmed creation. Provisioning holds the project lock across creation,
+blocking `working-copy.create.*` hooks, and registry persistence. It uses the
+shared operation executor for creation and optional archive/recovery methods.
+Recovery durability and membership locking belong to [the data model](data-model.md);
+providers own snapshot and restoration semantics. Do not expose the internal creation action through
+`vcs.actions.execute`, which has weaker permissions than workspace creation.
+Server hooks can query local files before workspace registration through
+`server.vcs.listLocalFiles(binding, query)`. This uses `daemon.manage` because
+bindings contain host paths; do not route it through a workspace-scoped permission
+or re-enter the project's provisioning lock. The provider executor verifies binding
+identity and serializes the query with repository operations.
+See the [author contract](../public-docs/plugins/reference.md#vcs-providers).
+
+A provider snapshot may mutate VCS metadata: Jujutsu snapshots its working copy.
+The registration executor serializes reads and mutations by repository identity.
+Keep that identity shared across all working copies. History and diff reads must
+avoid taking another working-copy snapshot. Jujutsu pins multi-query reads to an
+operation and disables automatic stale-workspace repair.
 
 ## Usage sources
 

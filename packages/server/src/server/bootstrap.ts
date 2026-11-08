@@ -1,3 +1,4 @@
+import { resolveWorkspaceVcsService } from "./workspace-vcs-service.js";
 import { createRestartRecovery } from "./agent/restart-recovery/index.js";
 import { sendPromptToAgent } from "./agent/agent-prompt.js";
 import { createIdleRuntimeCleanup } from "./agent/idle-runtime-cleanup/index.js";
@@ -979,6 +980,8 @@ export async function createPaseoDaemon(
     }
   });
   const workspaceProvisioning = createWorkspaceProvisioningService({
+    paseoHome: config.paseoHome,
+    vcsPlugins: pluginRuntime,
     lifecycle: pluginRuntime,
     serverId,
     projectRegistry,
@@ -1145,11 +1148,14 @@ export async function createPaseoDaemon(
       .filter((workspace) => !workspace.archivedAt)
       .map((workspace) => ({
         workspaceId: workspace.workspaceId,
+        projectId: workspace.projectId,
         cwd: workspace.cwd,
         kind: workspace.kind,
         worktreeRoot: workspace.worktreeRoot,
         isPaseoOwnedWorktree: workspace.isPaseoOwnedWorktree,
         mainRepoRoot: workspace.mainRepoRoot,
+        vcsWorkingCopy: workspace.vcsWorkingCopy,
+        vcsBinding: workspace.vcsBinding,
       }));
   };
   const markWorkspaceArchivingExternal = (workspaceIds: Iterable<string>, archivingAt: string) => {
@@ -1206,6 +1212,11 @@ export async function createPaseoDaemon(
   });
 
   setupAutoArchiveOnMerge({
+    vcs: resolveWorkspaceVcsService({
+      projects: projectRegistry,
+      workspaces: workspaceRegistry,
+      plugins: pluginRuntime,
+    }),
     paseoHome: config.paseoHome,
     paseoWorktreesBaseRoot: config.worktreesRoot,
     daemonConfigStore,
@@ -1235,6 +1246,7 @@ export async function createPaseoDaemon(
         worktreesRoot: config.worktreesRoot,
         createPaseoWorktree: async (workflowInput, workflowOptions) => {
           return createRegisteredPaseoWorktree(workflowInput, {
+            vcsPlugins: pluginRuntime,
             lifecycle: pluginRuntime,
             github,
             ...(workflowOptions?.resolveDefaultBranch
@@ -1296,6 +1308,11 @@ export async function createPaseoDaemon(
       {
         paseoHome: config.paseoHome,
         paseoWorktreesBaseRoot: config.worktreesRoot,
+        vcs: resolveWorkspaceVcsService({
+          projects: projectRegistry,
+          workspaces: workspaceRegistry,
+          plugins: pluginRuntime,
+        }),
         github,
         workspaceGitService,
         agentManager,
@@ -1417,6 +1434,11 @@ export async function createPaseoDaemon(
       {
         paseoHome: config.paseoHome,
         paseoWorktreesBaseRoot: config.worktreesRoot,
+        vcs: resolveWorkspaceVcsService({
+          projects: projectRegistry,
+          workspaces: workspaceRegistry,
+          plugins: pluginRuntime,
+        }),
         github,
         workspaceGitService,
         agentManager,

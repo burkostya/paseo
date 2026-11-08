@@ -1,3 +1,25 @@
+import {
+  createComparisonSettings,
+  type PaseoVcsComparisonSettings,
+} from "./vcs/comparison-settings.js";
+export type { PaseoVcsComparisonSettings } from "./vcs/comparison-settings.js";
+import { ForgeSearchItemSchema, type ForgeSearchItem } from "@getpaseo/protocol/messages";
+import type {
+  VcsSnapshot,
+  VcsRevision,
+  VcsData,
+  VcsWorkingCopySource,
+} from "@getpaseo/protocol/vcs";
+export type {
+  VcsPublication,
+  VcsPublicationSelection,
+  VcsPublicationResult,
+  VcsRemote,
+  VcsChangeRequest,
+  VcsChangeRequestAction,
+} from "@getpaseo/protocol/vcs";
+import { createWorkspaceVcs, type PaseoWorkspaceVcs } from "./vcs/index.js";
+export { VcsRequestError, type PaseoWorkspaceVcs } from "./vcs/index.js";
 export type { TerminalReplayEvent, TerminalStreamEvent } from "./terminal-stream-router.js";
 import type { AgentAddress } from "@getpaseo/protocol/addresses";
 import { parentAddressLabels } from "@getpaseo/protocol/agent-labels";
@@ -186,6 +208,7 @@ export interface PaseoWorkspaceHandle {
     create(options: PaseoWorkspaceAgentCreateOptions): Promise<PaseoAgentHandle>;
   };
   readonly terminals: PaseoWorkspaceTerminalActions;
+  readonly vcs: PaseoWorkspaceVcs;
   current(): PaseoWorkspace | null;
   refresh(options?: { requestId?: string }): Promise<PaseoWorkspace | null>;
   setTitle(title: string | null, requestId?: string): Promise<{ title: string | null }>;
@@ -200,6 +223,23 @@ export interface PaseoWorkspaceHandle {
 }
 
 export interface PaseoProjectActions {
+  readonly vcs: {
+    comparison(projectId: string): PaseoVcsComparisonSettings;
+    snapshot(projectId: string): Promise<{ snapshot: VcsSnapshot | null }>;
+    resolveWorkingCopySource(
+      projectId: string,
+      options: { providerId: string; input: VcsData },
+    ): Promise<VcsWorkingCopySource>;
+    history(
+      projectId: string,
+      options: { providerId: string; version: string; limit?: number; cursor?: string },
+    ): Promise<{ revisions: VcsRevision[]; cursor?: string }>;
+    get(projectId: string): Promise<{ projectId: string; providerId: string | null }>;
+    select(
+      projectId: string,
+      providerId: string,
+    ): Promise<{ projectId: string; providerId: string | null }>;
+  };
   list(options?: PaseoProjectListOptions): Promise<PaseoProjectListResult>;
   subscribe(handler: PaseoProjectUpdateHandler): () => void;
 }
@@ -498,7 +538,18 @@ export interface PaseoConfigActions {
   ): Promise<{ requestId: string; config: MutableDaemonConfig }>;
 }
 
+export type PaseoForgeSearchResult = Omit<
+  Awaited<ReturnType<DaemonClient["searchForge"]>>,
+  "items"
+> & { items: ForgeSearchItem[] };
+export interface PaseoForgeActions {
+  search(
+    options: Parameters<DaemonClient["searchForge"]>[0],
+    requestId?: string,
+  ): Promise<PaseoForgeSearchResult>;
+}
 export interface PaseoApi {
+  readonly forge: PaseoForgeActions;
   readonly hosts: PaseoHostActions;
   dispose(): Promise<void>;
   observeEvents: DaemonClient["observeEvents"];
@@ -632,6 +683,7 @@ export function createPaseoApi(
     createAgent,
     terminals,
     listenWorkspaces,
+    own,
   );
 
   let disposal: Promise<void> | null = null;
@@ -724,10 +776,40 @@ export function createPaseoApi(
 
   return {
     dispose,
+    forge: {
+      search: async (options, requestId) => {
+        if (!daemonClient.getLastServerInfoMessage()?.features?.forgeSearch)
+          throw new Error("Update the host to search forge changes.");
+        const result = await daemonClient.searchForge(options, requestId);
+        return { ...result, items: result.items.map((item) => ForgeSearchItemSchema.parse(item)) };
+      },
+    },
     hosts: createHostActions(daemonClient, { own, signal: lifetime.signal, api: createPaseoApi }),
     observeEvents,
     terminals,
     projects: {
+      vcs: {
+        comparison: (projectId) =>
+          createComparisonSettings(daemonClient, { kind: "project", projectId }),
+        resolveWorkingCopySource: (projectId, options) =>
+          daemonClient.requestVcs({
+            type: "vcs.project.working-copy.resolve-source.request",
+            projectId,
+            ...options,
+          }),
+        snapshot: (projectId) =>
+          daemonClient.requestVcs({ type: "vcs.project.snapshot.get.request", projectId }),
+        history: (projectId, options) =>
+          daemonClient.requestVcs({
+            type: "vcs.project.history.list.request",
+            projectId,
+            ...options,
+            limit: options.limit ?? 50,
+          }),
+        get: (projectId) => daemonClient.requestVcs({ type: "vcs.project.get.request", projectId }),
+        select: (projectId, providerId) =>
+          daemonClient.requestVcs({ type: "vcs.project.select.request", projectId, providerId }),
+      },
       list: (options) => daemonClient.listProjects(options),
       subscribe: (handler) => {
         return subscribeEvent("project.update", (message) => {
@@ -815,6 +897,7 @@ function createWorkspaceHandleFactory(
   createAgent: CreateAgent,
   terminals: PaseoTerminalActions,
   listen: (handler: PaseoWorkspaceUpdateHandler) => () => void,
+  own: <T extends { release(): Promise<void> }>(create: () => T) => T,
 ): WorkspaceHandleFactory {
   return (workspace) => {
     const id = typeof workspace === "string" ? workspace : workspace.id;
@@ -873,6 +956,7 @@ function createWorkspaceHandleFactory(
         create: (options) => terminals.create({ ...options, workspaceId: id }),
         list: (options) => terminals.list({ ...options, workspaceId: id }),
       },
+      vcs: createWorkspaceVcs(daemonClient, id, own),
       current: () => current,
       refresh,
       setTitle: (title, requestId) => daemonClient.setWorkspaceTitle(id, title, requestId),

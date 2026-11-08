@@ -1,6 +1,6 @@
 import os from "node:os";
 import path from "node:path";
-import { mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync } from "node:fs";
 
 import { afterEach, beforeEach, expect, test } from "vitest";
 
@@ -979,3 +979,572 @@ test("a directory that goes away while the git read is in flight keeps its place
     branch: "feature/vanishing",
   });
 });
+
+test("VCS provisioning selects jj for new colocated projects and validates project-wide switching", async () => {
+  const { execCommand } = await import("@getpaseo/plugin/server");
+  const { createVcsHandler } = await import("@getpaseo/plugin/server/vcs");
+  const { jjProvider } = await import("../../../../../../plugins/jj-vcs/server/provider.js");
+  const { gitProvider } = await import("../../../../../../plugins/git-vcs/server/provider.js");
+  const { resolveWorkspaceVcsService } = await import("../../workspace-vcs-service.js");
+  const cwd = path.join(tmpDir, "colocated");
+  await execCommand("jj", ["git", "init", "--colocate", cwd]);
+  gitRoots.add(cwd);
+  const handlers = new Map([
+    ["jj", createVcsHandler(jjProvider)],
+    ["git", createVcsHandler(gitProvider)],
+  ]);
+  const plugins = {
+    listVcsProviders: () => [
+      { id: "jj", pluginId: "jj-vcs", label: "Jujutsu", detectionPriority: 10 },
+      { id: "git", pluginId: "git-vcs", label: "Git" },
+    ],
+    invokeVcs: async (providerId: string, request: import("@getpaseo/protocol/vcs").VcsRequest) => {
+      const handler = handlers.get(providerId);
+      if (!handler) throw new Error("Missing provider");
+      return handler.handle(request);
+    },
+  };
+  const service = resolveWorkspaceVcsService({
+    projects: projectRegistry,
+    workspaces: workspaceRegistry,
+    plugins,
+  });
+  provisioning = createWorkspaceProvisioningService({
+    workspaceRegistry,
+    projectRegistry,
+    workspaceGitService: gitService(),
+    isDirectory,
+    logger,
+    vcsPlugins: plugins,
+  });
+  try {
+    const workspace = await provisioning.createWorkspaceForDirectory(cwd);
+    expect((await projectRegistry.get(workspace.projectId))!.vcsProviderId).toBe("jj");
+    expect(workspace.vcsBinding).toMatchObject({ providerId: "jj", cwd });
+    const called: string[] = [];
+    await expect(
+      service.runLegacyGit(cwd, async () => {
+        called.push("git");
+      }),
+    ).rejects.toThrow("use its VCS actions");
+    expect(called).toEqual([]);
+    await service.selectProjectProvider(workspace.projectId, "git");
+    expect((await projectRegistry.get(workspace.projectId))!.vcsProviderId).toBe("git");
+    await service.withWorkspace(
+      workspace.workspaceId,
+      undefined,
+      async ({ providerId, binding }) => {
+        expect(providerId).toBe("git");
+        expect(binding.cwd).toBe(cwd);
+      },
+    );
+    await service.runLegacyGit(cwd, async () => {
+      called.push("git");
+    });
+    expect(called).toEqual(["git"]);
+    const outside = path.join(tmpDir, "plain");
+    mkdirSync(outside);
+    await provisioning.createWorkspaceForDirectory(outside, null, workspace.projectId);
+    await expect(service.selectProjectProvider(workspace.projectId, "jj")).rejects.toThrow(
+      "does not recognize",
+    );
+    expect((await projectRegistry.get(workspace.projectId))!.vcsProviderId).toBe("git");
+    const reopened = await provisioning.findOrCreateWorkspaceForDirectory(cwd);
+    expect(reopened.workspaceId).toBe(workspace.workspaceId);
+    expect(reopened.projectId).toBe(workspace.projectId);
+  } finally {
+    for (const handler of handlers.values()) handler.dispose();
+  }
+});
+
+test("VCS unavailable provider retains ownership while directory provisioning stays available", async () => {
+  const { resolveWorkspaceVcsService } = await import("../../workspace-vcs-service.js");
+  const calls: string[] = [];
+  const cwd = path.join(tmpDir, "unavailable");
+  mkdirSync(cwd);
+  const plugins = {
+    listVcsProviders: () => [
+      { id: "jj", pluginId: "jj-vcs", label: "Jujutsu", detectionPriority: 10 },
+      { id: "git", pluginId: "git-vcs", label: "Git" },
+    ],
+    invokeVcs: async (
+      providerId: string,
+      request: import("@getpaseo/protocol/vcs").VcsRequest,
+    ): Promise<import("@getpaseo/protocol/vcs").VcsResponse> => {
+      calls.push(providerId);
+      if (request.kind !== "detect") throw new Error("Unexpected read");
+      return {
+        kind: "detect",
+        detection: {
+          status: "unavailable",
+          error: { code: "unsupported-version", message: "Install Jujutsu 0.46.0" },
+        },
+      };
+    },
+  };
+  provisioning = createWorkspaceProvisioningService({
+    workspaceRegistry,
+    projectRegistry,
+    workspaceGitService: gitService(),
+    isDirectory,
+    logger,
+    vcsPlugins: plugins,
+  });
+  const workspace = await provisioning.createWorkspaceForDirectory(cwd);
+  expect(workspace.vcsBinding).toBeUndefined();
+  expect((await projectRegistry.get(workspace.projectId))!.vcsProviderId).toBe("jj");
+  const service = resolveWorkspaceVcsService({
+    projects: projectRegistry,
+    workspaces: workspaceRegistry,
+    plugins,
+  });
+  await expect(
+    service.withWorkspace(workspace.workspaceId, undefined, async () => "must not run"),
+  ).rejects.toMatchObject({ problem: { code: "unsupported-version" } });
+  expect(calls).not.toContain("git");
+  expect((await workspaceRegistry.get(workspace.workspaceId))!.cwd).toBe(cwd);
+});
+
+test("VCS project switching waits for both provider operations and legacy Git commands", async () => {
+  const { createVcsHandler } = await import("@getpaseo/plugin/server/vcs");
+  const { resolveWorkspaceVcsService } = await import("../../workspace-vcs-service.js");
+  const { handleWorkspaceVcsRequest } = await import("../vcs/index.js");
+  const cwd = path.join(tmpDir, "busy");
+  mkdirSync(cwd);
+  let release!: () => void;
+  let started!: () => void;
+  const running = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const wait = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const handler = createVcsHandler({
+    id: "git",
+    label: "Git",
+    async detect(directory) {
+      return {
+        status: "available",
+        binding: {
+          providerId: "git",
+          repositoryId: "repo",
+          workingCopyId: directory,
+          root: directory,
+          cwd: directory,
+        },
+      };
+    },
+    async snapshot(binding) {
+      return {
+        binding,
+        version: "1",
+        current: null,
+        files: [],
+        refs: [],
+        capabilities: ["actions"],
+        actions: [{ id: "wait", enabled: true }],
+        state: "ready",
+      };
+    },
+    async history() {
+      return { revisions: [] };
+    },
+    async diff() {
+      return "";
+    },
+    async execute() {
+      started();
+      await wait;
+      return {};
+    },
+  });
+  const plugins = {
+    listVcsProviders: () => [{ id: "git", pluginId: "git-vcs", label: "Git" }],
+    invokeVcs: async (_id: string, request: import("@getpaseo/protocol/vcs").VcsRequest) =>
+      handler.handle(request),
+  };
+  const deps = { projects: projectRegistry, workspaces: workspaceRegistry, plugins };
+  provisioning = createWorkspaceProvisioningService({
+    workspaceRegistry,
+    projectRegistry,
+    workspaceGitService: gitService(),
+    isDirectory,
+    logger,
+    vcsPlugins: plugins,
+  });
+  const workspace = await provisioning.createWorkspaceForDirectory(cwd);
+  const service = resolveWorkspaceVcsService(deps);
+  try {
+    await handleWorkspaceVcsRequest(
+      {
+        type: "vcs.actions.execute.request",
+        requestId: "execute",
+        workspaceId: workspace.workspaceId,
+        version: "1",
+        action: "wait",
+        input: {},
+        operationId: "busy",
+      },
+      deps,
+    );
+    await running;
+    await expect(service.selectProjectProvider(workspace.projectId, "git")).rejects.toThrow(
+      "Wait for running VCS operations",
+    );
+    release();
+    await expect
+      .poll(() =>
+        handleWorkspaceVcsRequest(
+          {
+            type: "vcs.operations.get.request",
+            requestId: "get",
+            workspaceId: workspace.workspaceId,
+            providerId: "git",
+            operationId: "busy",
+          },
+          deps,
+        ),
+      )
+      .toMatchObject({ payload: { result: { status: "succeeded" } } });
+    await service.selectProjectProvider(workspace.projectId, "git");
+    let releaseGit!: () => void;
+    let startedGit!: () => void;
+    const gitRunning = new Promise<void>((resolve) => {
+      startedGit = resolve;
+    });
+    const gitWait = new Promise<void>((resolve) => {
+      releaseGit = resolve;
+    });
+    const git = service.runLegacyGit(cwd, async () => {
+      startedGit();
+      await gitWait;
+    });
+    try {
+      await gitRunning;
+      await expect(service.selectProjectProvider(workspace.projectId, "git")).rejects.toThrow(
+        "Wait for running Git operations",
+      );
+    } finally {
+      releaseGit();
+      await git;
+    }
+    expect(await service.selectProjectProvider(workspace.projectId, "git")).toEqual({
+      projectId: workspace.projectId,
+      providerId: "git",
+    });
+  } finally {
+    release();
+    handler.dispose();
+  }
+});
+
+test.each(["git", "jj"])(
+  "VCS working-copy creation preserves subdirectory cwd and ownership for %s",
+  async (providerId) => {
+    const { execCommand } = await import("@getpaseo/plugin/server");
+    const { createVcsHandler } = await import("@getpaseo/plugin/server/vcs");
+    const { jjProvider } = await import("../../../../../../plugins/jj-vcs/server/provider.js");
+    const { gitProvider } = await import("../../../../../../plugins/git-vcs/server/provider.js");
+    const { writeFile, readFile } = await import("node:fs/promises");
+    const cwd = path.join(tmpDir, "repository");
+    mkdirSync(path.join(cwd, "sub"), { recursive: true });
+    await execCommand("git", ["init", cwd]);
+    await execCommand("git", ["-C", cwd, "config", "user.name", "VCS Test"]);
+    await execCommand("git", ["-C", cwd, "config", "user.email", "vcs@example.test"]);
+    await writeFile(path.join(cwd, "sub", "file.txt"), "tracked content\n");
+    await execCommand("git", ["-C", cwd, "add", "."]);
+    await execCommand("git", ["-C", cwd, "commit", "-m", "initial"]);
+    if (providerId === "jj") await execCommand("jj", ["git", "init", "--colocate", cwd]);
+    const handler = createVcsHandler(providerId === "jj" ? jjProvider : gitProvider);
+    const events: string[] = [];
+    const plugins = {
+      listVcsProviders: () => [
+        { id: providerId, label: providerId, pluginId: `${providerId}-vcs` },
+      ],
+      invokeVcs: async (_id: string, request: import("@getpaseo/protocol/vcs").VcsRequest) =>
+        handler.handle(request),
+    };
+    const service = createWorkspaceProvisioningService({
+      workspaceRegistry,
+      projectRegistry,
+      workspaceGitService: gitService(),
+      isDirectory,
+      logger,
+      vcsPlugins: plugins,
+      paseoHome: path.join(tmpDir, "home"),
+      lifecycle: {
+        before: async (name, request) => {
+          events.push(name);
+          return request;
+        },
+        wait: async (name, payload) => {
+          events.push(name);
+          if (name === "working-copy.create.after" && "workingCopy" in payload)
+            await writeFile(
+              path.join(payload.workingCopy.binding.root, "hook.txt"),
+              "before setup\n",
+            );
+        },
+        emit: (name) => {
+          events.push(name);
+        },
+      },
+    });
+    try {
+      const project = await service.findOrCreateProjectForDirectory(path.join(cwd, "sub"));
+      const { handleWorkspaceVcsRequest } = await import("../vcs/index.js");
+      const deps = { projects: projectRegistry, workspaces: workspaceRegistry, plugins };
+      // New workspace must resolve the project before any workspace has been created.
+      const snapshotResponse = await handleWorkspaceVcsRequest(
+        {
+          type: "vcs.project.snapshot.get.request",
+          requestId: "project-snapshot",
+          projectId: project.projectId,
+        },
+        deps,
+      );
+      if (
+        snapshotResponse.type !== "vcs.project.snapshot.get.response" ||
+        !snapshotResponse.payload.result?.snapshot
+      )
+        throw new Error(JSON.stringify(snapshotResponse));
+      const snapshot = snapshotResponse.payload.result.snapshot;
+      expect(snapshot.binding.cwd).toBe(path.join(cwd, "sub"));
+      const prepareRequest = {
+        type: "vcs.project.working-copy.resolve-source.request" as const,
+        requestId: "prepare-source",
+        projectId: project.projectId,
+        providerId,
+        input: {
+          version: 1,
+          data: {
+            kind: "branch",
+            ref: snapshot.refs.find((ref) => ref.kind === "branch")?.id ?? "unused",
+          },
+        },
+      };
+      const prepared = await handleWorkspaceVcsRequest(prepareRequest, deps);
+      if (providerId === "git") {
+        expect(prepared.payload).toMatchObject({
+          error: null,
+          result: {
+            revision: snapshot.current!.id,
+            data: { version: 2, data: { source: prepareRequest.input.data } },
+          },
+        });
+        expect(
+          await handleWorkspaceVcsRequest(
+            { ...prepareRequest, input: { version: 99, data: {} } },
+            deps,
+          ),
+        ).toMatchObject({ payload: { result: null, error: { code: "provider" } } });
+      } else {
+        expect(prepared.payload).toMatchObject({
+          result: null,
+          error: {
+            code: "unavailable",
+            message: "Provider does not support working-copy source preparation",
+          },
+        });
+      }
+      expect(
+        await handleWorkspaceVcsRequest({ ...prepareRequest, providerId: "changed" }, deps),
+      ).toMatchObject({ payload: { result: null, error: { code: "outdated" } } });
+      expect(
+        await handleWorkspaceVcsRequest({ ...prepareRequest, projectId: "missing" }, deps),
+      ).toMatchObject({ payload: { result: null, error: { code: "unavailable" } } });
+      expect(events).toEqual([]);
+      const historyRequest = {
+        type: "vcs.project.history.list.request" as const,
+        requestId: "project-history",
+        projectId: project.projectId,
+        providerId,
+        version: snapshot.version,
+        limit: 50,
+      };
+      expect(await handleWorkspaceVcsRequest(historyRequest, deps)).toMatchObject({
+        payload: {
+          error: null,
+          result: {
+            revisions: expect.arrayContaining([
+              expect.objectContaining({ id: snapshot.current!.id }),
+            ]),
+          },
+        },
+      });
+      expect(
+        await handleWorkspaceVcsRequest({ ...historyRequest, providerId: "changed" }, deps),
+      ).toMatchObject({ payload: { error: { code: "outdated" } } });
+      await expect(
+        service.createWorkspaceForWorkingCopy({
+          projectId: project.projectId,
+          providerId: "another-provider",
+        }),
+      ).rejects.toThrow("Project VCS changed");
+      expect(events).toEqual([]);
+      const options = providerId === "git" ? { branch: "custom-copy" } : { name: "custom-copy" };
+      await expect(
+        service.createWorkspaceForWorkingCopy({
+          projectId: project.projectId,
+          providerData: { version: 99, data: options },
+        }),
+      ).rejects.toThrow();
+      const invalidRoot = path.join(
+        tmpDir,
+        "home",
+        "working-copies",
+        project.projectId,
+        "wks_0123456789abcdef",
+      );
+      await expect(
+        service.createWorkspaceForWorkingCopy({
+          projectId: project.projectId,
+          workspaceId: "wks_0123456789abcdef",
+          providerData: {
+            version: 1,
+            data: providerId === "git" ? { branch: "../bad" } : { name: "../bad" },
+          },
+        }),
+      ).rejects.toThrow();
+      expect(existsSync(invalidRoot)).toBe(false);
+      events.length = 0;
+      const workspace = await service.createWorkspaceForWorkingCopy({
+        projectId: project.projectId,
+        providerId,
+        providerData: { version: 1, data: options },
+        title: "Isolated",
+        background: true,
+      });
+      const root = workspace.vcsWorkingCopy!.binding.root;
+      const name =
+        providerId === "git"
+          ? await execCommand("git", ["branch", "--show-current"], { cwd: root })
+          : await execCommand("jj", ["workspace", "root", "--name", "custom-copy"], { cwd: root });
+      expect(name.stdout.trim()).toBe(providerId === "git" ? "custom-copy" : root);
+      expect(workspace.cwd).toBe(path.join(root, "sub"));
+      expect(workspace.vcsBinding).toMatchObject({ providerId, root, cwd: workspace.cwd });
+      expect(workspace.vcsWorkingCopy).toMatchObject({
+        owned: true,
+        binding: { cwd: workspace.cwd },
+      });
+      expect(workspace.branch).toBeNull();
+      expect(workspace.isPaseoOwnedWorktree).toBe(false);
+      expect(workspace.background).toBe(true);
+      expect(await readFile(path.join(workspace.cwd, "file.txt"), "utf8")).toBe(
+        "tracked content\n",
+      );
+      expect(await readFile(path.join(root, "hook.txt"), "utf8")).toBe("before setup\n");
+      expect(events).toEqual([
+        "working-copy.create.before",
+        "working-copy.create.after",
+        "workspace.create.after",
+      ]);
+      const reloaded = new FileBackedWorkspaceRegistry(
+        path.join(tmpDir, "projects", "workspaces.json"),
+        logger,
+      );
+      await reloaded.initialize();
+      expect((await reloaded.get(workspace.workspaceId))!.vcsWorkingCopy).toEqual(
+        workspace.vcsWorkingCopy,
+      );
+    } finally {
+      handler.dispose();
+    }
+  },
+);
+
+test.each([
+  { providerId: "git", change: "none" },
+  { providerId: "jj", change: "none" },
+  { providerId: "jj", change: "tracked" },
+  { providerId: "jj", change: "ignored" },
+  { providerId: "jj", change: "untracked" },
+  { providerId: "jj", change: "snapshotted" },
+])(
+  "VCS working-copy rollback after a failed hook: $providerId / $change",
+  async ({ providerId, change }) => {
+    const { writeFile, readFile } = await import("node:fs/promises");
+    let changedFile = "tracked.txt";
+    if (change === "ignored") changedFile = "ignored.txt";
+    if (change === "untracked") changedFile = "new.txt";
+    const { execCommand } = await import("@getpaseo/plugin/server");
+    const { createVcsHandler } = await import("@getpaseo/plugin/server/vcs");
+    const { jjProvider } = await import("../../../../../../plugins/jj-vcs/server/provider.js");
+    const { gitProvider } = await import("../../../../../../plugins/git-vcs/server/provider.js");
+    const cwd = path.join(tmpDir, "repository");
+    await execCommand("git", ["init", cwd]);
+    await writeFile(path.join(cwd, "tracked.txt"), "original\n");
+    await writeFile(path.join(cwd, ".gitignore"), "ignored.txt\n");
+    await execCommand("git", ["add", "."], { cwd });
+    await execCommand(
+      "git",
+      [
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.test",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "initial",
+      ],
+      { cwd },
+    );
+    if (providerId === "jj") await execCommand("jj", ["git", "init", "--colocate", cwd]);
+    const handler = createVcsHandler(providerId === "jj" ? jjProvider : gitProvider);
+    const workspaceId = "wks_0123456789abcdef";
+    const service = createWorkspaceProvisioningService({
+      workspaceRegistry,
+      projectRegistry,
+      workspaceGitService: gitService(),
+      isDirectory,
+      logger,
+      paseoHome: path.join(tmpDir, "home"),
+      vcsPlugins: {
+        listVcsProviders: () => [
+          { id: providerId, label: providerId, pluginId: `${providerId}-vcs` },
+        ],
+        invokeVcs: async (_id, request) => handler.handle(request),
+      },
+      lifecycle: {
+        before: async (_name, request) => request,
+        emit: () => {},
+        wait: async (_name, payload) => {
+          if (change !== "none") {
+            const root = payload.workingCopy.binding.root;
+            await writeFile(path.join(root, changedFile), "retain me\n");
+            if (change === "snapshotted") await execCommand("jj", ["status"], { cwd: root });
+          }
+          throw new Error("include failed");
+        },
+      },
+    });
+    try {
+      const project = await service.findOrCreateProjectForDirectory(cwd);
+      await expect(
+        service.createWorkspaceForWorkingCopy({ projectId: project.projectId, workspaceId }),
+      ).rejects.toThrow(change === "none" ? "include failed" : "Cleanup failed");
+      expect(
+        await isDirectory(
+          path.join(tmpDir, "home", "working-copies", project.projectId, workspaceId),
+        ),
+      ).toBe(change !== "none");
+      expect(await workspaceRegistry.list()).toEqual([]);
+      const listing =
+        providerId === "jj"
+          ? await execCommand("jj", ["workspace", "list"], { cwd })
+          : await execCommand("git", ["branch", "--list"], { cwd });
+      if (change === "none") expect(listing.stdout).not.toContain(workspaceId);
+      else {
+        expect(listing.stdout).toContain(workspaceId);
+        const root = path.join(tmpDir, "home", "working-copies", project.projectId, workspaceId);
+        expect(await readFile(path.join(root, changedFile), "utf8")).toBe("retain me\n");
+      }
+      expect(await isDirectory(cwd)).toBe(true);
+    } finally {
+      handler.dispose();
+    }
+  },
+);

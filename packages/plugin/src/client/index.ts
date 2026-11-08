@@ -1,4 +1,21 @@
 export type {
+  PluginVcsSelection,
+  PluginVcsContext,
+  PluginVcsComparisonInput,
+  PluginVcsComparisonSettingsProps,
+  PluginVcsRevisionComparisonInput,
+  PluginVcsComparisonResult,
+  PluginVcsActionFormProps,
+  PluginVcsConfirmation,
+  PluginVcsActionContribution,
+  PluginVcsPanelProps,
+  PluginVcsPanelContribution,
+  PluginVcsWorkingCopyFormProps,
+  PluginVcsProjectSource,
+  PluginVcsProjectSourceProps,
+  PluginVcsContribution,
+} from "./vcs.js";
+export type {
   PluginHostProps,
   PluginTab,
   PluginPanelProps,

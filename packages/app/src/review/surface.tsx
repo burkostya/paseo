@@ -30,6 +30,7 @@ import { isWeb } from "@/constants/platform";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import type { Theme } from "@/styles/theme";
 import {
+  reviewCommentMatches,
   useReviewDraftComments,
   useReviewDraftStore,
   saveReviewDraftComment,
@@ -120,6 +121,7 @@ const reviewEditors = createReviewEditorScope({
 export function useInlineReviewController(input: {
   reviewDraftKey: string;
   presentation?: string;
+  files?: readonly import("@getpaseo/protocol/diff").ParsedDiffFile[];
 }): InlineReviewActions & {
   sheetEditor: InlineReviewEditorState | null;
   onChangeEditorBody: (body: string) => void;
@@ -127,8 +129,13 @@ export function useInlineReviewController(input: {
   const isCompact = useIsCompactFormFactor();
   const reviewComments = useReviewDraftComments(input.reviewDraftKey);
   const commentsByTarget = useMemo(
-    () => groupInlineReviewCommentsByTarget(reviewComments),
-    [reviewComments],
+    () =>
+      groupInlineReviewCommentsByTarget(
+        input.files
+          ? reviewComments.filter((comment) => reviewCommentMatches(comment, input.files!))
+          : reviewComments,
+      ),
+    [reviewComments, input.files],
   );
   const model = useMemo(
     () => reviewEditors.forDraft(input.reviewDraftKey, input.presentation ?? "diff"),

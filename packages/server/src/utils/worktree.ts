@@ -1,3 +1,4 @@
+import type { VcsWorkingCopyRecord } from "@getpaseo/protocol/vcs";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { constants as fsConstants, realpath } from "fs";
@@ -698,6 +699,21 @@ async function resolveBranchNameForWorktreePath(worktreePath: string): Promise<s
   return basename(worktreePath);
 }
 
+export async function resolveWorkingCopyRuntimeEnv(
+  record: VcsWorkingCopyRecord,
+): Promise<WorktreeRuntimeEnv> {
+  const source = record.source?.root ?? record.binding.root;
+  return {
+    PASEO_VCS_PROVIDER: record.binding.providerId,
+    PASEO_WORKING_COPY_PATH: record.binding.root,
+    PASEO_SOURCE_CHECKOUT_PATH: source,
+    PASEO_ROOT_PATH: source,
+    PASEO_WORKTREE_PATH: record.binding.root,
+    PASEO_BRANCH_NAME: "",
+    PASEO_WORKTREE_PORT: String(await getAvailablePort()),
+  };
+}
+
 export async function resolveWorktreeRuntimeEnv(options: {
   worktreePath: string;
   branchName?: string;
@@ -737,6 +753,7 @@ export async function runWorktreeTeardownCommands(options: {
   teardownCwd?: string;
   branchName?: string;
   repoRootPath?: string;
+  runtimeEnv?: NodeJS.ProcessEnv;
 }): Promise<WorktreeTeardownCommandResult[]> {
   const teardownCwd = options.teardownCwd ?? options.worktreePath;
   if ((await getOwnershipRelativePath(options.worktreePath, teardownCwd)) === null) {
@@ -747,14 +764,18 @@ export async function runWorktreeTeardownCommands(options: {
     return [];
   }
 
-  const repoRootPath =
-    options.repoRootPath ?? (await inferRepoRootPathFromWorktreePath(options.worktreePath));
-  const branchName =
-    options.branchName ?? (await resolveBranchNameForWorktreePath(options.worktreePath));
-  const worktreePort = await readPaseoWorktreeRuntimePort(options.worktreePath);
+  const runtimeEnv = options.runtimeEnv ?? (await resolveTeardownEnvironment());
+  const teardownEnv = createStringCommandShellEnv(
+    createExternalProcessEnv(process.env, runtimeEnv),
+  );
+  async function resolveTeardownEnvironment(): Promise<NodeJS.ProcessEnv> {
+    const repoRootPath =
+      options.repoRootPath ?? (await inferRepoRootPathFromWorktreePath(options.worktreePath));
+    const branchName =
+      options.branchName ?? (await resolveBranchNameForWorktreePath(options.worktreePath));
+    const worktreePort = await readPaseoWorktreeRuntimePort(options.worktreePath);
 
-  const teardownEnv: NodeJS.ProcessEnv = createStringCommandShellEnv(
-    createExternalProcessEnv(process.env, {
+    return {
       // Source checkout path is the original git repo root (shared across worktrees), not the
       // worktree itself. This allows lifecycle scripts to copy or clean resources using paths
       // from the source checkout.
@@ -764,8 +785,8 @@ export async function runWorktreeTeardownCommands(options: {
       PASEO_WORKTREE_PATH: options.worktreePath,
       PASEO_BRANCH_NAME: branchName,
       ...(worktreePort !== null ? { PASEO_WORKTREE_PORT: String(worktreePort) } : {}),
-    }),
-  );
+    };
+  }
 
   const results: WorktreeTeardownCommandResult[] = [];
   for (const cmd of teardownCommands) {

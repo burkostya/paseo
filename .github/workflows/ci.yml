@@ -208,6 +208,37 @@ jobs:
         name: Install dependencies
         run: node scripts/npm-retry.mjs ci
 
+      - &install_jj
+        name: Install Jujutsu for VCS tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          jj_version=0.46.0
+          jj_dir="$RUNNER_TEMP/paseo-jj-$jj_version"
+          mkdir -p "$jj_dir"
+          case "$RUNNER_OS" in
+            Linux)
+              jj_asset="jj-v$jj_version-x86_64-unknown-linux-musl.tar.gz"
+              jj_sha256=fce0271158e665ceb82dc66c5eb95b1728649094e9133074f3b5baece345fc08
+              jj_binary=jj
+              ;;
+            Windows)
+              jj_asset="jj-v$jj_version-x86_64-pc-windows-msvc.zip"
+              jj_sha256=c42316b10df04611bc65029a18bcb2d92636edddb6871d511f7bb4233e999b83
+              jj_binary=jj.exe
+              ;;
+            *) echo "Unsupported VCS test runner: $RUNNER_OS" >&2; exit 1 ;;
+          esac
+          curl --fail --location --retry 3 "https://github.com/jj-vcs/jj/releases/download/v$jj_version/$jj_asset" -o "$jj_dir/$jj_asset"
+          printf '%s  %s\n' "$jj_sha256" "$jj_dir/$jj_asset" | sha256sum --check -
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            unzip -q "$jj_dir/$jj_asset" -d "$jj_dir"
+          else
+            tar -xzf "$jj_dir/$jj_asset" -C "$jj_dir"
+          fi
+          "$jj_dir/$jj_binary" --version
+          printf '%s\n' "$jj_dir" >> "$GITHUB_PATH"
+
       - &server_agent_clis
         name: Install agent CLIs for provider tests
         if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' }}
@@ -246,6 +277,7 @@ jobs:
       - *server_node
       - *server_fetch
       - *server_install
+      - *install_jj
       - *server_agent_clis
       - *server_build
 
@@ -269,6 +301,7 @@ jobs:
       - *server_node
       - *server_fetch
       - *server_install
+      - *install_jj
       - *server_agent_clis
       - *server_build
 
@@ -444,6 +477,8 @@ jobs:
       - name: Install Playwright browsers
         timeout-minutes: 10
         run: npx playwright install chromium
+
+      - *install_jj
 
       - name: Build server stack
         run: npm run build:server

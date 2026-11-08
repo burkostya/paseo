@@ -1,3 +1,4 @@
+import { migratedGitActionIds } from "@/vcs/legacy-git-actions";
 import { useCallback, useMemo, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -196,6 +197,7 @@ export function useWorkspaceCommandCenterActions(): void {
   const isPinned = fields?.pinnedAt != null;
   const isCompact = useIsCompactFormFactor();
   const canPin = useHostFeature(serverId, "workspacePinning");
+  const vcsComparisons = useHostFeature(serverId, "vcsBaseComparisons");
   const supportsSetupObservation = useHostFeature(serverId, "workspaceSetupObservation");
   const canShowSetup = shouldShowWorkspaceSetup(
     fields?.setupStatus ?? null,
@@ -234,6 +236,7 @@ export function useWorkspaceCommandCenterActions(): void {
     () =>
       buildWorkspaceCommandCenterContributions({
         gitActions,
+        omitGitActionIds: vcsComparisons ? migratedGitActionIds : undefined,
         labels: {
           section: t("workspace.header.actions.workspaceActions"),
           newAgent: t("workspace.tabs.actions.newAgent"),
@@ -305,6 +308,7 @@ export function useWorkspaceCommandCenterActions(): void {
         toggleLabel,
       }),
     [
+      vcsComparisons,
       activeTabIndex,
       activeTabKind,
       canPin,

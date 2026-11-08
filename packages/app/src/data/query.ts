@@ -2,6 +2,9 @@ import {
   keepPreviousData,
   skipToken,
   useQueries,
+  useInfiniteQuery,
+  type UseInfiniteQueryOptions,
+  type InfiniteData,
   useQuery,
   type QueryKey,
   type QueryClient,
@@ -119,4 +122,20 @@ export function fetchQueryOptions<
           query.state.data !== undefined && immutableWhen(query.state.data) ? Infinity : 0
       : staleTimeMs,
   };
+}
+
+export function useInfiniteFetchQuery<T, Page, Key extends QueryKey = QueryKey>(
+  input: Omit<UseInfiniteQueryOptions<T, Error, InfiniteData<T, Page>, Key, Page>, "staleTime"> & {
+    staleTimeMs: number;
+  },
+) {
+  const { staleTimeMs, ...options } = input;
+  if (!Number.isFinite(staleTimeMs))
+    throw new Error("Fetch queries must declare a finite staleTimeMs.");
+  return useInfiniteQuery({
+    ...options,
+    staleTime: staleTimeMs,
+    refetchOnMount: options.refetchOnMount ?? "always",
+    meta: { ...options.meta, serverDataPolicy: { class: "fetch", dataShape: "value" } },
+  });
 }

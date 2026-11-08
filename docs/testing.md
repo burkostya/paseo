@@ -65,6 +65,17 @@ it("returns timeout error when provider times out", async () => {
 
 Never remove a test because it's flaky. Find the variance source (time, randomness, race condition, shared state, non-deterministic output, environment drift) and fix it.
 
+VCS tests use installed Git and jj binaries. Keep both on PATH when running them locally.
+
+### SDK subprocess checks
+
+The client SDK's GC regression launches Node with `--expose-gc`. If its child
+returns empty output before the first phase marker, check process restrictions
+before diagnosing a memory leak. A restricted runner can hide the launch failure
+behind empty asynchronous output; a synchronous diagnostic launch exposed `EPERM`.
+Rerun the same test file with subprocess execution permitted. Keep the GC
+assertions and phase marker intact; an empty successful exit is not test evidence.
+
 ## Real dependencies over mocks
 
 Mocks are not the default. They require an explicit decision.

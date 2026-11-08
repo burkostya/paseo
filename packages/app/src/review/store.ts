@@ -45,6 +45,7 @@ export interface BuildReviewDraftKeyInput {
 type BuildReviewDraftScopeKeyInput = Omit<BuildReviewDraftKeyInput, "mode">;
 
 export interface BuildReviewAttachmentSnapshotInput {
+  vcs?: ReviewAttachment["vcs"];
   reviewDraftKey: string;
   cwd: string;
   mode: ReviewDraftMode;
@@ -118,6 +119,7 @@ function createDraftComment(input: ReviewDraftCommentInput): ReviewDraftComment 
     side: input.side,
     lineNumber: input.lineNumber,
     body: input.body,
+    ...(input.content !== undefined ? { content: input.content } : {}),
     createdAt: input.createdAt ?? now,
     updatedAt: input.updatedAt ?? input.createdAt ?? now,
   };
@@ -188,7 +190,10 @@ function findTarget(input: { comment: ReviewDraftComment; diffFiles: readonly Pa
       return cell?.lineNumber === input.comment.lineNumber;
     });
     const targetLine = hunk.lines[targetIndex];
-    if (targetLine) {
+    if (
+      targetLine &&
+      (input.comment.content === undefined || targetLine.line.content === input.comment.content)
+    ) {
       return {
         hunkHeader: hunk.hunkHeader,
         hunkLines: hunk.lines,
@@ -199,6 +204,13 @@ function findTarget(input: { comment: ReviewDraftComment; diffFiles: readonly Pa
   }
 
   return null;
+}
+
+export function reviewCommentMatches(
+  comment: ReviewDraftComment,
+  diffFiles: readonly ParsedDiffFile[],
+): boolean {
+  return findTarget({ comment, diffFiles }) !== null;
 }
 
 export function buildReviewAttachmentSnapshot(
@@ -249,6 +261,7 @@ export function buildReviewAttachmentSnapshot(
     mimeType: "application/paseo-review",
     cwd: input.cwd,
     mode: input.mode,
+    ...(input.vcs ? { vcs: input.vcs } : {}),
     baseRef: normalizeBaseRef(input.baseRef) || null,
     comments,
   };
@@ -300,6 +313,7 @@ export function useReviewCommentCount(key: string): number {
 }
 
 export function useReviewAttachmentSnapshot(input: {
+  vcs?: ReviewAttachment["vcs"];
   key: string;
   diffFiles: readonly ParsedDiffFile[];
   cwd: string;
@@ -313,11 +327,12 @@ export function useReviewAttachmentSnapshot(input: {
         reviewDraftKey: input.key,
         cwd: input.cwd,
         mode: input.mode,
+        ...(input.vcs ? { vcs: input.vcs } : {}),
         baseRef: input.baseRef,
         comments,
         diffFiles: input.diffFiles,
       }),
-    [comments, input.key, input.cwd, input.mode, input.baseRef, input.diffFiles],
+    [comments, input.key, input.cwd, input.mode, input.baseRef, input.diffFiles, input.vcs],
   );
 }
 
@@ -343,7 +358,7 @@ export function clearSentReviewDraftComments(input: {
 export function saveReviewDraftComment(input: {
   key: string;
   id: string | null;
-  comment: Pick<ReviewDraftComment, "filePath" | "side" | "lineNumber" | "body">;
+  comment: Pick<ReviewDraftComment, "filePath" | "side" | "lineNumber" | "body" | "content">;
 }): void {
   const store = useReviewDraftStore.getState();
   if (input.id && store.drafts[input.key]?.some((comment) => comment.id === input.id)) {
@@ -356,7 +371,29 @@ export function saveReviewDraftComment(input: {
         side: input.comment.side,
         lineNumber: input.comment.lineNumber,
         body: input.comment.body,
+        content: input.comment.content,
       },
     });
   }
+}
+
+export function adoptReviewDrafts(key: string, aliases: readonly string[]): void {
+  useReviewDraftStore.setState((state) => {
+    const sources = [...new Set(aliases)].filter((alias) => alias !== key && state.drafts[alias]);
+    if (!sources.length) return state;
+    const drafts = { ...state.drafts };
+    const comments = [...(drafts[key] ?? [])];
+    const ids = new Set(comments.map((comment) => comment.id));
+    for (const source of sources) {
+      for (const comment of drafts[source]!) {
+        if (!ids.has(comment.id)) {
+          comments.push(comment);
+          ids.add(comment.id);
+        }
+      }
+      delete drafts[source];
+    }
+    drafts[key] = comments;
+    return { ...state, drafts };
+  });
 }

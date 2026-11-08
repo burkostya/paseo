@@ -35,6 +35,20 @@ function outboundMessage(type: SessionOutboundMessage["type"]): SessionOutboundM
 }
 
 describe("SessionAuthorization", () => {
+  test("source preparation uses workspace read authority without granting creation or plugin administration", () => {
+    const reader = new SessionAuthorization(["workspace.read"]);
+    expect(
+      reader.allowsInbound(inboundMessage("vcs.project.working-copy.resolve-source.request")),
+    ).toBe(true);
+    expect(
+      reader.allowsOutbound(outboundMessage("vcs.project.working-copy.resolve-source.response")),
+    ).toBe(true);
+    expect(reader.allowsInbound(inboundMessage("workspace.create.request"))).toBe(false);
+    expect(reader.allowsInbound(inboundMessage("plugin.rpc.invoke.request"))).toBe(false);
+    const manager = new SessionAuthorization(["workspace.read", "workspace.manage"]);
+    expect(manager.allowsInbound(inboundMessage("workspace.create.request"))).toBe(true);
+    expect(manager.allowsInbound(inboundMessage("plugin.rpc.invoke.request"))).toBe(false);
+  });
   test("owner authority covers every session operation", () => {
     const authorization = new SessionAuthorization(OWNER_PERMISSIONS);
 

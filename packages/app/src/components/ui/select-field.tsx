@@ -54,6 +54,8 @@ export interface SelectFieldProps<TValue> {
   error?: string | null;
   searchable?: boolean;
   searchPlaceholder?: string;
+  onSearchQueryChange?(query: string): void;
+  onOpenChange?(open: boolean): void;
   title?: string;
   size?: ControlSize;
   getValueKey?: (value: TValue) => string;
@@ -184,6 +186,8 @@ export function SelectField<TValue>({
   error,
   searchable = false,
   searchPlaceholder,
+  onSearchQueryChange,
+  onOpenChange: notifyOpenChange,
   title,
   size = "md",
   getValueKey,
@@ -216,6 +220,13 @@ export function SelectField<TValue>({
     [visibleOptions],
   );
 
+  const changeOpen = useCallback(
+    (next: boolean) => {
+      setOpen(next);
+      notifyOpenChange?.(next);
+    },
+    [notifyOpenChange],
+  );
   const handleSelect = useCallback(
     (id: string) => {
       const option = optionById.get(id);
@@ -223,17 +234,17 @@ export function SelectField<TValue>({
         return;
       }
       onChange(option.value, { label: option.label, description: option.description });
-      setOpen(false);
+      changeOpen(false);
     },
-    [onChange, optionById],
+    [onChange, optionById, changeOpen],
   );
 
   const handlePress = useCallback(() => {
     if (disabled) {
       return;
     }
-    setOpen((current) => !current);
-  }, [disabled]);
+    changeOpen(!open);
+  }, [disabled, open, changeOpen]);
   const handleTriggerFocus = useCallback((_event: NativeSyntheticEvent<TargetedEvent>) => {
     setTriggerFocused(true);
   }, []);
@@ -320,10 +331,11 @@ export function SelectField<TValue>({
         onSelect={handleSelect}
         searchable={searchable}
         searchPlaceholder={searchPlaceholder}
+        onSearchQueryChange={onSearchQueryChange}
         emptyText={loading && visibleOptions.length === 0 ? "Loading..." : emptyText}
         title={title ?? label}
         open={open}
-        onOpenChange={setOpen}
+        onOpenChange={changeOpen}
         anchorRef={anchorRef}
         renderOption={renderComboboxOption}
       />

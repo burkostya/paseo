@@ -1,3 +1,4 @@
+import { mountVcsSnapshotRouter } from "@/vcs/snapshot-router";
 import type { OwnedSubscription } from "@getpaseo/client";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import type { Query, QueryCacheNotifyEvent, QueryClient, QueryKey } from "@tanstack/react-query";
@@ -74,6 +75,8 @@ export interface ServerDataQueryMeta extends Record<string, unknown> {
 export type ProvidersSnapshotUpdate = ProvidersSnapshotUpdateMessage;
 
 interface ServerDataPushClient {
+  observeVcsSnapshot: import("@getpaseo/client/internal/daemon-client").DaemonClient["observeVcsSnapshot"];
+  requestVcs: Parameters<typeof mountVcsSnapshotRouter>[0]["client"]["requestVcs"];
   getProvidersSnapshot: import("@getpaseo/client/internal/daemon-client").DaemonClient["getProvidersSnapshot"];
   observeEvents: import("@getpaseo/client/internal/daemon-client").DaemonClient["observeEvents"];
   observeCheckoutDiff: import("@getpaseo/client/internal/daemon-client").DaemonClient["observeCheckoutDiff"];
@@ -128,6 +131,18 @@ const RECONNECT_REPAIR_POLICIES: ReconnectRepairPolicy[] = [
     invalidate: ({ queryClient, serverId }) => {
       void queryClient.invalidateQueries({
         predicate: (query) => isQueryForServer(query.queryKey, "terminals", serverId),
+      });
+    },
+  },
+  {
+    domain: "workspaceVcs",
+    invalidate: ({ queryClient, serverId }) => {
+      void queryClient.invalidateQueries({
+        predicate: (query) =>
+          query.queryKey[0] === "workspace-vcs" &&
+          query.queryKey[1] === serverId &&
+          // Observed snapshots reconnect through their source-owned subscription.
+          query.meta?.vcsSnapshot === undefined,
       });
     },
   },
@@ -217,6 +232,7 @@ export async function applyProvidersSnapshotUpdate(input: {
 }
 
 export function mountServerDataPushRouter(input: PushRouterInput): () => void {
+  const stopVcsSnapshots = mountVcsSnapshotRouter(input);
   const activeCheckoutDiffSubscriptions = new Map<string, CheckoutDiffRegistration>();
   const activeTerminalSubscriptions = new Map<string, WorkspaceTerminalsRegistration>();
   let disposed = false;
@@ -312,6 +328,7 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
 
   return () => {
     disposed = true;
+    stopVcsSnapshots();
     unsubscribeQueryCache();
     void events.release().catch(console.error);
     for (const current of activeCheckoutDiffSubscriptions.values()) {

@@ -16,7 +16,7 @@ This page covers the git-specific details: where worktrees live, how branches ar
 
 ## Layout and workflow
 
-Worktrees live under `$PASEO_HOME/worktrees/` by default, grouped by a hash of the source checkout path. You can change the base directory with `worktrees.root` in `config.json`. Each worktree gets a slug and a branch when its workspace is created.
+Worktrees created with the CLI commands below live under `$PASEO_HOME/worktrees/` by default, grouped by a hash of the source checkout path. You can change the base directory with `worktrees.root` in `config.json`. Each worktree gets a slug and a branch when its workspace is created.
 
 ```
 ~/.paseo/worktrees/
@@ -43,6 +43,45 @@ Plugins can choose a location anywhere on disk with [`worktree.create.before`](/
 4. Merge or archive the workspace; after the last workspace using it is archived, Paseo runs teardown and removes the worktree
 
 Scheduled runs archive their workspaces when they finish by default. Turn off **Archive on finish** in the schedule's app form to [keep run workspaces](/docs/schedules#keep-run-workspaces) and their worktrees until you archive them.
+
+## Provider-managed working copies
+
+In **New workspace**, Jujutsu and other capable VCS providers offer **New working
+copy** under Isolation. Choose an exact revision, then create an empty workspace,
+launch a terminal, or send the first agent prompt. This works even when the project
+has no active workspace. The host needs `vcsProjectReads` and
+`vcsWorkingCopySelection` support. Git’s plugin supplies its branch and PR/MR picker, including upstream defaults
+and an optional new branch name. Both Git creation views use provider-managed
+copies under `$PASEO_HOME/working-copies`. Remote branch and PR/MR choices require
+access to the remote when selected and again when creating the copy. If the
+remote changes in between, reselect the source to review its new revision.
+Optional provider fields let you name the jj workspace. The shared **Create working
+copy** view also lets you name the new Git branch. Leave these fields blank to use
+generated names. If jj creation fails after allocating the copy, cleanup retains
+any copy whose revision changed or that contains additional files, including ignored
+files. The error names the retained directory; inspect it before removing it or retrying.
+
+For Git and Jujutsu, open **Create working copy** from the workspace menu, Command
+Center, or Changes view selector. Select a revision, optionally name the workspace,
+and create it. Use **Open workspace** after creation finishes. The selected revision
+stays fixed if the source changes while the form is open. If the result is unknown,
+**Check creation result** reuses the same request instead of allocating another copy.
+This UI requires a host with `vcsWorkingCopySelection` support.
+
+The [working-copy SDK](/docs/plugins/reference#vcs-providers) places these isolated
+copies under `$PASEO_HOME/working-copies`. Archive saves tracked
+changes before removing the last referenced copy; restore brings back its saved
+revision, file contents, and exact execution subdirectory without running setup.
+Keep the source repository available for recovery. Git also restores the saved
+branch and tracking configuration. If that branch moved after archive, restore
+stops with a diagnostic and keeps the saved state; move the branch back to the
+saved commit before retrying.
+
+Ignored and untracked files are outside that snapshot. If they remain, Paseo
+archives the workspace, retains the directory, and shows a warning. Move or remove
+those files before restoring and archiving again to remove the directory. Imported
+copies that Paseo does not own are never deleted. Jujutsu archive/recovery requires
+both jj 0.46.0 or newer and Git on the host.
 
 ## Create a worktree-backed workspace
 
@@ -84,16 +123,16 @@ Add `--forge <name>` when Paseo cannot infer the forge from the source checkout.
 
 ## Copy local files with .worktreeinclude
 
-Create `.worktreeinclude` at the root of your source checkout to copy selected gitignored files into new worktrees:
+Create `.worktreeinclude` at the root of your source working copy to copy selected ignored files into new Git worktrees or provider-created Git/Jujutsu working copies:
 
 ```gitignore
 .env
 config/*.local.json
 ```
 
-Patterns use gitignore syntax. A file must match `.worktreeinclude` and be gitignored to be copied. Tracked files are never copied, and existing destination files are never overwritten. Without `.worktreeinclude`, no local files are copied. Symlinked directories and nested repositories inside an included path cause the copy to fail and abort worktree creation.
+Patterns use gitignore syntax. A file must match `.worktreeinclude` and be ignored to be copied. Files tracked in either working copy are never copied, even if missing on disk, and existing destination files are never overwritten. Without `.worktreeinclude`, no local files are copied. Symlinked directories and nested repositories inside an included path cause the copy to fail and abort worktree creation.
 
-The built-in `worktree-include` plugin copies from the checkout you create the worktree from, including when that checkout is another worktree. Copying finishes before setup, terminals, and the first agent. A copy failure aborts creation and removes the new worktree. Copies use copy-on-write clones on APFS and btrfs when supported, with a regular copy elsewhere.
+The built-in `worktree-include` plugin copies from the working copy you create from, including another isolated copy. A subdirectory project still reads patterns from its working-copy root. Jujutsu uses its own tracked-file list and the Git backend's ignore matcher, so this optional copying feature requires Git on the host as well as jj. Copying finishes before setup, terminals, and the first agent. A copy failure aborts creation and removes the new worktree. Copies use copy-on-write clones on APFS and btrfs when supported, with a regular copy elsewhere.
 
 ## paseo.json
 
@@ -114,7 +153,7 @@ Drop a `paseo.json` in your repo root. Paseo reads it from the committed version
 
 ## Setup and teardown
 
-Plugins can use [`worktree.create.after`](/docs/plugins/hooks#worktreecreateafter) to write files before setup, terminals, and the first agent.
+Plugins can use [`working-copy.create.after`](/docs/plugins/hooks#working-copycreateafter) to write files before setup, terminals, and the first agent. Git-specific plugins can still use [`worktree.create.after`](/docs/plugins/hooks#worktreecreateafter).
 
 `setup` runs once after the worktree is created. Use setup to install dependencies and run project initialization. Use [`.worktreeinclude`](#copy-local-files-with-worktreeinclude) to copy ignored files such as `.env`. `teardown` runs during archive, before the directory is removed.
 

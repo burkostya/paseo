@@ -14,6 +14,33 @@ Windows and macOS use one native recursive watcher plus an ignored-pruned, direc
 
 Read aggregate health from the owning observer service. Runtime metrics include active observations, native handles, tracked native files, pending events and immediate reconciliation work, scoped and full reconciliation activity and latency, and failure counts. `nativeTrackedFileCount` and other per-file counters are native-backend diagnostics only — the Linux backend keeps no per-file inventory and reports zero — so a cross-platform assertion belongs on delivered events, not those counters. Delayed safety audits do not count as pending work. Closing the service releases every subscription and clears its diagnostics. Do not add path lists, watcher handles, or platform-specific controls to this interface.
 
+## Provider-managed VCS
+
+`workspace-vcs-observation.ts` owns the shared VCS observations. Plugins supply an
+optional `observation()` plan through the same RPC contract in process or in a
+subprocess. The [public contract](../public-docs/plugins/reference.md#vcs-observation)
+owns the plan format. Share a working-copy snapshot across exact cwd variants;
+project each consumer's original binding back into its events. Metadata with
+repository scope invalidates the other observed copies too.
+
+Keep metadata fingerprints independent of locks, mtimes, logs and object-store
+churn. File events force a refresh; metadata events probe the fingerprint first.
+A refresh can create its own metadata events, especially with jj, so treating every
+metadata event as a forced snapshot creates a feedback loop. Attach watchers before
+the initial snapshot so edits during bootstrap remain observable. Burst scheduling
+and the provider's repository queue bound concurrent commands. Watcher failures use
+bounded polling, from five seconds to sixty seconds when snapshots stay unchanged.
+
+The final consumer's release waits for pending reads and filesystem teardown.
+Plugin unavailability releases filesystem observations and reports an unavailable
+state; its catalog event can resume the still-owned interest. Releasing that
+interest also removes the catalog listener and timers. Registry changes release
+workspace subscriptions when a workspace is removed, archived or changes VCS.
+Do not repair a stale jj working copy from a watcher callback; the user invokes
+its explicit recovery action.
+
+## Existing Git observation
+
 Git owns Git-ignore evaluation. The observer accepts absolute excluded roots and applies updates without replacing the observation or exposing its watcher topology. This keeps tracked files inside otherwise ignored directories observable and keeps Git policy out of the filesystem module.
 
 Workspace Git verifies each repository metadata subscription with a one-shot canary inside the Git directory. If the event does not round-trip through the subscription callback, treat the watcher as unavailable and enter degraded polling. Refresh working-tree Git-ignore exclusions from ignore-file events, newly observed directories, and watcher recovery, never from a healthy-watcher timer. `git ls-files` reports an ignored directory only once it exists, so new directory topology is a trigger in its own right; the refresh is edge-triggered per directory and debounced so a dependency install collapses into a couple of Git runs.

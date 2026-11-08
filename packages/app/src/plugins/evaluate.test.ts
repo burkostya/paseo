@@ -893,3 +893,146 @@ describe("file panels", () => {
     ).toThrow("Duplicate file panel");
   });
 });
+
+it("registers VCS actions by server ID and cleans up their contributions", async () => {
+  const plugin = runPluginClientBundle(
+    "external-vcs",
+    bundle(`
+    const remove = plugin.addVcsContribution({ providerId: "external", title: "External", ComparisonSettings() { return null; }, ProjectSource() { return null; }, repositoryUrl() { return null; }, workingCopy: { Form() { return null; }, validate() { return null; } }, comparisons: [{ id: "index", title: "Index" }], resolveComparison() { return { comparison: { kind: "working-copy" }, reviewScope: "index" }; }, actions: [{ id: "change.describe", title: "Describe", contexts: ["workspace", "revision"], fileContexts: ["file", "directory"], input() { return {}; } }] });
+    plugin.addWorkspacePanel({ id: "remove-vcs", title: "Remove", icon: "X", Component() { remove(); return null; } });
+  `),
+    runtime,
+  );
+  expect(plugin.vcsContributions).toHaveLength(1);
+  expect(plugin.vcsContributions[0]?.actions[0]?.id).toBe("change.describe");
+  expect(plugin.vcsContributions[0]?.actions[0]?.fileContexts).toEqual(["file", "directory"]);
+  expect(plugin.vcsContributions[0]?.comparisons).toEqual([{ id: "index", title: "Index" }]);
+  expect(plugin.vcsContributions[0]?.resolveComparison).toBeTypeOf("function");
+  expect(plugin.vcsContributions[0]?.ProjectSource).toBeTypeOf("function");
+  expect(plugin.vcsContributions[0]?.ComparisonSettings).toBeTypeOf("function");
+  expect(plugin.vcsContributions[0]?.repositoryUrl).toBeTypeOf("function");
+  expect(plugin.vcsContributions[0]?.workingCopy?.Form).toBeTypeOf("function");
+  expect(plugin.vcsContributions[0]?.workingCopy?.validate).toBeTypeOf("function");
+  await plugin.cleanup();
+  expect(plugin.vcsContributions).toEqual([]);
+  await plugin.cleanup();
+});
+
+it("rejects duplicate VCS action IDs and unsupported contexts", () => {
+  expect(() =>
+    runPluginClientBundle(
+      "invalid-vcs",
+      bundle(`
+    plugin.addVcsContribution({ providerId: "external", title: "External", actions: [{ id: "describe", title: "Describe", contexts: ["workspace"], input() { return {}; } }, { id: "describe", title: "Again", contexts: ["workspace"], input() { return {}; } }] });
+  `),
+      runtime,
+    ),
+  ).toThrow("Duplicate VCS action");
+  expect(() =>
+    runPluginClientBundle(
+      "invalid-vcs",
+      bundle(`
+    plugin.addVcsContribution({ providerId: "external", title: "External", actions: [{ id: "describe", title: "Describe", contexts: ["branch"], input() { return {}; } }] });
+  `),
+      runtime,
+    ),
+  ).toThrow("Invalid VCS action context");
+});
+
+it("rejects duplicate VCS comparison IDs", () => {
+  expect(() =>
+    runPluginClientBundle(
+      "invalid-vcs",
+      bundle(
+        `plugin.addVcsContribution({ providerId: "external", title: "External", actions: [], comparisons: [{ id: "index", title: "Index" }, { id: "index", title: "Duplicate" }] });`,
+      ),
+      runtime,
+    ),
+  ).toThrow("Duplicate VCS comparison ID");
+});
+
+it("registers opt-in VCS panel entry points and validates them", async () => {
+  const plugin = runPluginClientBundle(
+    "external-vcs",
+    bundle(
+      `plugin.addVcsContribution({ providerId: "external", title: "External", actions: [], panels: [{ id: "details", title: "Details", icon: "Info", entryPoints: ["workspace", "command-center"], Component() { return null; } }] });`,
+    ),
+    runtime,
+  );
+  expect(plugin.vcsContributions[0]?.panels?.[0]).toMatchObject({
+    id: "details",
+    icon: "Info",
+    entryPoints: ["workspace", "command-center"],
+  });
+  await plugin.cleanup();
+  expect(plugin.vcsContributions).toEqual([]);
+  expect(() =>
+    runPluginClientBundle(
+      "external-vcs",
+      bundle(
+        `plugin.addVcsContribution({ providerId: "external", title: "External", actions: [], panels: [{ id: "details", title: "Details", entryPoints: ["unknown"], Component() { return null; } }] });`,
+      ),
+      runtime,
+    ),
+  ).toThrow("Invalid VCS panel entry point");
+});
+
+it("rejects unsupported VCS file contexts", () => {
+  expect(() =>
+    runPluginClientBundle(
+      "invalid-vcs",
+      bundle(
+        `plugin.addVcsContribution({ providerId: "external", title: "External", actions: [{ id: "act", title: "Act", contexts: ["workspace"], fileContexts: ["hunk"], input() { return {}; } }] });`,
+      ),
+      runtime,
+    ),
+  ).toThrow("Invalid VCS file action context");
+});
+
+it("rejects a non-callable VCS comparison resolver", () => {
+  expect(() =>
+    runPluginClientBundle(
+      "invalid-vcs",
+      bundle(
+        `plugin.addVcsContribution({ providerId: "external", title: "External", actions: [], resolveComparison: true });`,
+      ),
+      runtime,
+    ),
+  ).toThrow("Invalid VCS comparison resolver");
+});
+
+it.each(["{ Form: true }", "{ Form() { return null; }, validate: true }"])(
+  "rejects malformed working-copy contributions %s",
+  (workingCopy) => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "invalid-vcs",
+        bundle(
+          `plugin.addVcsContribution({ providerId: "external", title: "External", actions: [], workingCopy: ${workingCopy} });`,
+        ),
+      ),
+    ).toThrow("Invalid VCS working-copy");
+  },
+);
+
+it("rejects an invalid VCS project source form", () => {
+  expect(() =>
+    evaluatePluginClientBundle(
+      "invalid-vcs",
+      bundle(
+        `plugin.addVcsContribution({ providerId: "external", title: "External", actions: [], ProjectSource: 42 });`,
+      ),
+    ),
+  ).toThrow("Invalid VCS project source form");
+});
+
+it("rejects an invalid VCS comparison settings form", () => {
+  expect(() =>
+    evaluatePluginClientBundle(
+      "invalid-vcs",
+      bundle(
+        `plugin.addVcsContribution({ providerId: "external", title: "External", actions: [], ComparisonSettings: 42 });`,
+      ),
+    ),
+  ).toThrow("Invalid VCS comparison settings form");
+});

@@ -438,6 +438,637 @@ It must resolve inside that directory to a regular file that follows the
 [SVG icon rules](#svg-rules). Paseo reads and validates the file when the plugin starts; the string
 is never inline SVG or a URL.
 
+### VCS client contributions
+
+The runnable [checkpoint-vcs example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/checkpoint-vcs)
+registers an external VCS with a checkpoint form and a panel. Its README includes
+setup instructions and the capabilities intentionally omitted from the example.
+
+Register `client.addVcsContribution()` from `index.client.tsx` to add forms and
+panels to the shared Changes surface. Match `providerId` to the server provider's
+ID. Action IDs match its server catalog; they are not plugin-prefixed. You can
+use dotted IDs. The host shows an action only where its `contexts` match the
+selection and the snapshot advertises it. Disabled actions retain the server's
+reason. Actions with the `workspace` context also appear in the workspace menu
+and Command Center. Selecting one opens Changes and its form with a current
+workspace selection; it does not reuse a previously selected history row.
+
+Add `fileContexts: ["file", "directory"]` to an action to place it in diff file
+and folder menus. Its normal `contexts` still restrict the revision/workspace
+selection. `context.selectedFiles` contains whole paths from the selected diff,
+including both sides of renames; a folder includes descendants, never an
+unexpanded directory pathspec. Seed your form from that selection and show the
+paths before destructive execution. The action uses the same confirmation and
+operation executor as toolbar launches.
+
+Use `comparisons: [{ id, title }]` to label workspace comparison views. Set
+`comparisonDefaultTitle` to name the default view when it does not inherit workspace settings.
+Return matching `snapshot.comparisons: [{ id, comparison }]` entries from your provider.
+A working-copy comparison can carry a versioned `data` envelope; the host passes
+it through unchanged. Use `snapshot.data` for provider-specific form defaults.
+Hosts with this contract advertise `features.vcsComparisonViews`.
+
+For comparisons that depend on a selected base or whitespace preference, add a
+pure `resolveComparison(input)` callback. It receives the captured `snapshot`,
+selected `id`, optional `baseRef`, `ignoreWhitespace`, and optional versioned
+`defaults`. Return `comparison` and optional `reviewScope`, `error`,
+`warning`, `baseRef`, and `selectBase`. Setting `selectBase` exposes the shared
+reference picker. Return `comparison: null` to block an unresolved or ambiguous
+base. Pin references to exact revisions from the supplied snapshot; never read
+live state in this callback. Keep `reviewScope` stable across refreshes and
+separate incompatible comparisons so comments cannot cross scopes.
+Omit `reviewScope` to retain the standard selection/comparison scope, including existing drafts
+when you add a resolver to a provider's default view.
+This extension requires `features.vcsBaseComparisons`.
+
+Add `resolveRevisionComparison({ snapshot, comparison, ignoreWhitespace })` to customize
+diffs opened from history, an unambiguous reference, or an explicit revision range.
+`comparison` contains exact revision IDs (`revision` or `range`), never a mutable ref name.
+Return the same result shape as `resolveComparison`; a provider envelope can carry diff options
+without adding VCS-specific fields to the wire protocol. Omit `reviewScope` when the diff is
+unchanged so existing comments retain their scope; use a distinct scope when filtering lines.
+The host leaves action-form comparisons unchanged. Plugins without this callback keep the standard
+revision diff and do not expose a whitespace toggle for revision or range selections.
+
+Add `workingCopy: { Form, validate? }` for provider-specific creation fields.
+`Form` receives `PluginVcsWorkingCopyFormProps`: `{ context: { snapshot, revision },
+value, onChange, disabled }` and the standard theme/layout/host props. Render fields
+only; the host owns revision selection and submission. Publish committed edits as
+`onChange({ version: 1, data: { ... } })`; `undefined` selects provider defaults.
+The envelope becomes `source.providerData` and reaches `workingCopies.create`
+as `input.data`.
+
+`validate(context, value)` returns a localized error or `null`. It runs before a
+creation intent is allocated. Keep it synchronous and side-effect-free; the server
+must validate the same options before changing the repository. Respect `disabled`.
+The Changes form persists options with its creation intent and keeps them fixed
+through reconnect and result checks. New workspace scopes its draft to the host,
+project and working copy. The fields share installation context with other plugin
+surfaces, so translation and client hooks work on all platforms.
+
+See `plugins/git-vcs/client/working-copy.tsx` and
+`plugins/jj-vcs/client/working-copy.tsx` for small form-kit examples. Git accepts
+`{ version: 1, data: { branch } }`; Jujutsu accepts
+`{ version: 1, data: { name } }` for its workspace name. Omitting options preserves
+generated names.
+
+Add `ProjectSource` when a provider needs a project-level source picker instead
+of New workspace's standard revision and extra-fields controls. It receives
+`PluginVcsProjectSourceProps`: `{ context: { projectId, snapshot, changeRequest? },
+value, onChange, disabled }` plus the standard surface props. `changeRequest` is
+an explicit composer selection, including a pasted PR/MR. Publish a source with
+`onChange(source, attachments?)`; `null` blocks submission. Sources must retain
+the context's project ID and exact binding cwd. New providers emit
+`{ kind: "working-copy", projectId, cwd, providerId, revision, providerData? }`.
+The host copies the selection, resets it when the host/project/binding changes,
+and owns submission, idempotency and result handling. Respect `disabled`; never
+create a workspace from the contributed component.
+
+For sources that need server lookup, implement optional
+`workingCopies.resolveSource(binding, input, context)`. The executor verifies the
+binding, serializes this read with repository operations, and passes a lifetime
+`AbortSignal`. It does not refresh the working copy. Validate the versioned `input`
+envelope and return `{ revision, data? }`, pinning the exact revision and the
+options that creation will need. Do not fetch, create a copy, or mutate refs here;
+`workingCopies.create` must revalidate the confirmed source before writing.
+Providers with this method advertise `working-copy-sources` in their snapshots.
+
+A client contribution calls the project API through `usePaseo()`:
+
+```ts
+const prepared = await paseo.projects.vcs.resolveWorkingCopySource(projectId, {
+  providerId: snapshot.binding.providerId,
+  input: { version: 1, data: { label: selectedLabel } },
+});
+```
+
+This requires `features.vcsWorkingCopySources`, checked by the SDK, and
+`workspace.read`. The daemon derives the binding from the project registry; callers
+do not supply a cwd. A changed provider or archived project rejects the read.
+Publish `prepared.revision` and `prepared.data` through `onChange` as the source's
+`revision` and `providerData`. Keep `onChange(null)` while pending or failed and
+ignore late results after selection changes or unmount. Creation still requires
+`workspace.manage`; source lookup grants no mutation authority. An ordinary plugin
+RPC would require `daemon.manage` and is not the route for this surface.
+
+Use `paseo.forge.search({ cwd, query, kinds: ["change_request"] })` to query the
+existing forge registry. Handle both rejected requests and `result.error`, and
+show authentication feedback from `authState`. A contribution can supply
+`repositoryUrl(snapshot)` for the composer's forge-link recognition; return
+`null` when that context is unavailable.
+
+Git's `ProjectSource` keeps branch/upstream and PR/MR choices inside `git-vcs`.
+It resolves the source without fetching, then emits a `working-copy` source with
+an exact revision and versioned provider data. `workingCopies.create` revalidates
+that source before fetching and checks the fetched revision before checkout.
+A changed source requires an explicit reselection; it never silently advances the
+confirmed revision.
+
+Server plugins can call `server.vcs.resolveChangeRequest({ cwd, repositoryUrl,
+forge, number })` for checkout facts from the existing forge registry. This
+read-only API requires `features.vcsForgeCheckout`; the SDK checks it before
+sending a request. It returns the head/base refs, checkout refs, and optional
+fork push URL and local branch hint. The VCS plugin owns fetch, branch creation,
+tracking configuration and rollback. This API is available in built-in and
+subprocess contributions.
+
+The execution context supplies `snapshot`, the version already checked by the
+common executor. Use it for file validation instead of taking a second snapshot.
+External processes can still change the repository during execution.
+
+```tsx
+import { useState } from "react";
+import type { PluginClientContext, PluginVcsActionFormProps } from "@getpaseo/plugin/client";
+import { Button, Field, Form, FormTextInput } from "@getpaseo/plugin/client/ui";
+
+function Describe({ context, pending, submit }: PluginVcsActionFormProps) {
+  const [message, setMessage] = useState(context.snapshot.current?.description ?? "");
+  return (
+    <Form>
+      <Field label="Description">
+        <FormTextInput initialValue={message} onChangeText={setMessage} />
+      </Field>
+      <Button disabled={pending} onPress={() => submit({ message })}>
+        Save
+      </Button>
+    </Form>
+  );
+}
+
+export default function contribute(client: PluginClientContext) {
+  return client.addVcsContribution({
+    providerId: "example-vcs",
+    title: "Example VCS",
+    actions: [
+      { id: "change.describe", title: "Describe", contexts: ["workspace"], Form: Describe },
+    ],
+  });
+}
+```
+
+Use `Form` for layout and the existing `Field`, `FormTextInput`, `SelectField`,
+`Button` and `FormActions` controls. Keep form state in a non-React model for
+forms with interdependent values; `plugins/jj-vcs/client/model.ts` is a worked
+example. The provider still validates every submitted parameter. `submit()`
+starts a shared operation; completion and failures appear in the host's operation
+notice. It does not wait for the operation to finish.
+
+A context contains `workspaceId`, a snapshot, the selection, loaded history
+`revisions`, and whole-file paths for the comparison. Selection is `workspace`,
+`revision`, or `ref`; a ref's `revision` is null when the target is ambiguous or
+has not loaded. Never choose the first target implicitly. Revision IDs are opaque;
+use an exact revision for confirmed operations and retain the snapshot version.
+History may be paginated, so `revisions` is not the full repository.
+
+Diffs automatically support inline review, saved comments and feedback to agents.
+Plugins do not implement a second review editor. Review attachments include the
+provider, repository, working copy, snapshot version and exact comparison; the
+legacy `mode` field remains on the wire for older readers.
+
+For an action without fields, supply `input(context)` instead of `Form`. Optional
+`confirm(context, input)` returns `{ message, destructive? }`; include affected
+revisions and paths for rewriting or deleting actions. Titles and confirmation
+messages accept the same localized text as other client contributions; icons use
+the existing plugin icon descriptor.
+
+Optional `panels: [{ id, title, icon?, entryPoints?, Component }]` adds a view to Changes.
+Set `entryPoints: ["workspace", "command-center"]` to expose navigation shortcuts
+in those surfaces, or include only the surface you need. Omit it to keep the panel
+in the Changes view selector. Opening a shortcut selects the workspace context;
+it never invokes a server action. The host also exposes Publish / PR/MR when
+the provider and host support publication.
+
+Panel props
+include the context, `refresh()` and `runAction(actionId, input)`. `runAction`
+uses the shared executor and requires a registered action in the contribution.
+The host applies the contribution's confirmation to panel actions too. Define it
+for destructive actions; the host does not infer it from a parameter schema.
+
+One client contribution can own a provider. Duplicate owners produce a visible
+error. The returned remover and plugin cleanup remove actions, forms and panels.
+Unloading never changes the repository's selected provider. The shared surface
+requires `features.vcsDiffFiles`; Publish also requires `features.vcsPublication`.
+Publish can find an existing PR/MR from the selected remote and publishable
+reference without calling `publication.publish`. Implement `publication.resolve`
+as a read: it also serves this lookup. The host retains the selection across
+panel restoration and uses the resolved revision for forge actions.
+
+### Saved comparison settings
+
+Hosts advertising `features.vcsComparisonSettings` store a versioned `VcsData`
+envelope per provider on projects and workspaces. Register
+`validateComparisonSettings(binding, value, context)` on the server provider and
+`ComparisonSettings` on the client contribution. Validation runs through the same
+provider RPC in built-in and subprocess runtimes before any registry write.
+Reject unsupported versions; do not silently replace them with defaults.
+
+The form receives `PluginVcsComparisonSettingsProps`: `snapshot`, nullable `value`,
+`onChange(value)`, `disabled`, and standard surface props. Render fields only. The
+host owns scope selection, load/error state, Save and reset. An incomplete draft
+may be emitted; the provider validates submission. Keep validation free of
+repository mutations.
+
+Use `paseo.workspaces.ref(id).vcs.comparison.get(providerId)` or
+`paseo.projects.vcs.comparison(projectId).get(providerId)` to read
+`{ providerId, selection, inherited, effective }`. The corresponding
+`.set(providerId, value)` validates and saves; `null` clears the override.
+Workspace defaults inherit from the project, then the provider. These records
+remain readable while the plugin is unloaded; writing requires an available
+provider. Saving for a different project owner fails instead of switching VCS.
+The effective saved envelope reaches `resolveComparison` as `defaults`. Git obtains
+its automatic base from its provider snapshot; stored explicit choices take precedence.
+
+### Comparison context
+
+Server providers can call `server.vcs.comparisonContext(binding)` on hosts advertising
+`features.vcsComparisonContext`. This read returns `workingCopy` (the durable provider
+record), `changeRequest` (`url`, `baseRef`, `headRef`), `changeRequestError`, and
+`observedHeadRef`. Missing records or cached facts are `null`. Unregistered working
+copies receive empty context, including during provisioning.
+
+The host supplies facts, not a comparison decision. This call reads the existing
+workspace/forge cache: it does not fetch, snapshot a working copy, or acquire the
+VCS operation queue. It is safe inside `snapshot` and `observation`, including in
+subprocess plugins. Include relevant facts in your observation fingerprint so
+remote status changes invalidate snapshots without file edits. Check the observed
+head before applying cached change-request facts to another checkout.
+
+Git keeps the last confirmed PR base during a forge error and reports the error as
+a warning. Otherwise it chooses the PR's matching remote, owned worktree metadata,
+then the configured remote's HEAD; ambiguous remotes block comparison. Explicit
+saved refs override these automatic choices. Resolving a ref against the captured
+snapshot keeps diffs pinned while external commands run.
+
+### VCS providers
+
+Register a provider from `index.server.ts` with `server.registerVcsProvider()`.
+Import `VcsProviderRegistration`, `VcsContext`, and `VcsError` from
+`@getpaseo/plugin/server/vcs`; import shared schemas, types, and `vcsRpc` from
+`@getpaseo/plugin`. Registration loads in both built-in and subprocess runtimes.
+It does not execute a VCS command until a caller requests one.
+
+Implement `detect` and `snapshot`. Every method
+receives a cancellation signal. `detect` distinguishes an absent repository from
+an unavailable implementation. Preserve repository identity across its working
+copies; each binding also includes the exact execution directory and checkout
+root. Never translate bookmarks or changes into invented Git branches.
+
+Implement `diff` and advertise the `diff` snapshot capability to display patches.
+Without it, Changes shows current file statuses, opens files in the editor, and
+exposes `fileContexts: ["file"]` and `fileContexts: ["directory"]` actions through
+file and folder context menus. Folder actions include every changed descendant,
+even inside collapsed folders, and exclude adjacent directory names. Forms
+receive `selectedFiles` from snapshot paths, including the previous path of a rename;
+no patch or fabricated line statistics are needed. In this mode,
+comparison and review controls are hidden. Historical selections show an unavailable
+message rather than substituting working-copy contents. Actions and working-copy
+creation do not wait for an unsupported diff. Explicit diff requests return
+`unavailable` when the method is absent.
+
+Implement `history` only when revisions can be enumerated, and advertise the
+`history` snapshot capability when it is available. Without it, the app hides
+History and does not request revisions for action or working-copy forms. Those
+forms can still use the current revision and refs from the snapshot. An explicit
+history request to a provider without the method returns `unavailable`.
+
+Implement optional `previewAction(binding, action, input, context)` and mark the
+corresponding snapshot actions with `preview: true` to require an impact preview
+in the shared confirmation UI. Return `VcsActionPreview` with exact revisions,
+refs and selected file paths. Validate file selections against the pinned source
+revision, including historical selections; a successful no-op is not a substitute
+for reporting an invalid selection. Include dependent revisions that the operation can
+rewrite; loaded client history is not a complete impact list. The host appends
+these details to the contribution's `confirm` message. A failed preview keeps the
+form open and never submits a mutation.
+
+Call `paseo.workspaces.ref(id).vcs.preview(providerId, { version, action, input })`
+from CLI or agent integrations. The SDK requires `features.vcsActionPreview`;
+the read RPC requires `workspace.read`. Preview runs in the repository queue and
+rejects an outdated version. Read against `context.snapshot` without further
+snapshotting. Execute still checks that version immediately before mutation;
+preview does not reserve a repository or exclude external processes. Jujutsu
+refuses previews exceeding 1000 revisions instead of confirming a truncated list.
+
+Implement `execute` only when the provider offers custom mutations. A read-only
+provider returns an empty `actions` list and omits the `actions` capability;
+unsupported mutations finish as failed operations with `unavailable`. The optional
+`workingCopies` and `publication` groups do not require `execute`: their methods
+use the same executor independently. Omitted methods are allowed; a supplied
+non-function is a registration error.
+
+Return structured failures with `VcsError({ code, message, recoveryAction? })`.
+Keep executable diagnostics in `message`. Use `remote` for transport or remote
+rejection, `conflict` for conflicting repository state, `outdated` for targets
+that must be selected again, and `stale` for a working copy requiring repair.
+A stale jj error names `update-stale` as its recovery action; observation must
+not run that repair. Keep unrecognized failures as `provider` rather than guessing
+from command arguments, which can contain user-authored descriptions.
+
+Implement optional `localFiles(binding, query, context)` for local file selection.
+`{ kind: "tracked" }` returns every tracked path, including paths missing from the
+filesystem. `{ kind: "ignored", patterns: string[] }` selects ignored, untracked
+files using gitignore-style selection patterns. Return slash-separated paths
+relative to the working-copy root, excluding VCS metadata. Reads must not snapshot,
+repair, or change the index. In Jujutsu, the tracking model belongs to jj, even in a
+colocated repository; the Git index does not establish whether a file is tracked.
+
+Server contributions call it through `server.vcs.listLocalFiles(binding, query)`.
+This works before a workspace record exists and in external plugin subprocesses.
+It uses the administrative `vcs.local-files.list` RPC; regular workspace-scoped
+read permission does not authorize arbitrary bindings. Unsupported queries fail
+with `unavailable`. Git-backed implementations can import `listGitIgnoredFiles`
+from `@getpaseo/plugin/server/vcs`; pass the authoritative `trackedFiles` list to
+replace the Git index when using another tracking model.
+
+To provision isolated copies, implement optional `workingCopies.create(binding, input,
+context)` and `workingCopies.rollback(binding, record, context)`. `input` contains
+a host-allocated absolute `root`, a unique `name`, an exact `revision`, and optional
+versioned provider data. Return an owned `VcsWorkingCopyRecord`; keep provider
+metadata in its versioned `data` envelope. Rollback removes only a new copy whose
+creation failed before delivery. It is not an archive API.
+
+Create through the workspace SDK, gated on `features.vcsWorkingCopies`:
+
+```ts
+const result = await paseo.workspaces.create({
+  source: { kind: "working-copy", projectId },
+  idempotencyKey: "isolated-task-1",
+});
+```
+
+The saved project provider creates the copy. With no revision, creation uses the
+current revision from a fresh snapshot. Jujutsu creates a new change on that
+revision without a colocated Git worktree; Git creates a branch. Exact subdirectory
+execution paths are preserved. Copies live under `$PASEO_HOME/working-copies`,
+separate from the legacy Git cleanup area. Providers can accept
+versioned `source.providerData`, forwarded as `input.data`; see
+[creation fields](#vcs-client-contributions) for built-in options and client forms. Setup receives `PASEO_VCS_PROVIDER`
+and `PASEO_WORKING_COPY_PATH`; the legacy path/port aliases remain available,
+with an empty `PASEO_BRANCH_NAME`.
+
+See [working-copy hooks](hooks.md#working-copycreatebefore) for creation ordering,
+request changes, and waiting semantics. Setup failures retain the workspace and
+its diagnostics, as in the legacy Git workflow.
+
+The shared Changes surface exposes **Create working copy** in its view selector,
+workspace menu and Command Center when the provider advertises `working-copies`.
+It uses the same SDK creation path and lets users choose an exact revision.
+`source.providerId` pins the selected provider; the daemon rejects a changed project
+selection before invoking creation hooks. This optional constraint requires
+`features.vcsWorkingCopySelection`; the client rejects it on older hosts.
+New workspace also offers provider-managed isolation and exact revision selection.
+It reads `paseo.projects.vcs.snapshot/history` with `features.vcsProjectReads`, so
+no active workspace is required. Project paths come from the daemon registry.
+Providers can replace the project picker with `ProjectSource` as described above.
+`worktree-include` uses the [neutral creation hook](hooks.md#working-copycreateafter)
+for Git and Jujutsu. Copies support standard workspace archive and restore calls.
+
+For archive and restore, implement the optional `workingCopies.recovery` group:
+
+| Method                            | Responsibility                                                                                                   |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `inspect(record, context)`        | Validate an existing copy or the durable data needed to recover a missing copy.                                  |
+| `prepareRemoval(record, context)` | Save the exact tracked state under a durable reference and return a record with a versioned `recovery` envelope. |
+| `remove(record, context)`         | Revalidate identity and saved state, then remove the copy.                                                       |
+| `restore(record, context)`        | Recreate the saved copy at its original root without running creation hooks or setup.                            |
+| `release(record, context)`        | Release durable references and return the record without its recovery envelope.                                  |
+
+All methods receive cancellation. Mutating methods receive `VcsRecoveryContext`,
+which adds `operationId`, and use the same operation executor as actions. The host
+persists the prepared record before removal and releases recovery data after
+unarchive succeeds. Keep durable data independent of the directory being removed
+and of a live plugin process. `state` and `recoveryError` belong to the host; return
+the supplied record with updated provider envelopes rather than rebuilding it.
+
+The host removes only owned copies with no active references, including imported
+subdirectories and references in other projects. Providers must check identity,
+changes since preparation, and files outside their saved snapshot again before
+deletion. Built-in providers retain directories containing ignored or untracked
+files or nested repositories and return an archive warning. The workspace is
+still archived. A failed restore keeps its diagnostics and recovery reference;
+move a partial directory aside before retrying. Restore never overwrites it.
+
+The Git provider preserves staged and unstaged tracked changes, branch identity,
+tracking configuration and comparison metadata. Restore reattaches the saved
+branch only if it still points to the saved commit; a moved branch blocks restore
+and retains the recovery reference. A deleted branch is recreated. Older recovery
+envelopes without branch identity restore detached. The legacy Git worktree path
+keeps its existing behavior.
+The jj provider pins the exact commit through a private Git ref; bookmarks follow
+rewrites and cannot preserve that version. Recovery can rebuild the jj index after
+operation garbage collection. Git must also be installed for jj archive/recovery.
+Private anchors are released after restore and are excluded from ordinary refs
+and bookmark publication.
+
+#### VCS observation
+
+Optionally implement `observation(binding, context)` alongside `snapshot()`. It
+returns `{ fingerprint, roots }`. A root contains an absolute `path`, `scope`
+(`working-copy` or `repository`), optional absolute `ignore` paths, and `kind`
+(`files` or `metadata`, defaulting to `metadata`). The daemon manages recursive
+watchers, batching, shared repository invalidation and cleanup. Plugins do not
+create their own filesystem watchers.
+
+The fingerprint is an opaque value for durable metadata. Reading it must not
+snapshot the working copy. Exclude lock files, mtimes and object stores; otherwise
+the provider's own refresh can trigger an endless stream of snapshots. `kind:
+"files"` forces refreshes when file content changes. Metadata events refresh only
+when the fingerprint changes. Use repository scope for shared operation heads or
+refs; changes there invalidate neighboring working copies. Keep working-copy
+metadata separate from the ordinary files root so it goes through the fingerprint
+check.
+
+The server SDK exports `fingerprintVcsPaths()` to hash selected metadata files and
+small directories, skipping locks and avoiding symlink traversal.
+`gitObservationIgnoredDirectories()` computes pruning roots while retaining tracked
+descendants; pass `trackedFiles` for a VCS whose tracking model differs from Git's
+index. Jujutsu's implementation in `plugins/jj-vcs/server/provider.ts` is a worked
+example. Providers without an observation plan keep explicit snapshot reads.
+
+Clients opt in with `features.vcsObservation` and `vcs_observation` in hello. The
+SDK advertises the client capability and owns restoration; connecting alone adds
+no filesystem demand. `snapshot()` remains supported on older hosts. Observe on
+new hosts through a scoped API:
+
+```ts
+const subscription = paseo.workspaces.ref(workspaceId).vcs.observeSnapshot();
+subscription.subscribe({
+  snapshot: ({ result, error }) => apply(result, error),
+  update: (message) => {
+    if (message.type === "vcs.snapshot.changed") {
+      apply(message.payload.result, message.payload.error);
+    }
+  },
+  error: reportError,
+});
+await subscription.ready;
+// Close the consuming surface, or dispose its paseo scope.
+await subscription.release();
+```
+
+Each restored subscription supplies a fresh snapshot and a new subscription ID.
+Subscriptions on the same working copy share observation. Exact cwd variants keep
+their own binding in responses. Unavailable plugins report an error and release
+filesystem watchers; a plugin catalog change can resume the existing interest.
+Stopping the consumer releases its watchers, timers and pending callbacks. A
+workspace archive or provider change ends that workspace's subscription.
+
+#### Publication and PR/MR
+
+Implement optional `publication` on the provider registration:
+
+| Method                                           | Responsibility                                                                                                                      |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `remotes(binding, context)`                      | Return named remotes, their fetch URL, and all push URLs.                                                                           |
+| `resolve(binding, selection, snapshot, context)` | Resolve an explicit remote, head ref and base ref to a `VcsPublication` with an exact revision.                                     |
+| `publish(binding, target, snapshot, context)`    | Publish only that ref at the confirmed revision and return the published target.                                                    |
+| `verify(binding, target, context)`               | Check that the selected remote ref still contains the exact published revision without pushing.                                     |
+| `canArchive(binding, target, snapshot, context)` | Optional: allow auto-archive only when this working copy has no work beyond the publication. Omit to disable provider auto-archive. |
+
+The executor supplies a fresh snapshot and serializes publication with other
+repository operations. Reads must not take another working-copy snapshot.
+When the selected local ref and published ref differ, return the original input
+as `selection` on the target so shared forms retain the local choice. Keep the
+provider's source identity in a versioned `data` envelope; `resolve` receives the
+confirmed target again before publish and must reproduce it from current state.
+Publication fails with `outdated` if the selected ref, revision or remote URL
+changed. Do not create a bookmark implicitly or publish other refs. Built-in
+providers require exactly one push URL; jj uses an exact bookmark and remote
+pattern and preserves its native push safety checks. Git is also required for
+jj remote discovery and verification.
+
+Client methods require `features.vcsPublication`, checked by the SDK:
+
+```ts
+const vcs = paseo.workspaces.ref(workspaceId).vcs;
+const remotes = await vcs.publication.remotes();
+const target = await vcs.publication.resolve({
+  remote: "origin",
+  headRef: "feature", // Existing branch or bookmark, according to the provider.
+  baseRef: "main",
+});
+const operation = await vcs.publication.execute({
+  operationId: "create-request-1",
+  target,
+  input: { action: "create", title: "Add search", body: "Details", publish: true },
+});
+```
+
+Poll `vcs.operation(providerId, operation.id)` after submission or reconnect.
+`VcsPublicationResultSchema` validates its result: `stage` progresses from
+`ready` to `published` and then `created` or `updated`. A forge failure after push
+retains `stage: "published"` and the exact publication in the failed operation.
+Retry with a new operation ID and `publish: false` to verify the remote revision
+and create only the PR/MR. An existing open request is returned instead of creating
+a duplicate. A changed remote ref blocks this retry.
+
+Use `publication.publish({ operationId, target })` for push alone and
+`publication.status(target)` for the request and its checks. Open requests match
+repository and ref; terminal requests also require the exact head revision.
+`publication.execute` accepts `merge`, `enable-auto-merge`, and
+`disable-auto-merge` with the selected request's `number` and `url`; merge actions
+also take `mergeMethod`. The daemon refreshes the request before applying them.
+Forge registrations remain in the existing registry.
+
+Provider-managed copies use publication status observations for auto-archive.
+The daemon must observe the same request open before merged, refresh its status,
+and obtain provider approval before archiving. New unpublished changes prevent
+it. Status reads start no background poller. Provider-managed workspaces expose
+these operations in Changes → Publish. Git retains its existing PR controls.
+
+Use `paseo.workspaces.ref(workspaceId).vcs` from the client SDK:
+
+```ts
+const vcs = paseo.workspaces.ref(workspaceId).vcs;
+const providers = await vcs.providers();
+const snapshot = await vcs.snapshot("jj");
+const history = await vcs.history("jj", { limit: 50, version: snapshot.version });
+const diff = await vcs.diff("jj", snapshot.workingComparison ?? { kind: "working-copy" });
+const operation = await vcs.execute("jj", {
+  operationId: "describe-change-1",
+  version: snapshot.version,
+  action: "describe",
+  input: { revision: snapshot.current!.id, message: "Describe the change" },
+});
+const current = await vcs.operation("jj", operation.id);
+```
+
+`snapshot()`, `detect()`, and `history()` use the project's saved provider when
+no ID is supplied. Other operations accept `undefined` as the provider to use the
+same selection. Explicit IDs must match the selection, except `detect(id)`, which
+can inspect another provider without switching. Operation lookup and cancellation
+retain an explicit provider so earlier operations remain accessible after a switch.
+
+In the app, open the project under Settings → Projects and use Version control.
+
+Read or change the project's selection with:
+
+```ts
+const selection = await paseo.projects.vcs.get(projectId);
+await paseo.projects.vcs.select(projectId, "jj");
+```
+
+Changing selection requires `workspace.manage` and validates the project root and
+all active workspaces before saving. Running VCS or legacy Git operations block a
+switch. A failed validation leaves the old choice intact. Selection does not
+convert a repository or create VCS metadata. Legacy Git mutations fail while a
+project uses another VCS; use its VCS actions instead.
+
+New projects probe registrations by descending `detectionPriority` (default zero),
+then by ID. The bundled jj provider has priority 10. An unavailable implementation
+retains its recognized repository instead of falling through to another provider.
+Existing Git projects stay on Git after upgrading. Choose an ID from `providers()`;
+an ID registered by multiple plugins is ambiguous and cannot execute requests.
+
+The daemon resolves the exact workspace directory and constructs the binding.
+The workspace RPCs do not accept caller-supplied paths or bindings. Read requests
+require `workspace.read`; execution and cancellation require `workspace.write`.
+An archived workspace cannot start a mutation, but operation lookup and
+cancellation remain available. `cancel(providerId, operationId)` requests cancellation.
+
+The SDK checks `server_info.features.vcsProviders` before sending requests and
+asks for a host update when absent. Responses are correlated to explicit requests;
+connecting never starts VCS observation. Request failures throw `VcsRequestError`
+with a structured `problem`. Operation failures remain in the operation's `error`.
+
+`vcsRpc(providerId)` remains available for installation-scoped plugin RPC calls
+with `kind` selecting the provider operation. Direct calls retain ordinary plugin
+RPC authorization (`daemon.manage`). The daemon uses only registered VCS methods
+for workspace requests, so this does not expose arbitrary plugin methods.
+
+Return full revision IDs for comparisons and mutations. A stable change ID is
+optional metadata, not an immutable revision. Return parent arrays for merges,
+provider-owned ref kinds, and an opaque snapshot version covering operation
+preconditions. History cursors must retain a consistent ordering across pages.
+
+`execute` receives an action ID and JSON parameters. Validate parameters in the
+provider; publish action availability in the snapshot. The host checks the
+binding and snapshot version before executing. A mismatch fails with `outdated`.
+Use `VcsError` for structured errors; ordinary exceptions become `provider`
+errors. User interfaces must display these errors in the initiating surface.
+
+Execution returns an operation ID immediately. Poll `operation` after submission
+or reconnect. Reusing an ID with the same request returns its current state;
+reusing it with different parameters fails. IDs remain reserved for the lifetime
+of the registration. Workspace RPC IDs are scoped by workspace and provider, so
+two workspaces can submit the same caller ID independently. The executor admits up to 10,000 operations before requiring
+a reload, so completed IDs cannot be evicted and accidentally replayed.
+
+Cancellation before execution fails the operation. Cancellation during a mutation
+can leave an unknown result; refresh before taking another action. An unknown ID
+also returns `unknown`. Provider operations are forgotten on plugin reload;
+daemon-owned PR/MR operations are forgotten on daemon restart. Never resubmit an
+unknown mutation automatically. Providers can throw `VcsUnknownOutcomeError`
+when they cannot determine a mutation's outcome. Unloading aborts outstanding
+provider work.
+
+The bundled `jj-vcs` implementation requires an installed Jujutsu 0.46.0 or newer.
+Its action parameters are defined alongside the implementation; use full commit
+IDs and whole-file paths relative to the working-copy root. Fetch selects one
+remote; push requires both a remote and an existing bookmark. Commands never open
+an interactive editor. Publication uses the selected existing bookmark; it never
+creates one on your behalf.
+
 ### Usage sources
 
 **Requires Paseo 0.11.** Register a source from your server entry with

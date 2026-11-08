@@ -195,3 +195,24 @@ describe("prompt attachments", () => {
     );
   });
 });
+
+it("renders provider-neutral review provenance without assuming Git revisions", () => {
+  const text = renderPromptAttachmentAsText({
+    type: "review",
+    mimeType: "application/paseo-review",
+    cwd: "/repo",
+    mode: "uncommitted",
+    comments: [],
+    vcs: {
+      providerId: "jj",
+      repositoryId: "repo",
+      workingCopyId: "secondary",
+      version: "operation-version",
+      comparison: { kind: "revision", revision: "exact-commit-id" },
+    },
+  });
+  expect(text).toContain("VCS: jj");
+  expect(text).toContain("Paseo review attachment (jj)");
+  expect(text).toContain("Snapshot: operation-version");
+  expect(text).toContain('"revision":"exact-commit-id"');
+});

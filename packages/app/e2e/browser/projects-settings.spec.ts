@@ -1,3 +1,6 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { chmod, readFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test as base, type Page } from "../support/fixtures";
@@ -465,4 +468,116 @@ test.describe("Projects settings — error UX", () => {
 
     await expectNoEditableTarget(page);
   });
+});
+
+async function openCompactProjects(page: Page): Promise<void> {
+  await gotoAppShell(page);
+  await openCompactSettings(page, buildOpenProjectRoute());
+  await page.getByRole("button", { name: "Projects", exact: true }).click();
+  await expect(page).toHaveURL(buildProjectsSettingsRoute(getServerId()));
+}
+for (const viewport of [
+  { name: "desktop", width: 1280, height: 900, navigate: openProjects },
+  { name: "compact", width: 390, height: 844, navigate: openCompactProjects },
+]) {
+  test(`VCS settings preserves a rejected choice and retries successfully on ${viewport.name}`, async ({
+    page,
+    editableProject,
+  }, testInfo) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await viewport.navigate(page);
+    await openProjectSettings(page, editableProject.name);
+    const row = page.getByTestId("project-vcs-provider");
+    await expect(row.getByRole("button", { name: "Provider: Git", exact: true })).toBeVisible();
+    await row.getByRole("button").click();
+    await page.getByText("Jujutsu", { exact: true }).click();
+    await expect(row.getByRole("alert")).toContainText("does not recognize");
+    await expect(row.getByRole("button", { name: "Provider: Git", exact: true })).toBeEnabled();
+    await page.screenshot({ path: testInfo.outputPath(`vcs-rejected-${viewport.name}.png`) });
+    await promisify(execFile)("jj", ["git", "init", "--colocate", editableProject.path]);
+    await row.getByRole("button").click();
+    await page.getByText("Jujutsu", { exact: true }).click();
+    await expect(row.getByRole("button", { name: "Provider: Jujutsu", exact: true })).toBeEnabled();
+    await expect(row.getByRole("alert")).toHaveCount(0);
+    await page.reload();
+    await expect(
+      page
+        .getByTestId("project-vcs-provider")
+        .getByRole("button", { name: "Provider: Jujutsu", exact: true }),
+    ).toBeVisible();
+    await expectProjectSettingsFormVisible(page);
+    await page.screenshot({ path: testInfo.outputPath(`vcs-saved-${viewport.name}.png`) });
+  });
+}
+
+test("VCS settings is hidden for a host without the VCS capability", async ({
+  page,
+  editableProject,
+}) => {
+  await page.routeWebSocket(daemonWsRoutePattern(), (route) => {
+    const server = route.connectToServer();
+    route.onMessage((message) => server.send(message));
+    server.onMessage((message) => {
+      try {
+        const frame = JSON.parse(String(message));
+        if (frame.type === "session" && frame.message?.payload?.status === "server_info") {
+          delete frame.message.payload.features.vcsProviders;
+          route.send(JSON.stringify(frame));
+          return;
+        }
+      } catch {
+        /* Binary terminal frames pass through unchanged. */
+      }
+      route.send(message);
+    });
+  });
+  await openProjects(page);
+  await openProjectSettings(page, editableProject.name);
+  await expect(page.getByTestId("project-vcs-settings")).toHaveCount(0);
+});
+
+test("VCS settings retries a metadata read failure", async ({ page, editableProject }) => {
+  let rejectReads = true;
+  await page.routeWebSocket(daemonWsRoutePattern(), (route) => {
+    const server = route.connectToServer();
+    route.onMessage((message) => {
+      let frame;
+      try {
+        frame = JSON.parse(String(message));
+      } catch {
+        server.send(message);
+        return;
+      }
+      if (
+        rejectReads &&
+        frame.type === "session" &&
+        frame.message?.type === "vcs.project.get.request"
+      ) {
+        route.send(
+          JSON.stringify({
+            type: "session",
+            message: {
+              type: "vcs.project.get.response",
+              payload: {
+                requestId: frame.message.requestId,
+                result: null,
+                error: { code: "provider", message: "VCS metadata unavailable" },
+              },
+            },
+          }),
+        );
+        return;
+      }
+      server.send(message);
+    });
+    server.onMessage((message) => route.send(message));
+  });
+  await openProjects(page);
+  await openProjectSettings(page, editableProject.name);
+  const section = page.getByTestId("project-vcs-settings");
+  await expect(section.getByRole("alert")).toHaveText("VCS metadata unavailable");
+  rejectReads = false;
+  await page.getByTestId("project-vcs-retry").click();
+  await expect(section.getByRole("button", { name: "Provider: Git", exact: true })).toBeEnabled();
+  await expect(section.getByRole("alert")).toHaveCount(0);
 });

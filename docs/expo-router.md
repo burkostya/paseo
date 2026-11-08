@@ -49,6 +49,11 @@ dynamic params exist before any nested workspace leaf is selected.
 
 ## Error Recovery
 
+After workspace hydration, ask the host to inspect recovery for a missing workspace
+route, including direct links without an agent target. An archived workspace can
+contain only files or terminals. Inspection offers recovery; it must never restore
+the workspace automatically.
+
 The root error boundary lives above `ExpoRoot` in `src/root-app.tsx`. Reload
 remounts the router at `/open-project`, preserving saved workspace layouts and
 the remembered selection. Do not move the boundary inside the root layout:

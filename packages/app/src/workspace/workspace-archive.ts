@@ -13,7 +13,7 @@ export interface WorkspaceArchiveTarget {
 }
 
 interface WorkspaceArchiveClient {
-  archiveWorkspace: (workspaceId: string) => Promise<{ error: string | null }>;
+  archiveWorkspace: (workspaceId: string) => Promise<{ error: string | null; warning?: string }>;
 }
 
 export interface WorkspaceArchiveHierarchyClient extends WorkspaceArchiveClient {
@@ -27,6 +27,7 @@ export interface WorkspaceArchiveHierarchyClient extends WorkspaceArchiveClient 
       workspaceId: string;
       status: "succeeded" | "unchanged" | "failed";
       error: string | null;
+      warning?: string;
     }>;
   }>;
   inspectWorkspaceSubtree: (
@@ -129,24 +130,27 @@ function restoreOptimisticallyHiddenWorkspaces(input: {
 async function archiveWorkspaceOrThrow(input: {
   client: WorkspaceArchiveClient;
   workspaceId: string;
-}): Promise<void> {
+}): Promise<string | undefined> {
   const payload = await input.client.archiveWorkspace(input.workspaceId);
   if (payload.error) {
     throw new Error(payload.error);
   }
+  return payload.warning;
 }
 
 export async function archiveWorkspaceOptimistically(input: {
   client: WorkspaceArchiveClient;
   workspace: WorkspaceArchiveTarget;
+  onWarning?: (warning: string) => void;
 }): Promise<void> {
   const snapshot = hideWorkspaceOptimistically(input.workspace);
 
   try {
-    await archiveWorkspaceOrThrow({
+    const warning = await archiveWorkspaceOrThrow({
       client: input.client,
       workspaceId: input.workspace.workspaceId,
     });
+    if (warning) input.onWarning?.(warning);
   } catch (error) {
     restoreOptimisticallyHiddenWorkspace({
       serverId: input.workspace.serverId,
@@ -170,6 +174,7 @@ export async function archiveWorkspaceSubtreeOptimistically(input: {
   accepted: boolean;
   error: string | null;
   failedWorkspaceIds: string[];
+  warnings: string[];
 }> {
   const expectedWorkspaceIds = Array.from(
     new Set([input.workspace.workspaceId, ...input.expectedWorkspaceIds]),
@@ -195,6 +200,7 @@ export async function archiveWorkspaceSubtreeOptimistically(input: {
         accepted: false,
         error: payload.error,
         failedWorkspaceIds: expectedWorkspaceIds,
+        warnings: [],
       };
     }
 
@@ -221,6 +227,7 @@ export async function archiveWorkspaceSubtreeOptimistically(input: {
       accepted: true,
       error: payload.error,
       failedWorkspaceIds,
+      warnings: payload.results.flatMap((entry) => (entry.warning ? [entry.warning] : [])),
     };
   } catch (error) {
     restoreOptimisticallyHiddenWorkspaces({

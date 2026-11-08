@@ -2,7 +2,11 @@ import { resolve } from "node:path";
 import { LRUCache } from "lru-cache";
 import type { Logger } from "pino";
 
-import { archiveIfSafe, type AutoArchiveArchiveOptions } from "./archive-if-safe.js";
+import {
+  archivePublicationIfSafe,
+  archiveIfSafe,
+  type AutoArchiveArchiveOptions,
+} from "./archive-if-safe.js";
 import type {
   WorkspaceGitRuntimeSnapshot,
   WorkspaceGitSubscription,
@@ -14,6 +18,7 @@ export interface AutoArchiveOnMergeOptions extends AutoArchiveArchiveOptions {
 
 export interface AutoArchiveOnMergeDependencies {
   archiveIfSafe: typeof archiveIfSafe;
+  archivePublicationIfSafe?: typeof archivePublicationIfSafe;
   resolvePath: typeof resolve;
 }
 
@@ -34,7 +39,12 @@ export function setupAutoArchiveOnMerge(
     max: OPEN_PULL_REQUEST_LATCH_MAX,
   });
 
-  return options.workspaceGitService.onSnapshotUpdated((snapshot) => {
+  const publicationUnsubscribe = subscribePublicationAutoArchive(
+    options,
+    log,
+    deps.archivePublicationIfSafe ?? archivePublicationIfSafe,
+  );
+  const gitSubscription = options.workspaceGitService.onSnapshotUpdated((snapshot) => {
     const snapshotCwd = deps.resolvePath(snapshot.cwd);
     if (options.daemonConfigStore.get().autoArchiveAfterMerge !== true) {
       openPullRequestUrlsByCwd.delete(snapshotCwd);
@@ -103,4 +113,48 @@ export function setupAutoArchiveOnMerge(
         inFlightCwds.delete(snapshotCwd);
       });
   });
+  return {
+    unsubscribe() {
+      gitSubscription.unsubscribe();
+      publicationUnsubscribe();
+    },
+  };
+}
+
+function subscribePublicationAutoArchive(
+  options: AutoArchiveOnMergeOptions,
+  log: Logger,
+  archive: typeof archivePublicationIfSafe,
+): () => void {
+  const open = new LRUCache<string, string>({ max: OPEN_PULL_REQUEST_LATCH_MAX });
+  const running = new Set<string>();
+  return (
+    options.vcs?.publication.subscribe((event) => {
+      const id = event.workspaceId;
+      if (options.daemonConfigStore.get().autoArchiveAfterMerge !== true) {
+        open.delete(id);
+        return;
+      }
+      const status = event.status;
+      const identity = JSON.stringify([
+        event.binding.providerId,
+        event.binding.repositoryId,
+        event.target.repositoryUrl,
+        event.target.headRef,
+        status?.url,
+      ]);
+      if (!status?.isMerged) {
+        if (status?.state.toLowerCase() === "open") open.set(id, identity);
+        else open.delete(id);
+        return;
+      }
+      if (open.get(id) !== identity || running.has(id)) return;
+      running.add(id);
+      void archive({ event, options, log })
+        .catch((error) =>
+          log.warn({ err: error, workspaceId: id }, "Publication auto-archive failed"),
+        )
+        .finally(() => running.delete(id));
+    }) ?? (() => {})
+  );
 }

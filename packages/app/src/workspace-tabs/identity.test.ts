@@ -6,6 +6,35 @@ import {
 } from "./identity";
 
 describe("New tab identity", () => {
+  it("preserves VCS view requests without creating a second Changes tab", () => {
+    const target = {
+      kind: "working_diff" as const,
+      vcsView: { providerId: "external", view: "plugin:details", requestId: "first" },
+    };
+    const next = { ...target, vcsView: { ...target.vcsView, requestId: "second" } };
+    expect(normalizeWorkspaceTabTarget(target)).toEqual(target);
+    expect(buildDeterministicWorkspaceTabId(target)).toBe(buildDeterministicWorkspaceTabId(next));
+    expect(workspaceTabTargetsEqual(target, next)).toBe(false);
+    expect(
+      normalizeWorkspaceTabTarget({ ...target, vcsView: { ...target.vcsView, view: " " } }),
+    ).toEqual({ kind: "working_diff" });
+  });
+  it("retains a provider comparison while reusing the working diff tab", () => {
+    const target = {
+      kind: "working_diff" as const,
+      vcsComparison: {
+        requestId: "first",
+        providerId: "external",
+        selection: { kind: "workspace" as const },
+        comparisonId: "base",
+        baseRef: "release",
+      },
+    };
+    const next = { ...target, vcsComparison: { ...target.vcsComparison, requestId: "second" } };
+    expect(normalizeWorkspaceTabTarget(target)).toEqual(target);
+    expect(buildDeterministicWorkspaceTabId(target)).toBe(buildDeterministicWorkspaceTabId(next));
+    expect(workspaceTabTargetsEqual(target, next)).toBe(false);
+  });
   it("stays outside deterministic target identity", () => {
     const target = { kind: "new_tab" } as const;
 
@@ -70,6 +99,25 @@ describe("working diff tab identity", () => {
         focusPath: " src\\example.ts ",
       }),
     ).toEqual(target);
+  });
+
+  it("retains VCS action requests while reusing the Changes tab", () => {
+    const action = {
+      kind: "working_diff" as const,
+      vcsAction: {
+        providerId: "external",
+        actionId: "change.describe",
+        requestId: "first",
+      },
+    };
+    expect(normalizeWorkspaceTabTarget(action)).toEqual(action);
+    const again = { ...action, vcsAction: { ...action.vcsAction, requestId: "second" } };
+    expect(workspaceTabTargetsEqual(action, again)).toBe(false);
+    expect(workspaceTabTargetsEqual(action, { ...action })).toBe(true);
+    expect(buildDeterministicWorkspaceTabId(action)).toBe(buildDeterministicWorkspaceTabId(again));
+    expect(
+      normalizeWorkspaceTabTarget({ ...action, vcsAction: { ...action.vcsAction, actionId: " " } }),
+    ).toEqual({ kind: "working_diff" });
   });
 
   it("treats focus as navigation state rather than tab identity", () => {

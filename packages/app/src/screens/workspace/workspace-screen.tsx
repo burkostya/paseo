@@ -1,3 +1,4 @@
+import { workspaceHasVcsChanges } from "@/vcs/selection";
 import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import { useHostFeature } from "@/runtime/host-features";
 import {
@@ -470,6 +471,7 @@ function useCloseTabs(): UseCloseTabsResult {
 }
 
 interface WorkspaceHeaderTitleBarProps {
+  normalizedWorkspaceId: string;
   isLoading: boolean;
   title: string;
   subtitle: string;
@@ -486,6 +488,7 @@ interface WorkspaceHeaderTitleBarProps {
 }
 
 function WorkspaceHeaderTitleBar({
+  normalizedWorkspaceId,
   isLoading,
   title,
   subtitle,
@@ -518,6 +521,8 @@ function WorkspaceHeaderTitleBar({
       )}
       <View style={styles.compactHeaderMenuCluster}>
         <WorkspaceHeaderMenuDesktop
+          normalizedServerId={normalizedServerId}
+          normalizedWorkspaceId={normalizedWorkspaceId}
           currentBranchName={currentBranchName}
           showWorkspaceSetup={showWorkspaceSetup}
           importAgentDisabled={importAgentDisabled}
@@ -752,9 +757,8 @@ function useResolvedWorkspaceRouteState(input: {
 function shouldInspectWorkspaceRecovery(
   hasHydratedWorkspaces: boolean,
   workspace: WorkspaceDescriptor | null,
-  pendingOpenTarget: WorkspaceTabTarget | null,
 ): boolean {
-  return pendingOpenTarget?.kind === "agent" && hasHydratedWorkspaces && workspace === null;
+  return hasHydratedWorkspaces && workspace === null;
 }
 
 function WorkspaceScreenGateFrame({ children }: { children: ReactNode }) {
@@ -1134,7 +1138,7 @@ function WorkspaceScreenContent({
   const hasHydratedWorkspaces = useSessionStore(
     (state) => state.sessions[normalizedServerId]?.hasHydratedWorkspaces ?? false,
   );
-  const pendingOpenTarget = usePendingWorkspaceOpen({
+  usePendingWorkspaceOpen({
     onOpened: revealWorkspaceTab,
     workspaceKey: persistenceKey,
     hasHydratedWorkspaces,
@@ -1143,11 +1147,7 @@ function WorkspaceScreenContent({
   const workspaceRecovery = useWorkspaceRecovery({
     serverId: normalizedServerId,
     workspaceId: normalizedWorkspaceId,
-    enabled: shouldInspectWorkspaceRecovery(
-      hasHydratedWorkspaces,
-      workspaceDescriptor,
-      pendingOpenTarget,
-    ),
+    enabled: shouldInspectWorkspaceRecovery(hasHydratedWorkspaces, workspaceDescriptor),
   });
 
   const selectWorkspaceAgentVisibility = useMemo(
@@ -1246,6 +1246,7 @@ function WorkspaceScreenContent({
     workspace: workspaceDescriptor,
     checkoutState: workspaceHeaderCheckoutState,
   });
+  const hasVcsChanges = workspaceHasVcsChanges(isGitCheckout, workspaceDescriptor);
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
 
   const isExplorerSidebarShowing = useIsExplorerSidebarOpen({
@@ -2590,7 +2591,7 @@ function WorkspaceScreenContent({
           handleCreateBrowserTab({ paneId });
           return true;
         case "workspace.tab.target.changes":
-          if (persistenceKey && isGitCheckout) {
+          if (persistenceKey && hasVcsChanges) {
             openExplorerSidebarView({
               isCompact: isMobile,
               workspaceKey: persistenceKey,
@@ -2615,7 +2616,7 @@ function WorkspaceScreenContent({
       focusedPaneTabState.pane?.id,
       handleCreateBrowserTab,
       handleCreateDraftTab,
-      isGitCheckout,
+      hasVcsChanges,
       isMobile,
       persistenceKey,
     ],
@@ -3270,7 +3271,7 @@ function WorkspaceScreenContent({
   const showCreateBrowserTab = getIsElectron();
   const newTabLauncher = useMemo<NewTabLauncher>(
     () => ({
-      showChanges: isGitCheckout,
+      showChanges: hasVcsChanges,
       showPullRequest: hasPullRequest,
       showBrowser: showCreateBrowserTab,
       terminalDisabled: createTerminalDisabled,
@@ -3279,7 +3280,7 @@ function WorkspaceScreenContent({
     [
       createTerminalDisabled,
       hasPullRequest,
-      isGitCheckout,
+      hasVcsChanges,
       launchWorkspaceTab,
       showCreateBrowserTab,
     ],
@@ -3302,6 +3303,7 @@ function WorkspaceScreenContent({
             <>
               <SidebarMenuToggle />
               <WorkspaceHeaderTitleBar
+                normalizedWorkspaceId={normalizedWorkspaceId}
                 isLoading={isWorkspaceHeaderLoading}
                 title={workspaceHeaderTitle}
                 subtitle={workspaceHeaderSubtitle}
@@ -3330,6 +3332,7 @@ function WorkspaceScreenContent({
       headerRight,
       isWorkspaceHeaderLoading,
       normalizedServerId,
+      normalizedWorkspaceId,
       openImportSheet,
       showScreenHeader,
       showWorkspaceSetup,

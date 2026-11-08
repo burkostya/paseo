@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { createJiti } from "jiti";
 import type { z } from "zod";
 import { describe, expect, it } from "vitest";
-import { WSOutboundMessageSchema } from "../../src/messages.js";
+import { WSOutboundMessageSchema, ReviewAttachmentSchema } from "../../src/messages.js";
 import { validateWSOutboundMessage } from "../../src/validation/ws-outbound.js";
 
 interface GeneratedSchema {
@@ -136,6 +136,78 @@ const SourceSchema = z.object({
   it("accepts a minimal valid envelope and rejects a corrupted envelope", () => {
     expect(validateWSOutboundMessage({ type: "pong" }).success).toBe(true);
     expect(validateWSOutboundMessage({ type: "not_a_message" }).success).toBe(false);
+  });
+
+  it("validates opaque working-copy sources without assuming Git revisions or options", () => {
+    const envelope = {
+      type: "session",
+      message: {
+        type: "vcs.project.working-copy.resolve-source.response",
+        payload: {
+          requestId: "prepare",
+          result: {
+            revision: "change/version-7",
+            data: { version: 3, data: { parents: ["one", "two"], mode: "isolated" } },
+          },
+          error: null,
+        },
+      },
+    };
+    const expected = WSOutboundMessageSchema.parse(envelope);
+    expect(validateWSOutboundMessage(envelope)).toMatchObject({ success: true, data: expected });
+    envelope.message.payload.result.revision = "";
+    expect(validateWSOutboundMessage(envelope).success).toBe(false);
+    expect(WSOutboundMessageSchema.safeParse(envelope).success).toBe(false);
+  });
+
+  it("validates forge checkout facts and provider publication data through both validators", () => {
+    const checkout = {
+      type: "session",
+      message: {
+        type: "vcs.change-request.resolve-checkout.response",
+        payload: {
+          requestId: "checkout",
+          error: null,
+          result: {
+            forge: "custom-forge",
+            changeRequestNumber: 7,
+            headRef: "feature",
+            baseRefName: "main",
+            checkoutRefs: [{ remoteRef: "refs/pull/7/head" }],
+          },
+        },
+      },
+    };
+    const publication = {
+      type: "session",
+      message: {
+        type: "vcs.publication.resolve.response",
+        payload: {
+          requestId: "publish",
+          error: null,
+          result: {
+            remote: "fork",
+            repositoryUrl: "https://example.test/repo",
+            headRef: "feature",
+            baseRef: "main",
+            headRevision: "opaque",
+            data: { version: 1, data: { localBranch: "alice/feature" } },
+          },
+        },
+      },
+    };
+    for (const envelope of [checkout, publication]) {
+      const expected = WSOutboundMessageSchema.safeParse(envelope);
+      expect(expected.success).toBe(true);
+      expect(validateWSOutboundMessage(envelope)).toMatchObject({
+        success: true,
+        data: expected.success ? expected.data : undefined,
+      });
+    }
+    const invalid = structuredClone(checkout);
+    invalid.message.payload.result.checkoutRefs = [];
+    expect(WSOutboundMessageSchema.safeParse(invalid).success).toBe(false);
+    expect(validateWSOutboundMessage(invalid).success).toBe(false);
   });
 
   it("accepts project config responses with and without setup commit status", () => {
@@ -400,4 +472,243 @@ const SourceSchema = z.object({
       message: { payload: { agent: { capabilities: { supportsRewindConversation: false } } } },
     });
   });
+});
+
+it("validates VCS responses with generated validators and rejects malformed operation states", () => {
+  const valid = {
+    type: "session",
+    message: {
+      type: "vcs.operations.get.response",
+      payload: {
+        requestId: "vcs-request",
+        result: { id: "operation", status: "unknown" },
+        error: null,
+      },
+    },
+  };
+  expect(validateWSOutboundMessage(valid).success).toBe(true);
+  const invalid = {
+    ...valid,
+    message: {
+      ...valid.message,
+      payload: { ...valid.message.payload, result: { id: "operation", status: "invented-status" } },
+    },
+  };
+  expect(validateWSOutboundMessage(invalid).success).toBe(false);
+  expect(
+    validateWSOutboundMessage({
+      ...valid,
+      message: {
+        ...valid.message,
+        payload: {
+          ...valid.message.payload,
+          result: null,
+          error: { code: "unsupported-version", message: "Update jj" },
+        },
+      },
+    }).success,
+  ).toBe(true);
+});
+
+it("validates VCS publication partial results and open forge facts", () => {
+  const publication = {
+    remote: "origin",
+    repositoryUrl: "https://forge.test/repo",
+    headRef: "task",
+    headRevision: "opaque-revision",
+    baseRef: "main",
+  };
+  const partial = {
+    type: "session",
+    message: {
+      type: "vcs.change-request.execute.response",
+      payload: {
+        requestId: "create",
+        result: {
+          id: "create",
+          status: "failed",
+          result: { publication, stage: "published" },
+          error: { code: "remote", message: "Forge unavailable" },
+        },
+        error: null,
+      },
+    },
+  };
+  expect(validateWSOutboundMessage(partial)).toEqual(WSOutboundMessageSchema.safeParse(partial));
+  expect(validateWSOutboundMessage(partial).success).toBe(true);
+  const status = {
+    type: "session",
+    message: {
+      type: "vcs.change-request.get.response",
+      payload: {
+        requestId: "status",
+        error: null,
+        result: {
+          forge: "external-forge",
+          status: {
+            url: "https://forge.test/repo/request/7",
+            title: "Task",
+            state: "open",
+            baseRefName: "main",
+            headRefName: "task",
+            isMerged: false,
+            mergeable: "UNKNOWN",
+            checks: [{ name: "Build", status: "pending", url: null, traits: ["external-trait"] }],
+            checksStatus: "pending",
+            reviewDecision: null,
+            forgeSpecific: { forge: "external-facts", custom: { supported: true } },
+          },
+        },
+      },
+    },
+  };
+  expect(validateWSOutboundMessage(status)).toEqual(WSOutboundMessageSchema.safeParse(status));
+  expect(validateWSOutboundMessage(status).success).toBe(true);
+});
+
+it("accepts legacy and structured VCS diffs without imposing Git revision IDs", () => {
+  const response = {
+    type: "session",
+    message: {
+      type: "vcs.diff.get.response",
+      payload: { requestId: "diff", result: { patch: "", files: [] }, error: null },
+    },
+  };
+  expect(validateWSOutboundMessage(response).success).toBe(true);
+  expect(
+    validateWSOutboundMessage({
+      ...response,
+      message: {
+        ...response.message,
+        payload: { ...response.message.payload, result: { patch: "" } },
+      },
+    }).success,
+  ).toBe(true);
+  expect(
+    validateWSOutboundMessage({
+      ...response,
+      message: {
+        ...response.message,
+        payload: { ...response.message.payload, result: { patch: "", files: [{ invalid: true }] } },
+      },
+    }).success,
+  ).toBe(false);
+});
+
+it("validates VCS observation snapshots and errors for owned delivery", () => {
+  const error = {
+    type: "session",
+    message: {
+      type: "vcs.snapshot.changed",
+      payload: {
+        workspaceId: "workspace",
+        subscriptionId: "owned",
+        result: null,
+        error: { code: "unavailable", message: "Plugin stopped" },
+      },
+    },
+  };
+  expect(validateWSOutboundMessage(error).success).toBe(true);
+  expect(
+    validateWSOutboundMessage({
+      ...error,
+      message: {
+        ...error.message,
+        payload: { ...error.message.payload, subscriptionId: undefined },
+      },
+    }).success,
+  ).toBe(false);
+  expect(
+    validateWSOutboundMessage({
+      type: "session",
+      message: {
+        type: "vcs.snapshot.get.response",
+        payload: {
+          requestId: "request",
+          result: null,
+          error: { code: "unavailable", message: "No provider" },
+        },
+      },
+    }).success,
+  ).toBe(true);
+});
+
+it("validates VCS provider comparison data without Git-specific enums", () => {
+  const snapshot = {
+    binding: {
+      providerId: "external",
+      repositoryId: "repo",
+      workingCopyId: "copy",
+      root: "/repo",
+      cwd: "/repo",
+    },
+    version: "v1",
+    current: null,
+    files: [],
+    refs: [],
+    capabilities: [],
+    actions: [],
+    state: "ready",
+    workingComparison: { kind: "working-copy", data: { version: 3, data: { token: "opaque" } } },
+    comparisons: [
+      {
+        id: "custom",
+        comparison: { kind: "working-copy", data: { version: 4, data: { mode: "custom" } } },
+      },
+    ],
+    data: { version: 1, data: { branch: "main" } },
+  };
+  const message = {
+    type: "session",
+    message: {
+      type: "vcs.snapshot.get.response",
+      payload: { requestId: "request", result: snapshot, error: null },
+    },
+  };
+  expect(validateWSOutboundMessage(message).success).toBe(true);
+  expect(
+    validateWSOutboundMessage({
+      ...message,
+      message: {
+        ...message.message,
+        payload: {
+          ...message.message.payload,
+          result: {
+            ...snapshot,
+            comparisons: [
+              {
+                id: "bad",
+                comparison: { kind: "working-copy", data: { version: -1, data: null } },
+              },
+            ],
+          },
+        },
+      },
+    }).success,
+  ).toBe(false);
+});
+
+it("accepts legacy reviews and retains provider-neutral comparison provenance", () => {
+  const legacy = {
+    type: "review",
+    mimeType: "application/paseo-review",
+    cwd: "/repo",
+    mode: "uncommitted",
+    comments: [],
+  };
+  expect(ReviewAttachmentSchema.parse(legacy)).toEqual(legacy);
+  const vcs = {
+    providerId: "external",
+    repositoryId: "repo",
+    workingCopyId: "copy",
+    version: "snapshot",
+    comparison: { kind: "working-copy", data: { version: 2, data: { token: "provider-owned" } } },
+  };
+  expect(ReviewAttachmentSchema.parse({ ...legacy, vcs }).vcs).toEqual(vcs);
+  expect(
+    ReviewAttachmentSchema.safeParse({
+      ...legacy,
+      vcs: { ...vcs, comparison: { kind: "range", from: "a" } },
+    }).success,
+  ).toBe(false);
 });

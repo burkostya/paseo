@@ -2,6 +2,7 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ko: TranslationResources = {
+  vcs: { ...en.vcs, diffUnavailable: "이 공급자는 diff를 지원하지 않습니다." },
   worktreeImport: {
     title: "기존 워크트리 추가…",
     chooseHost: "호스트 선택",
@@ -1394,6 +1395,7 @@ export const ko: TranslationResources = {
     title: "새 워크스페이스",
     create: "생성",
     isolation: {
+      workingCopy: "새 작업 복사본",
       local: "로컬",
       worktree: "새 워크트리",
       label: "격리",
@@ -3084,6 +3086,16 @@ export const ko: TranslationResources = {
       },
     },
     project: {
+      vcs: {
+        title: "버전 관리",
+        provider: "제공자",
+        none: "없음",
+        unavailable: "{{provider}} (사용 불가)",
+        loading: "불러오는 중…",
+        saving: "전환 중…",
+        retry: "다시 시도",
+        offline: "호스트 연결 끊김",
+      },
       noEditableTarget: "이 호스트에서는 이 프로젝트를 편집할 수 없습니다.",
       backToProjects: "프로젝트로 돌아가기",
       edit: {

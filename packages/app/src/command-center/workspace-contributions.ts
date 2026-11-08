@@ -106,6 +106,7 @@ export interface WorkspaceCommandCenterShortcuts {
 
 export interface WorkspaceCommandCenterSource {
   gitActions: GitActions;
+  omitGitActionIds?: readonly string[];
   labels: WorkspaceCommandCenterLabels;
   icons: WorkspaceCommandCenterIcons;
   shortcuts: WorkspaceCommandCenterShortcuts;
@@ -544,7 +545,8 @@ function buildCreationContributions(
     }),
   ];
   const primary = source.gitActions.primary;
-  if (primary) contributions.push(buildGitContribution(source, primary, 1, "always"));
+  if (primary && !source.omitGitActionIds?.includes(primary.id))
+    contributions.push(buildGitContribution(source, primary, 1, "always"));
   contributions.push(
     buildQueryAction(source, {
       id: "tab:new-terminal",
@@ -582,7 +584,8 @@ export function buildWorkspaceCommandCenterContributions(
   ];
 
   for (const [index, action] of actionsWithoutPrimary(source.gitActions).entries()) {
-    contributions.push(buildGitContribution(source, action, 100 + index, "query"));
+    if (!source.omitGitActionIds?.includes(action.id))
+      contributions.push(buildGitContribution(source, action, 100 + index, "query"));
   }
 
   if (source.capabilities.canPin) {

@@ -1,13 +1,100 @@
 import { execFileSync } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, onTestFinished, test } from "vitest";
+import { expect, onTestFinished, test, vi } from "vitest";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { resolveDaemonVersion } from "../daemon-version.js";
 import { BuiltinPluginLoader } from "./builtin/index.js";
+
+test("jj publication lookup after daemon restart reports unknown without replaying push", async () => {
+  const { createPaseoApi } = await import("@getpaseo/client");
+  const root = await mkdtemp(path.join(tmpdir(), "jj-publication-restart-"));
+  const repository = path.join(root, "repository");
+  const remote = path.join(root, "remote.git");
+  const config = path.join(root, "jj.toml");
+  await writeFile(config, '[user]\nname = "Restart Test"\nemail = "restart@example.test"\n');
+  vi.stubEnv("JJ_CONFIG", config);
+  const jj = (...args: string[]) =>
+    execFileSync("jj", args, { cwd: repository, encoding: "utf8", stdio: "pipe" }).trim();
+  execFileSync("jj", ["git", "init", repository], { stdio: "pipe" });
+  await writeFile(path.join(repository, "work.txt"), "published work\n");
+  jj("describe", "-m", "Published work");
+  jj("bookmark", "create", "topic", "-r", "@");
+  execFileSync("git", ["init", "--bare", remote], { stdio: "pipe" });
+  jj("git", "remote", "add", "origin", remote);
+  jj("git", "push", "--remote", "origin", "--bookmark", "topic");
+  const receiveLog = path.join(root, "receives");
+  await writeFile(
+    path.join(remote, "hooks", "pre-receive"),
+    `#!${process.execPath}\nrequire("node:fs").appendFileSync(${JSON.stringify(receiveLog)}, "push\\n");\n`,
+    { mode: 0o755 },
+  );
+  const options = {
+    paseoHomeRoot: path.join(root, "home"),
+    staticDir: path.join(root, "static"),
+    cleanup: false,
+    builtinPlugins: new BuiltinPluginLoader(undefined, ["git-vcs", "jj-vcs"]),
+  };
+  let daemon = await createTestPaseoDaemon(options);
+  let client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  onTestFinished(async () => {
+    await client.close();
+    await daemon.close();
+    vi.unstubAllEnvs();
+    await rm(root, { recursive: true, force: true });
+  });
+  await client.connect();
+  const created = await client.createWorkspace({ source: { kind: "directory", path: repository } });
+  if (!created.workspace) throw new Error(created.error ?? "Missing workspace");
+  const workspaceId = created.workspace.id;
+  let vcs = createPaseoApi(client).workspaces.ref(workspaceId).vcs;
+  const target = await vcs.publication.resolve(
+    { remote: "origin", headRef: "topic", baseRef: "main" },
+    "jj",
+  );
+  await writeFile(path.join(repository, "work.txt"), "second revision\n");
+  jj("describe", "-m", "Second revision");
+  const published = await vcs.publication.resolve(
+    { remote: "origin", headRef: "topic", baseRef: "main" },
+    "jj",
+  );
+  expect(published.headRevision).not.toBe(target.headRevision);
+  await vcs.publication.publish({ operationId: "publish-before-restart", target: published }, "jj");
+  await expect
+    .poll(async () => (await vcs.operation("jj", "publish-before-restart")).status)
+    .toBe("succeeded");
+  expect(await readFile(receiveLog, "utf8")).toBe("push\n");
+  await client.close();
+  await daemon.close();
+  daemon = await createTestPaseoDaemon(options);
+  client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  await client.connect();
+  vcs = createPaseoApi(client).workspaces.ref(workspaceId).vcs;
+  expect(await vcs.operation("jj", "publish-before-restart")).toMatchObject({
+    id: "publish-before-restart",
+    status: "unknown",
+  });
+  expect((await vcs.snapshot("jj")).current?.id).toBe(published.headRevision);
+  expect(await readFile(receiveLog, "utf8")).toBe("push\n");
+  expect(
+    execFileSync("git", ["--git-dir", remote, "rev-parse", "refs/heads/topic"], {
+      encoding: "utf8",
+    }).trim(),
+  ).toBe(published.headRevision);
+}, 60_000);
 
 test("a plugin transforms workspace creation once across receipt replays and observes its committed lifecycle", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-lifecycle-"));
@@ -1296,7 +1383,7 @@ test("worktree includes reach the first agent without copying tracked or unignor
       },
     });
     expect(failed.workspace).toBeNull();
-    expect(failed.error).toContain("Plugin worktree-include worktree.create.after failed:");
+    expect(failed.error).toContain("Plugin worktree-include working-copy.create.after failed:");
     expect((await client.fetchWorkspaces()).entries.map(({ id }) => id).sort()).toEqual(
       beforeFailure.entries.map(({ id }) => id).sort(),
     );
@@ -1307,3 +1394,158 @@ test("worktree includes reach the first agent without copying tracked or unignor
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 60_000);
+
+test.each(["git", "jj-colocated", "jj-separate", "external-jj"])(
+  "neutral working-copy includes reach setup and agents with %s and roll back copy errors",
+  async (mode) => {
+    const root = await mkdtemp(path.join(tmpdir(), "paseo-neutral-includes-"));
+    const repository = path.join(root, "repository");
+    execFileSync("git", ["init", "-b", "main", repository], { stdio: "pipe" });
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: repository, stdio: "pipe" });
+    await mkdir(path.join(repository, "sub"));
+    await mkdir(path.join(repository, "config"));
+    await writeFile(path.join(repository, ".gitignore"), "sub/.env\nconfig/*.local.json\n");
+    await writeFile(
+      path.join(repository, ".worktreeinclude"),
+      "sub/.env\nconfig/*.local.json\nplain.txt\n",
+    );
+    await writeFile(path.join(repository, "config/tracked.local.json"), "versioned");
+    await writeFile(
+      path.join(repository, "sub/paseo.json"),
+      JSON.stringify({
+        worktree: {
+          setup: [
+            "node -e \"const fs = require('fs'); fs.writeFileSync('setup-proof', fs.readFileSync('.env'))\"",
+          ],
+        },
+      }),
+    );
+    git("add", ".gitignore", ".worktreeinclude", "sub/paseo.json");
+    git("add", "-f", "config/tracked.local.json");
+    git(
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "-m",
+      "initial",
+    );
+    let sourceRoot = repository;
+    if (mode !== "git") {
+      execFileSync("jj", ["git", "init", "--colocate", repository], { stdio: "pipe" });
+      execFileSync("jj", ["config", "set", "--repo", "snapshot.auto-track", "none()"], {
+        cwd: repository,
+        stdio: "pipe",
+      });
+    }
+    if (mode === "jj-separate") {
+      sourceRoot = path.join(root, "separate");
+      execFileSync("jj", ["workspace", "add", "--no-colocate", sourceRoot], {
+        cwd: repository,
+        stdio: "pipe",
+      });
+    }
+    await mkdir(path.join(sourceRoot, "config"), { recursive: true });
+    await writeFile(path.join(sourceRoot, "sub/.env"), "SECRET=source");
+    await writeFile(path.join(sourceRoot, "config/app.local.json"), "local config");
+    await writeFile(path.join(sourceRoot, "plain.txt"), "not ignored");
+    const observed = path.join(root, "observed.json");
+    const failureFlag = path.join(root, "block-copy");
+    const pluginDirectory = await createProviderPlugin(root, {
+      acknowledgeClose: true,
+      hooks: `
+  server.addHook("working-copy.create.after", async ({ workingCopy }) => {
+    const { stat, rm, writeFile } = await import("node:fs/promises");
+    if (await stat(${JSON.stringify(failureFlag)}).catch(() => null)) {
+      await rm(workingCopy.binding.root + "/config", { recursive: true, force: true });
+      await writeFile(workingCopy.binding.root + "/config", "blocks directory");
+    }
+  });
+  server.addHook("agent.open.before", async ({ request }) => {
+    const { readFile, writeFile } = await import("node:fs/promises");
+    const files = [".env", "../config/app.local.json", "../config/tracked.local.json", "setup-proof"];
+    const contents = await Promise.all(files.map(file => readFile(request.cwd + "/" + file, "utf8")));
+    await writeFile(${JSON.stringify(observed)}, JSON.stringify(contents));
+  });`,
+    });
+    const builtinIds =
+      mode === "external-jj"
+        ? ["git-vcs", "worktree-include"]
+        : ["git-vcs", "jj-vcs", "worktree-include"];
+    const daemon = await createTestPaseoDaemon({
+      builtinPlugins: new BuiltinPluginLoader(undefined, builtinIds),
+    });
+    const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+    try {
+      await client.connect();
+      await client.patchDaemonConfig({ pluginsEnabled: true });
+      expect((await client.installDirectoryPlugin(pluginDirectory)).status).toBe("running");
+      if (mode === "external-jj") {
+        const external = path.join(root, "external-jj");
+        await cp(
+          fileURLToPath(new URL("../../../../../plugins/jj-vcs", import.meta.url)),
+          external,
+          { recursive: true },
+        );
+        await writeFile(
+          path.join(external, "paseo-plugin.json"),
+          JSON.stringify({ id: "external-jj", requirements: { paseo: ">=0.15.2" } }),
+        );
+        expect((await client.installDirectoryPlugin(external)).status).toBe("running");
+      }
+      const imported = await client.createWorkspace({
+        source: { kind: "directory", path: path.join(sourceRoot, "sub") },
+      });
+      expect(imported.error).toBeNull();
+      const projectId = imported.workspace!.projectId;
+      if (!projectId) throw new Error("Expected project");
+      const created = await client.createWorkspace({ source: { kind: "working-copy", projectId } });
+      expect(created.error).toBeNull();
+      const workspace = created.workspace!;
+      const cwd = workspace.workspaceDirectory!;
+      expect(path.basename(cwd)).toBe("sub");
+      await expect
+        .poll(async () => (await client.fetchWorkspaceSetupStatus(workspace.id)).snapshot, {
+          timeout: 10000,
+        })
+        .toMatchObject({ status: "completed" });
+      await client.createAgent({ provider: PROVIDER_ID, cwd, workspaceId: workspace.id });
+      expect(JSON.parse(await readFile(observed, "utf8"))).toEqual([
+        "SECRET=source",
+        "local config",
+        "versioned",
+        "SECRET=source",
+      ]);
+      await expect(stat(path.join(cwd, "../plain.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+      await writeFile(path.join(cwd, ".env"), "SECRET=isolated");
+      const nested = await client.createWorkspace({
+        source: { kind: "working-copy", projectId, cwd },
+      });
+      expect(nested.error).toBeNull();
+      expect(await readFile(path.join(nested.workspace!.workspaceDirectory!, ".env"), "utf8")).toBe(
+        "SECRET=isolated",
+      );
+      const before = (await client.fetchWorkspaces()).entries.map(({ id }) => id).sort();
+      const copiesDirectory = path.dirname(path.dirname(cwd));
+      const directories = (await readdir(copiesDirectory)).sort();
+      await writeFile(failureFlag, "fail");
+      const failed = await client.createWorkspace({ source: { kind: "working-copy", projectId } });
+      expect(failed.workspace).toBeNull();
+      expect(failed.error).toContain("Plugin worktree-include working-copy.create.after failed:");
+      expect((await client.fetchWorkspaces()).entries.map(({ id }) => id).sort()).toEqual(before);
+      expect((await readdir(copiesDirectory)).sort()).toEqual(directories);
+      expect(await readFile(path.join(sourceRoot, "config/app.local.json"), "utf8")).toBe(
+        "local config",
+      );
+    } finally {
+      await client.close();
+      await daemon.close();
+      await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+  },
+  60_000,
+);

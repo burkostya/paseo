@@ -37,6 +37,7 @@ function installation(invoked: string[]): InstalledPlugin {
     legacySidebarItems: [],
     filePanels: [],
     workspacePanels: [],
+    vcsContributions: [],
     commandCenterItems: [],
     clientSlashCommands: [],
     attachmentSources: [],

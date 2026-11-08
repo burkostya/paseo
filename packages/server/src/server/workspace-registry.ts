@@ -1,3 +1,10 @@
+import {
+  VcsDataSchema,
+  VcsBindingSchema,
+  VcsWorkingCopyRecordSchema,
+  type VcsWorkingCopyRecord,
+  type VcsBinding,
+} from "@getpaseo/protocol/vcs";
 import { promises as fs } from "node:fs";
 
 import type { Logger } from "pino";
@@ -21,9 +28,12 @@ const UntrustedWorkspaceSourceSchema = z.object({
 });
 
 const PersistedProjectRecordSchema = z.object({
+  vcsComparisonSettings: z.record(z.string(), VcsDataSchema.nullable()).optional(),
   diffComparison: DiffComparisonSchema.optional(),
   diffComparisonV2: DiffComparisonV2Schema.optional(),
   projectId: z.string(),
+  vcsProviderId: z.string().optional(),
+  vcsSelectionRevision: z.string().optional(),
   rootPath: z.string(),
   kind: z.enum(["git", "non_git"]),
   displayName: z.string(),
@@ -52,9 +62,13 @@ const PersistedProjectRecordSchema = z.object({
 });
 
 const PersistedWorkspaceRecordSchema = z.object({
+  vcsComparisonSettings: z.record(z.string(), VcsDataSchema.nullable()).optional(),
   diffComparison: DiffComparisonSchema.optional(),
   diffComparisonV2: DiffComparisonV2Schema.optional(),
   workspaceId: z.string(),
+  vcsBinding: VcsBindingSchema.optional(),
+  vcsWorkingCopy: VcsWorkingCopyRecordSchema.optional(),
+  vcsBindingRevision: z.string().optional(),
   projectId: z.string(),
   cwd: z.string(),
   kind: z.enum(["local_checkout", "worktree", "directory"]),
@@ -197,8 +211,10 @@ class FileBackedRegistry<TRecord extends RegistryRecord> {
   private readonly filePath: string;
   protected readonly logger: Logger;
   protected readonly schema: z.ZodType<TRecord, unknown>;
+  private readonly normalizeLoaded: (record: TRecord) => TRecord;
   private readonly getId: (record: TRecord) => string;
   private loaded = false;
+  private loading: Promise<void> | null = null;
   private readonly cache = new Map<string, TRecord>();
   private mutationQueue: Promise<void> = Promise.resolve();
   private mutationsBlockedUntilRestart = false;
@@ -209,12 +225,14 @@ class FileBackedRegistry<TRecord extends RegistryRecord> {
     logger: Logger;
     schema: z.ZodType<TRecord, unknown>;
     getId: (record: TRecord) => string;
+    normalizeLoaded?: (record: TRecord) => TRecord;
     component: string;
     writeRecords?: (filePath: string, records: readonly TRecord[]) => Promise<void>;
   }) {
     this.filePath = options.filePath;
     this.schema = options.schema;
     this.getId = options.getId;
+    this.normalizeLoaded = options.normalizeLoaded ?? ((record) => record);
     this.logger = options.logger.child({
       module: "workspace-registry",
       component: options.component,
@@ -286,18 +304,24 @@ class FileBackedRegistry<TRecord extends RegistryRecord> {
     });
   }
 
-  private async load(): Promise<void> {
-    if (this.loaded) {
-      return;
-    }
+  private load(): Promise<void> {
+    if (this.loaded) return Promise.resolve();
+    this.loading ??= this.loadFromDisk();
+    return this.loading;
+  }
 
+  private async loadFromDisk(): Promise<void> {
     this.cache.clear();
     try {
       const raw = await fs.readFile(this.filePath, "utf8");
       const parsed = z.array(this.schema).parse(JSON.parse(raw));
+      let normalized = false;
       for (const record of parsed) {
-        this.cache.set(this.getId(record), record);
+        const next = this.normalizeLoaded(record);
+        normalized ||= next !== record;
+        this.cache.set(this.getId(next), next);
       }
+      if (normalized) await this.writeRecords(this.filePath, Array.from(this.cache.values()));
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code !== "ENOENT") {
@@ -402,6 +426,11 @@ export class FileBackedProjectRegistry
       schema: PersistedProjectRecordSchema,
       getId: (record) => record.projectId,
       component: "projects",
+      // COMPAT(vcsProviderSelection): added in v0.15.2, remove after 2027-05-05 once legacy records are unsupported.
+      normalizeLoaded: (record) =>
+        record.vcsProviderId === undefined && record.kind === "git"
+          ? { ...record, vcsProviderId: "git" }
+          : record,
       writeRecords: options?.writeRecords,
     });
     this.projectIdFactory = options?.projectIdFactory ?? generateProjectId;
@@ -437,8 +466,14 @@ export class FileBackedProjectRegistry
           projectKey: input.projectKey ?? null,
           updatedAt: input.timestamp,
         };
-        await this.upsert(refreshed);
-        return refreshed;
+        return (
+          (await this.update(active.projectId, (current) => ({
+            ...current,
+            kind: input.kind,
+            projectKey: input.projectKey ?? null,
+            updatedAt: input.timestamp,
+          }))) ?? refreshed
+        );
       }
 
       for (;;) {
@@ -758,6 +793,8 @@ export class FileBackedWorkspaceRegistry
 }
 
 export function createPersistedProjectRecord(input: {
+  vcsProviderId?: string;
+  vcsSelectionRevision?: string;
   projectId: string;
   rootPath: string;
   kind: PersistedProjectKind;
@@ -783,6 +820,9 @@ export function resolveProjectDisplayName(record: PersistedProjectRecord): strin
 }
 
 export function createPersistedWorkspaceRecord(input: {
+  vcsBinding?: VcsBinding;
+  vcsWorkingCopy?: VcsWorkingCopyRecord;
+  vcsBindingRevision?: string;
   workspaceId: string;
   projectId: string;
   cwd: string;

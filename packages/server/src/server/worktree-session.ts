@@ -1,3 +1,4 @@
+import type { VcsWorkingCopyRecord } from "@getpaseo/protocol/vcs";
 import type { Logger } from "pino";
 import { basename } from "node:path";
 import {
@@ -22,6 +23,7 @@ import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-sto
 import {
   getWorktreeSetupCommands,
   resolveWorktreeRuntimeEnv,
+  resolveWorkingCopyRuntimeEnv,
   runWorktreeSetupCommands,
   type WorktreeConfig,
   type WorktreeSetupCommandResult,
@@ -461,7 +463,8 @@ export async function handleWorkspaceSetupRunRequest(
     const started = await dependencies.clearAutomationBlock(request.workspaceId);
     if (started) {
       const worktree: WorktreeConfig = {
-        worktreePath: workspace.worktreeRoot ?? workspace.cwd,
+        worktreePath:
+          workspace.vcsWorkingCopy?.binding.root ?? workspace.worktreeRoot ?? workspace.cwd,
         branchName: workspace.branch ?? "",
       };
       dependencies.startWorkspaceSetup(request.workspaceId, (signal) =>
@@ -476,6 +479,7 @@ export async function handleWorkspaceSetupRunRequest(
             slug: basename(worktree.worktreePath),
             worktreePath: worktree.worktreePath,
             workspaceCwd: workspace.cwd,
+            workingCopy: workspace.vcsWorkingCopy,
           },
           signal,
         ),
@@ -515,6 +519,7 @@ export async function runWorktreeSetupInBackground(
     slug: string;
     worktreePath: string;
     workspaceCwd?: string;
+    workingCopy?: VcsWorkingCopyRecord;
   },
   signal?: AbortSignal,
 ): Promise<void> {
@@ -555,11 +560,13 @@ export async function runWorktreeSetupInBackground(
       } else {
         const workspaceCwd = options.workspaceCwd ?? worktree.worktreePath;
         const setupCommands = await getWorktreeSetupCommands(workspaceCwd);
-        const runtimeEnv = await resolveWorktreeRuntimeEnv({
-          worktreePath: worktree.worktreePath,
-          branchName: worktree.branchName,
-          repoRootPath: options.repoRoot,
-        });
+        const runtimeEnv = options.workingCopy
+          ? await resolveWorkingCopyRuntimeEnv(options.workingCopy)
+          : await resolveWorktreeRuntimeEnv({
+              worktreePath: worktree.worktreePath,
+              branchName: worktree.branchName,
+              repoRootPath: options.repoRoot,
+            });
         dependencies.terminalManager?.registerCwdEnv({
           cwd: workspaceCwd,
           env: runtimeEnv,

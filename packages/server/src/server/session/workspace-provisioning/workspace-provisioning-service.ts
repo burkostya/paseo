@@ -1,6 +1,17 @@
+import { mkdir, realpath } from "node:fs/promises";
+import { VcsError } from "@getpaseo/plugin/server/vcs";
+import { type VcsWorkingCopyCreate } from "@getpaseo/protocol/vcs";
+import { seedPaseoConfigFile } from "../../../utils/worktree.js";
+import { resolvePaseoHome } from "../../paseo-home.js";
+import { getRealpathAwareRelativePath } from "../../../utils/path.js";
+import {
+  awaitWorkingCopyOperation,
+  resolveWorkspaceVcsService,
+  type VcsPlugins,
+} from "../../workspace-vcs-service.js";
 import type { PluginLifecycle } from "../../plugins/lifecycle/index.js";
 import { describeHookWorkspace } from "../../plugins/lifecycle/index.js";
-import { basename, resolve } from "node:path";
+import { basename, resolve, join } from "node:path";
 import type { ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
 import type { Logger } from "pino";
 import {
@@ -56,7 +67,23 @@ export interface CreateWorktreeWorkspaceInput {
   callerWorkspaceId?: string;
 }
 
+export interface CreateWorkingCopyWorkspaceInput {
+  projectId: string;
+  providerId?: string;
+  providerData?: VcsWorkingCopyCreate["data"];
+  cwd?: string;
+  revision?: string;
+  workspaceId?: string;
+  title?: string | null;
+  expectsInitialAgent?: boolean;
+  background?: boolean;
+  callerWorkspaceId?: string;
+}
+
 export interface WorkspaceProvisioningService {
+  createWorkspaceForWorkingCopy(
+    input: CreateWorkingCopyWorkspaceInput,
+  ): Promise<PersistedWorkspaceRecord>;
   runInImportWorkspace<T>(
     input: ImportWorkspaceInput,
     operation: (workspace: PersistedWorkspaceRecord) => Promise<T>,
@@ -101,14 +128,23 @@ export class WorkspaceProvisioningError extends Error {
 
 export function createWorkspaceProvisioningService(deps: {
   serverId?: string;
+  paseoHome?: string;
   workspaceRegistry: WorkspaceRegistry;
   projectRegistry: ProjectRegistry;
   workspaceGitService: Pick<WorkspaceGitService, "getCheckout" | "getSnapshot">;
   isDirectory: (path: string) => Promise<boolean>;
   logger: Logger;
   lifecycle?: PluginLifecycle;
+  vcsPlugins?: VcsPlugins;
 }): WorkspaceProvisioningService {
   const { serverId, workspaceRegistry, projectRegistry, workspaceGitService, logger } = deps;
+  const vcs = deps.vcsPlugins
+    ? resolveWorkspaceVcsService({
+        projects: projectRegistry,
+        workspaces: workspaceRegistry,
+        plugins: deps.vcsPlugins,
+      })
+    : undefined;
 
   /**
    * Placement facts at a workspace directory, or null when there is nothing
@@ -202,7 +238,7 @@ export function createWorkspaceProvisioningService(deps: {
     const rootPath = resolve(cwd);
     const checkout = await workspaceGitService.getCheckout(rootPath);
     const timestamp = new Date().toISOString();
-    return projectRegistry.getOrCreateActiveByRoot({
+    const project = await projectRegistry.getOrCreateActiveByRoot({
       rootPath,
       kind: checkout.isGit ? "git" : "non_git",
       displayName: basename(rootPath) || rootPath,
@@ -215,6 +251,8 @@ export function createWorkspaceProvisioningService(deps: {
       }),
       timestamp,
     });
+    if (vcs) await vcs.getProjectSelection(project.projectId);
+    return (await projectRegistry.get(project.projectId)) ?? project;
   }
 
   async function requireActiveProject(projectId: string): Promise<PersistedProjectRecord> {
@@ -253,7 +291,7 @@ export function createWorkspaceProvisioningService(deps: {
       : // COMPAT(workspaceCreateMissingProjectId): added in v0.1.107, remove after 2027-01-15.
         await findOrCreateProjectForDirectory(normalizedCwd);
     const timestamp = new Date().toISOString();
-    const workspace = createPersistedWorkspaceRecord({
+    let workspace = createPersistedWorkspaceRecord({
       workspaceId: context?.workspaceId ?? generateWorkspaceId(),
       projectId: project.projectId,
       ...initialWorkspacePlacement({ source: "checkout", cwd: normalizedCwd, checkout }),
@@ -262,11 +300,137 @@ export function createWorkspaceProvisioningService(deps: {
       updatedAt: timestamp,
       background: await resolveBackground(context),
     });
-    await workspaceRegistry.upsert(workspace, {
-      expectsInitialAgent: context?.expectsInitialAgent,
-    });
+    if (vcs)
+      workspace = await vcs.persistWorkspace(workspace, {
+        expectsInitialAgent: context?.expectsInitialAgent,
+      });
+    else
+      await workspaceRegistry.upsert(workspace, {
+        expectsInitialAgent: context?.expectsInitialAgent,
+      });
     emitWorkspaceCreated(workspace);
     return workspace;
+  }
+
+  async function createWorkspaceForWorkingCopy(
+    input: CreateWorkingCopyWorkspaceInput,
+  ): Promise<PersistedWorkspaceRecord> {
+    const plugins = deps.vcsPlugins;
+    if (!vcs || !plugins)
+      throw new VcsError({ code: "unavailable", message: "VCS providers are unavailable" });
+    const project = await requireActiveProject(input.projectId);
+    const cwd = resolve(input.cwd ?? project.rootPath);
+    const workspaceId = input.workspaceId ?? generateWorkspaceId();
+    if (!/^wks_[a-f0-9]{16}$/.test(workspaceId)) throw new Error("Invalid workspace ID");
+    const background = await resolveBackground(input);
+    // Keep neutral copies outside the path-based ownership rules of the legacy Git sweeper.
+    const parent = resolve(
+      deps.paseoHome ?? resolvePaseoHome(),
+      "working-copies",
+      project.projectId,
+    );
+    await mkdir(parent, { recursive: true });
+    const root = join(await realpath(parent), workspaceId);
+    return vcs.withProjectBinding(project.projectId, cwd, async (selected, binding) => {
+      if (input.providerId && input.providerId !== binding.providerId)
+        throw new VcsError({
+          code: "outdated",
+          message: "Project VCS changed; reopen working-copy creation",
+        });
+      if (await workspaceRegistry.get(workspaceId))
+        throw new Error(`Workspace already exists: ${workspaceId}`);
+      const relativeCwd = getRealpathAwareRelativePath(binding.root, cwd);
+      if (relativeCwd === null) throw new Error("Workspace directory is outside its working copy");
+      const snapshot = await plugins.invokeVcs(binding.providerId, { kind: "snapshot", binding });
+      if (snapshot.kind !== "snapshot") throw new Error("Invalid VCS snapshot response");
+      const revision = input.revision ?? snapshot.snapshot.current?.id;
+      if (!revision) throw new Error("Select a revision before creating a working copy");
+      let creation: VcsWorkingCopyCreate = {
+        root,
+        name: workspaceId,
+        revision,
+        data: input.providerData,
+      };
+      if (deps.lifecycle)
+        creation = (
+          await deps.lifecycle.before("working-copy.create.before", { binding, input: creation })
+        ).input;
+      const operationId = JSON.stringify(["working-copy.create", workspaceId]);
+      const response = await plugins.invokeVcs(binding.providerId, {
+        kind: "execute",
+        binding,
+        operationId,
+        version: snapshot.snapshot.version,
+        action: "working-copy.create",
+        input: creation,
+      });
+      const record = await awaitWorkingCopyOperation({
+        plugins,
+        providerId: binding.providerId,
+        response,
+      });
+      if (
+        !record.owned ||
+        record.binding.root !== root ||
+        record.binding.cwd !== root ||
+        record.binding.providerId !== binding.providerId ||
+        record.binding.repositoryId !== binding.repositoryId
+      )
+        throw new Error("Provider returned an invalid created working copy");
+      try {
+        await deps.lifecycle?.wait("working-copy.create.after", {
+          source: binding,
+          workingCopy: record,
+        });
+        const workspaceCwd = join(root, relativeCwd);
+        if (!(await deps.isDirectory(workspaceCwd)))
+          throw new Error(
+            `Selected project directory is missing from the working copy: ${workspaceCwd}`,
+          );
+        await seedPaseoConfigFile({ sourceCwd: cwd, targetCwd: workspaceCwd });
+        const timestamp = new Date().toISOString();
+        const workspace = createPersistedWorkspaceRecord({
+          workspaceId,
+          projectId: project.projectId,
+          cwd: workspaceCwd,
+          kind: "directory",
+          displayName: basename(root),
+          title: input.title,
+          vcsBinding: { ...record.binding, cwd: workspaceCwd },
+          vcsWorkingCopy: {
+            ...record,
+            source: binding,
+            binding: { ...record.binding, cwd: workspaceCwd },
+          },
+          vcsBindingRevision: selected.vcsSelectionRevision,
+          background,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        });
+        await workspaceRegistry.upsert(workspace, {
+          expectsInitialAgent: input.expectsInitialAgent,
+        });
+        emitWorkspaceCreated(workspace);
+        return workspace;
+      } catch (error) {
+        try {
+          await plugins.invokeVcs(binding.providerId, {
+            kind: "working-copy.rollback",
+            binding,
+            record,
+          });
+        } catch (rollbackError) {
+          const creationFailure = error instanceof Error ? error.message : String(error);
+          throw new Error(
+            `Working copy creation failed: ${creationFailure}. Cleanup failed for ${root}; inspect the working copy before retrying`,
+            {
+              cause: rollbackError,
+            },
+          );
+        }
+        throw error;
+      }
+    });
   }
 
   async function createWorkspaceForWorktree(
@@ -281,8 +445,11 @@ export function createWorkspaceProvisioningService(deps: {
       projectId: input.projectId,
       repoRoot,
     });
+    const providerId = vcs ? (await vcs.getProjectSelection(project.projectId)).providerId : null;
+    if (providerId && providerId !== "git")
+      throw new Error("Selected VCS does not support legacy Git worktree creation");
     const timestamp = new Date().toISOString();
-    const workspace = createPersistedWorkspaceRecord({
+    let workspace = createPersistedWorkspaceRecord({
       workspaceId: input.workspaceId ?? generateWorkspaceId(),
       projectId: project.projectId,
       ...initialWorkspacePlacement({
@@ -299,9 +466,12 @@ export function createWorkspaceProvisioningService(deps: {
       ...(input.untrustedSource ? { untrustedSource: input.untrustedSource } : {}),
       background: await resolveBackground(input),
     });
-    await workspaceRegistry.upsert(workspace, {
-      expectsInitialAgent: input.expectsInitialAgent,
-    });
+    if (vcs)
+      workspace = await vcs.persistWorkspace(workspace, {
+        expectsInitialAgent: input.expectsInitialAgent,
+      });
+    else
+      await workspaceRegistry.upsert(workspace, { expectsInitialAgent: input.expectsInitialAgent });
     emitWorkspaceCreated(workspace);
     return workspace;
   }
@@ -445,17 +615,18 @@ export function createWorkspaceProvisioningService(deps: {
         serverId,
       });
       if (project.archivedAt || project.kind !== kind || project.projectKey !== projectKey) {
-        await projectRegistry.upsert({
-          ...project,
+        await projectRegistry.update(project.projectId, (current) => ({
+          ...current,
           kind,
           projectKey,
           archivedAt: null,
           updatedAt: timestamp,
-        });
+        }));
       }
     }
     if (!next) return workspace;
-    await workspaceRegistry.upsert(next);
+    if (vcs) next = await vcs.persistWorkspace(next);
+    else await workspaceRegistry.upsert(next);
     return next;
   }
 
@@ -473,8 +644,14 @@ export function createWorkspaceProvisioningService(deps: {
       updatedAt: new Date().toISOString(),
     });
     if (!update) return workspace;
-    await workspaceRegistry.upsert(update.workspace);
-    return update.workspace;
+    const refreshed = await workspaceRegistry.update(workspace.workspaceId, (current) => ({
+      ...current,
+      ...update.fields,
+      updatedAt: update.workspace.updatedAt,
+    }));
+    if (!refreshed)
+      throw new Error(`Workspace disappeared during refresh: ${workspace.workspaceId}`);
+    return refreshed;
   }
 
   async function refreshProjectKind(
@@ -501,11 +678,18 @@ export function createWorkspaceProvisioningService(deps: {
       projectKey,
       updatedAt: new Date().toISOString(),
     };
-    await projectRegistry.upsert(refreshed);
-    return refreshed;
+    return (
+      (await projectRegistry.update(project.projectId, (current) => ({
+        ...current,
+        kind,
+        projectKey,
+        updatedAt: refreshed.updatedAt,
+      }))) ?? refreshed
+    );
   }
 
   return {
+    createWorkspaceForWorkingCopy,
     runInImportWorkspace,
     findOrCreateWorkspaceForDirectory,
     resolveOrCreateWorkspaceIdForCreateAgent,

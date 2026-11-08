@@ -1,3 +1,4 @@
+import type { WorkspaceHierarchyWorkspaceResult } from "@getpaseo/protocol/messages";
 import {
   resolveWorkspaceDisplayName,
   type PersistedWorkspaceRecord,
@@ -28,11 +29,7 @@ export interface WorkspaceHierarchyInspection {
   changingWorkspaceIds: string[];
 }
 
-export interface WorkspaceHierarchyOperationResult {
-  workspaceId: string;
-  status: "succeeded" | "unchanged" | "failed";
-  error: string | null;
-}
+export type WorkspaceHierarchyOperationResult = WorkspaceHierarchyWorkspaceResult;
 
 /**
  * Shared daemon-side guard for lifecycle operations that touch a workspace tree.

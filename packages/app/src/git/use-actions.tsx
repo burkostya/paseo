@@ -1,3 +1,4 @@
+import { useGitVcsActionAdapter } from "@/vcs/legacy-git-actions";
 import { useState, useCallback, useEffect, useMemo, type ReactElement } from "react";
 import { Info } from "lucide-react-native";
 import { withUnistyles } from "react-native-unistyles";
@@ -865,7 +866,8 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     [gitActionsInput, baseRefLabel, hasPullRequest, forge, t],
   );
 
-  return { gitActions, branchLabel, isGit };
+  const adaptedActions = useGitVcsActionAdapter(serverId, cwd, gitActions);
+  return { gitActions: adaptedActions, branchLabel, isGit };
 }
 
 function translateGitActions(

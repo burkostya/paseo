@@ -3,6 +3,7 @@ import type { StateStorage } from "zustand/middleware";
 import type { ParsedDiffFile } from "@/git/use-diff-query";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 import {
+  adoptReviewDrafts,
   buildReviewAttachmentSnapshot,
   buildReviewDraftKey,
   addReviewDraftComment,
@@ -357,5 +358,56 @@ it("saves an acknowledged open edit as a new version and keeps subsequent edits 
     comment: { ...restored, body: "Saved again" },
   });
   expect(getReviewDraftComments("first")).toMatchObject([{ id: restored.id, body: "Saved again" }]);
+  resetReviewDraftStore();
+});
+
+describe("VCS review attachments", () => {
+  it("retains exact comparison identity and refuses context from a replaced line", () => {
+    const comment = makeComment({ content: "const value = newValue;" });
+    const vcs = {
+      providerId: "external",
+      repositoryId: "repo",
+      workingCopyId: "copy",
+      version: "snapshot-1",
+      comparison: { kind: "revision" as const, revision: "opaque-id" },
+    };
+    const input = {
+      reviewDraftKey: "vcs-review",
+      cwd: "/repo",
+      mode: "uncommitted" as const,
+      comments: [comment],
+      diffFiles: [makeFile()],
+      vcs,
+    };
+    expect(buildReviewAttachmentSnapshot(input)?.attachment.vcs).toEqual(vcs);
+    const edited = makeFile();
+    edited.hunks[0]!.lines[3]!.content = "replacement on the same line";
+    expect(buildReviewAttachmentSnapshot({ ...input, diffFiles: [edited] })).toBeNull();
+    expect(normalizePersistedState({ drafts: { review: [comment] } }).drafts.review).toEqual([
+      comment,
+    ]);
+    resetReviewDraftStore();
+    saveReviewDraftComment({ key: "review", id: null, comment });
+    expect(getReviewDraftComments("review")?.[0]?.content).toBe(comment.content);
+  });
+});
+
+it("adopts old VCS drafts once, retaining edited target comments and unrelated scopes", () => {
+  resetReviewDraftStore();
+  useReviewDraftStore.setState({
+    drafts: {
+      target: [makeComment({ body: "Edited" })],
+      old: [makeComment(), makeComment({ id: "other" })],
+      unrelated: [makeComment({ id: "separate" })],
+    },
+  });
+  adoptReviewDrafts("target", ["old", "target"]);
+  adoptReviewDrafts("target", ["old"]);
+  expect(getReviewDraftComments("target")?.map((comment) => comment.body)).toEqual([
+    "Edited",
+    "Please simplify this.",
+  ]);
+  expect(getReviewDraftComments("old")).toBeUndefined();
+  expect(getReviewDraftComments("unrelated")).toHaveLength(1);
   resetReviewDraftStore();
 });

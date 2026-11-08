@@ -727,3 +727,68 @@ describe("workspace registries", () => {
     expect((await workspaceRegistry.get("grandchild"))?.parentWorkspaceId).toBe("root");
   });
 });
+
+test("VCS selection pins legacy Git projects and preserves provider bindings across reload", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "paseo-vcs-registry-"));
+  const logger = createTestLogger();
+  const projectsFile = path.join(root, "projects.json");
+  const workspacesFile = path.join(root, "workspaces.json");
+  const timestamp = "2026-11-05T00:00:00.000Z";
+  try {
+    const old = createPersistedProjectRecord({
+      projectId: "old",
+      rootPath: root,
+      kind: "git",
+      displayName: "Preserved name",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    await writeJsonFileAtomic(projectsFile, [old]);
+    const projects = new FileBackedProjectRegistry(projectsFile, logger);
+    await Promise.all([projects.initialize(), projects.list(), projects.get("old")]);
+    expect(await projects.get("old")).toEqual({ ...old, vcsProviderId: "git" });
+    const fresh = createPersistedProjectRecord({
+      projectId: "new",
+      rootPath: path.join(root, "new"),
+      kind: "git",
+      displayName: "New colocated",
+      vcsProviderId: "jj",
+      vcsSelectionRevision: "selection-1",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    await projects.upsert(fresh);
+    const binding = {
+      providerId: "jj",
+      repositoryId: "repo",
+      workingCopyId: "main",
+      root,
+      cwd: root,
+    };
+    const workspace = createPersistedWorkspaceRecord({
+      workspaceId: "workspace",
+      projectId: "new",
+      cwd: root,
+      kind: "directory",
+      displayName: "Workspace",
+      vcsBinding: binding,
+      vcsBindingRevision: "selection-1",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    const workspaces = new FileBackedWorkspaceRegistry(workspacesFile, logger);
+    await workspaces.upsert(workspace);
+    await workspaces.archive("workspace", timestamp);
+    const reloadedProjects = new FileBackedProjectRegistry(projectsFile, logger);
+    const reloadedWorkspaces = new FileBackedWorkspaceRegistry(workspacesFile, logger);
+    expect((await reloadedProjects.get("old"))!.vcsProviderId).toBe("git");
+    expect(await reloadedProjects.get("new")).toEqual(fresh);
+    expect(await reloadedWorkspaces.get("workspace")).toMatchObject({
+      vcsBinding: binding,
+      vcsBindingRevision: "selection-1",
+      archivedAt: timestamp,
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

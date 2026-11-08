@@ -9,6 +9,7 @@ export interface ReviewDraftComment {
   side: ReviewDraftSide;
   lineNumber: number;
   body: string;
+  content?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -29,6 +30,7 @@ export const ReviewDraftCommentSchema: z.ZodType<ReviewDraftComment> = z.strictO
   side: z.enum(["old", "new"]),
   lineNumber: z.number().int().positive(),
   body: z.string(),
+  content: z.string().optional(),
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,
 });
@@ -136,6 +138,7 @@ function applyCommentUpdates(
     side: comment.side,
     lineNumber: comment.lineNumber,
     body: updates.body ?? comment.body,
+    ...(comment.content !== undefined ? { content: comment.content } : {}),
     createdAt: comment.createdAt,
     updatedAt,
   };

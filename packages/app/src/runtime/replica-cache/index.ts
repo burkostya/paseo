@@ -327,6 +327,7 @@ const StoredWorkspaceSchema = z.strictObject({
   workspaceDirectory: z.string(),
   worktreeSlug: z.string().optional(),
   projectKind: z.enum(["git", "non_git", "directory"]),
+  vcsProviderId: z.string().optional(),
   workspaceKind: z.enum(["directory", "local_checkout", "checkout", "worktree"]),
   // Require the flag so older rows that lost background visibility invalidate the workspace cursor.
   background: z.boolean(),
@@ -742,6 +743,7 @@ function serializeWorkspace(workspace: WorkspaceDescriptor): StoredWorkspace {
     diffComparisonBaseSource: workspace.diffComparisonBaseSource,
     diffComparisonWarning: workspace.diffComparisonWarning,
     id: workspace.id,
+    vcsProviderId: workspace.vcsProviderId,
     projectId: workspace.projectId,
     projectDisplayName: workspace.projectDisplayName,
     projectCustomName: workspace.projectCustomName ?? null,

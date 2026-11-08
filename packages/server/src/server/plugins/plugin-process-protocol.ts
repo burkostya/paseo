@@ -85,6 +85,7 @@ export type PluginProcessMessage =
       methods: string[];
       providers: PluginProviderMetadata[];
       usageSources?: PluginUsageSourceMetadata[];
+      vcsProviders?: Array<{ id: string; label: string; detectionPriority?: number }>;
       hooks?: string[];
     }
   | { type: "result"; requestId: string; output: unknown }
@@ -274,6 +275,17 @@ export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.dis
         methods: z.array(z.string()),
         providers: z.array(providerMetadataSchema),
         usageSources: z.array(usageSourceMetadataSchema).optional(),
+        vcsProviders: z
+          .array(
+            z
+              .object({
+                id: z.string(),
+                label: z.string(),
+                detectionPriority: z.number().finite().optional(),
+              })
+              .strict(),
+          )
+          .optional(),
         hooks: hooksSchema.optional(),
       })
       .strict(),

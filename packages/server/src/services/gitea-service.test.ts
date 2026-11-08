@@ -3242,3 +3242,41 @@ describe("detectGiteaFamilySoftware", () => {
     expect(software).toBe("gitea");
   });
 });
+
+it("routes the publication repository to its configured tea login", async () => {
+  const calls: string[][] = [];
+  const service = createGiteaService({
+    repositoryUrl: "https://forge.test/acme/selected",
+    resolveTeaPath: async () => "/tea",
+    resolveRemoteUrl: async () => {
+      throw new Error("Must not discover Git");
+    },
+    runner: async (args) => {
+      calls.push(args);
+      if (args[0] === "login")
+        return ok(
+          JSON.stringify([
+            { name: "other", url: "https://other.test" },
+            { name: "selected", url: "https://forge.test" },
+          ]),
+        );
+      return ok("https://forge.test/acme/selected/pulls/7");
+    },
+  });
+  await expect(
+    service.createPullRequest({
+      cwd: "/jj/workspace",
+      title: "Task",
+      head: "feature",
+      base: "main",
+    }),
+  ).resolves.toEqual({ url: "https://forge.test/acme/selected/pulls/7", number: 7 });
+  expect(calls[1]?.slice(0, 6)).toEqual([
+    "pr",
+    "create",
+    "--repo",
+    "https://forge.test/acme/selected",
+    "--login",
+    "selected",
+  ]);
+});

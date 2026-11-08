@@ -1,3 +1,4 @@
+import type { WorkspaceVcsService } from "../../workspace-vcs-service.js";
 import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 
@@ -37,7 +38,8 @@ export type WorkspaceRecoveryState =
         | "project_not_found"
         | "project_directory_missing"
         | "workspace_directory_missing"
-        | "worktree_branch_missing";
+        | "worktree_branch_missing"
+        | "vcs_unavailable";
       message: string;
     };
 
@@ -66,6 +68,7 @@ type RecoveryPlan =
 type UnavailableRecoveryState = Extract<WorkspaceRecoveryState, { kind: "unavailable" }>;
 
 export function createWorkspaceRecoveryService(deps: {
+  vcs?: WorkspaceVcsService;
   paseoHome: string;
   worktreesRoot?: string;
   getWorkspace: (workspaceId: string) => Promise<PersistedWorkspaceRecord | null>;
@@ -102,6 +105,29 @@ export function createWorkspaceRecoveryService(deps: {
         reason: "project_not_found",
         message: "The project for this archived workspace no longer exists.",
       };
+    }
+
+    if (workspace.vcsWorkingCopy) {
+      if (!deps.vcs)
+        return {
+          kind: "unavailable",
+          workspaceId,
+          reason: "vcs_unavailable",
+          message: "VCS recovery service is unavailable",
+        };
+      try {
+        await deps.vcs.inspectWorkingCopy(workspaceId);
+      } catch (error) {
+        return {
+          kind: "unavailable",
+          workspaceId,
+          reason: "vcs_unavailable",
+          message: error instanceof Error ? error.message : String(error),
+        };
+      }
+      const present = await deps.isDirectory(workspace.cwd);
+      if (present) return createRecoveryPlan({ action: "unarchive", workspace });
+      return createRecoveryPlan({ action: "restore", workspace, sourceRepoRoot: project.rootPath });
     }
 
     if (await deps.isDirectory(workspace.cwd)) {
@@ -160,6 +186,19 @@ export function createWorkspaceRecoveryService(deps: {
   }
 
   async function applyRecoveryPlan(plan: RecoveryPlan): Promise<void> {
+    if (plan.workspace.vcsWorkingCopy) {
+      const vcs = deps.vcs;
+      if (!vcs) throw new Error("VCS recovery service is unavailable");
+      const restored = await vcs.restoreWorkingCopy(plan.workspace.workspaceId);
+      try {
+        await deps.unarchiveWorkspace(restored);
+        await vcs.finishWorkingCopyRestore(plan.workspace.workspaceId);
+      } catch (error) {
+        await vcs.finishWorkingCopyRestore(plan.workspace.workspaceId, error);
+        throw error;
+      }
+      return;
+    }
     if (plan.kind === "restore") {
       await recreateArchivedWorktree(plan.workspace, plan.sourceRepoRoot);
     }

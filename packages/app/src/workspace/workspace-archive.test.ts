@@ -282,3 +282,40 @@ describe("archiveWorkspaceSubtreeOptimistically", () => {
     expect(isWorkspaceArchivePending({ serverId: SERVER_ID, workspaceId: child.id })).toBe(false);
   });
 });
+
+it("reports a retained-directory warning without undoing a successful archive", async () => {
+  const archived = workspace();
+  getHostRuntimeStore().acceptWorkspaceSnapshots(SERVER_ID, [archived]);
+  const onWarning = vi.fn();
+  const client = createClient(async () => ({
+    ...archivePayload({ workspaceId: archived.id }),
+    warning: "Working copy retained: ignored file .env",
+  }));
+  await archiveWorkspaceOptimistically({ client, workspace: target(), onWarning });
+  expect(onWarning).toHaveBeenCalledWith("Working copy retained: ignored file .env");
+  expect(storedWorkspace(archived.id)).toBeUndefined();
+});
+
+it("keeps subtree archive warnings separate from failed records", async () => {
+  const archived = workspace();
+  getHostRuntimeStore().acceptWorkspaceSnapshots(SERVER_ID, [archived]);
+  const client = createHierarchyClient(async () => ({
+    accepted: true,
+    error: null,
+    results: [
+      { workspaceId: archived.id, status: "succeeded", error: null, warning: "Directory retained" },
+    ],
+  }));
+  const result = await archiveWorkspaceSubtreeOptimistically({
+    client,
+    workspace: target(),
+    expectedWorkspaceIds: [archived.id],
+  });
+  expect(result).toEqual({
+    accepted: true,
+    error: null,
+    failedWorkspaceIds: [],
+    warnings: ["Directory retained"],
+  });
+  expect(storedWorkspace(archived.id)).toBeUndefined();
+});

@@ -1,3 +1,6 @@
+import { ParsedDiffFileSchema } from "./diff.js";
+import { VcsDataSchema, VcsComparisonSchema } from "./vcs.js";
+import { VcsInboundMessageSchema, VcsOutboundMessageSchema } from "./vcs-rpc.js";
 import { AgentMessageSchema } from "./agent-message.js";
 import {
   HostsListRequestSchema,
@@ -1265,6 +1268,15 @@ export const ReviewAttachmentCommentSchema = z.object({
 export const ReviewAttachmentSchema = z.object({
   type: z.literal("review"),
   mimeType: z.literal("application/paseo-review"),
+  vcs: z
+    .object({
+      providerId: z.string(),
+      repositoryId: z.string(),
+      workingCopyId: z.string(),
+      version: z.string(),
+      comparison: VcsComparisonSchema,
+    })
+    .optional(),
   cwd: z.string(),
   mode: z.enum(["uncommitted", "base", "all"]),
   baseRef: z.string().nullable().optional(),
@@ -2286,6 +2298,7 @@ export const WorkspaceHierarchyWorkspaceResultSchema = z.object({
   workspaceId: z.string(),
   status: z.enum(["succeeded", "unchanged", "failed"]),
   error: z.string().nullable(),
+  warning: z.string().optional(),
 });
 
 export const WorkspaceHierarchyInspectSubtreeResponseSchema = z.object({
@@ -2888,6 +2901,14 @@ export const WorkspaceCreateRequestSchema = z.object({
   callerAgentId: z.string().optional(),
   source: z.discriminatedUnion("kind", [
     z.object({
+      kind: z.literal("working-copy"),
+      projectId: z.string(),
+      providerId: z.string().min(1).optional(),
+      cwd: z.string().optional(),
+      revision: z.string().min(1).optional(),
+      providerData: VcsDataSchema.optional(),
+    }),
+    z.object({
       kind: z.literal("directory"),
       // Path of the existing checkout/directory to back the workspace.
       path: z.string(),
@@ -2924,39 +2945,6 @@ export const WorkspaceMarkUnreadRequestSchema = z.object({
   type: z.literal("workspace.mark_unread.request"),
   workspaceId: z.string(),
   requestId: z.string(),
-});
-
-// Highlighted diff token schema
-// Note: style can be a compound class name (e.g., "heading meta") from the syntax highlighter
-const HighlightTokenSchema = z.object({
-  text: z.string(),
-  style: z.string().nullable(),
-});
-
-const DiffLineSchema = z.object({
-  type: z.enum(["add", "remove", "context", "header"]),
-  content: z.string(),
-  tokens: z.array(HighlightTokenSchema).optional(),
-});
-
-const DiffHunkSchema = z.object({
-  oldStart: z.number(),
-  oldCount: z.number(),
-  newStart: z.number(),
-  newCount: z.number(),
-  lines: z.array(DiffLineSchema),
-});
-
-const ParsedDiffFileSchema = z.object({
-  path: z.string(),
-  // COMPAT(diffOldPath): added in v0.3.0, remove gate after 2027-02-09.
-  oldPath: z.string().optional(),
-  isNew: z.boolean(),
-  isDeleted: z.boolean(),
-  additions: z.number(),
-  deletions: z.number(),
-  hunks: z.array(DiffHunkSchema),
-  status: z.enum(["ok", "too_large", "binary"]).optional(),
 });
 
 const FileExplorerEntrySchema = z.object({
@@ -3507,6 +3495,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   PluginDisableRequestSchema,
   PluginRemoveRequestSchema,
   PluginRpcInvokeRequestSchema,
+  ...VcsInboundMessageSchema.options,
   AgentTimelineAppendRequestSchema,
   AgentSkillsGetStatusRequestSchema,
   AgentSkillsReconcileRequestSchema,
@@ -3851,6 +3840,20 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(usageSetting): added in v0.14, remove after 2027-05-01.
         usageSetting: z.boolean().optional(),
         usageSources: z.boolean().optional(),
+        vcsProviders: z.boolean().optional(),
+        vcsObservation: z.boolean().optional(),
+        vcsWorkingCopies: z.boolean().optional(),
+        vcsWorkingCopySources: z.boolean().optional(),
+        vcsComparisonSettings: z.boolean().optional(),
+        vcsActionPreview: z.boolean().optional(),
+        vcsComparisonContext: z.boolean().optional(),
+        vcsWorkingCopySelection: z.boolean().optional(),
+        vcsProjectReads: z.boolean().optional(),
+        vcsForgeCheckout: z.boolean().optional(),
+        vcsPublication: z.boolean().optional(),
+        vcsDiffFiles: z.boolean().optional(),
+        vcsComparisonViews: z.boolean().optional(),
+        vcsBaseComparisons: z.boolean().optional(),
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: z.boolean().optional(),
         // COMPAT(directorySync): added in v0.3.x, remove gate after 2027-02-12.
@@ -4320,6 +4323,9 @@ export const WorkspaceGitHubRuntimePayloadSchema = z
 
 export const WorkspaceDescriptorPayloadSchema = z
   .object({
+    vcsComparisonDefaults: VcsDataSchema.nullable().optional(),
+    vcsSavedComparison: VcsDataSchema.nullable().optional(),
+    vcsProviderId: z.string().optional(),
     id: z.string(),
     projectId: z.string(),
     projectDisplayName: z.string(),
@@ -4537,6 +4543,7 @@ export const FetchRecentProviderSessionsResponseMessageSchema = z.object({
 // project row with a new-workspace child so projects persist after their last
 // workspace is archived.
 export const WorkspaceProjectDescriptorPayloadSchema = z.object({
+  vcsProviderId: z.string().optional(),
   projectId: z.string(),
   // COMPAT(projectKey): added in v0.2.4 on 2026-07-28; remove optional after 2027-01-28.
   projectKey: z.string().optional(),
@@ -4944,6 +4951,7 @@ export const ArchiveWorkspaceResponseMessageSchema = z.object({
     workspaceId: z.string(),
     archivedAt: z.string().nullable(),
     error: z.string().nullable(),
+    warning: z.string().optional(),
   }),
 });
 
@@ -7282,6 +7290,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   PluginDisableResponseSchema,
   PluginRemoveResponseSchema,
   PluginRpcInvokeResponseSchema,
+  ...VcsOutboundMessageSchema.options,
   AgentTimelineAppendResponseSchema,
   AgentSkillsGetStatusResponseSchema,
   AgentSkillsReconcileResponseSchema,

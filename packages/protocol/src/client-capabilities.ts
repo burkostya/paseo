@@ -1,4 +1,7 @@
 export const CLIENT_CAPS = {
+  vcsObservation: "vcs_observation",
+  vcsProviders: "vcs_providers",
+  vcsPublication: "vcs_publication",
   terminalChunkedReplay: "terminal_chunked_replay",
   binaryChunkingV1: "binary_chunking_v1",
   helloRejection: "hello_rejection",

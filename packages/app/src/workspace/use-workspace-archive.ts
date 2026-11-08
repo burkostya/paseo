@@ -129,6 +129,8 @@ async function executeWorkspaceHierarchyArchive(input: {
       workspace: { serverId: input.serverId, workspaceId: input.workspaceId },
       expectedWorkspaceIds: input.expectedWorkspaceIds,
     });
+    for (const warning of result.warnings)
+      input.feedback.toast.show(warning, { variant: "warning", durationMs: null });
     if (!result.accepted) {
       input.feedback.toast.error(
         result.error ?? input.feedback.t("sidebar.workspace.toasts.archiveFailed"),
@@ -204,6 +206,7 @@ async function archiveWorkspaceLegacyRecord(input: {
     onArchiveStarted();
     await archiveWorkspaceOptimistically({
       client,
+      onWarning: (warning) => toast.show(warning, { variant: "warning", durationMs: null }),
       workspace: {
         serverId,
         workspaceId,

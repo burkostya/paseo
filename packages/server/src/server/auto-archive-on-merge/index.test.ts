@@ -237,3 +237,67 @@ test("does not read an observation when auto-archive is disabled", async () => {
   expect(getSnapshot).not.toHaveBeenCalled();
   expect(archiveIfSafe).not.toHaveBeenCalled();
 });
+
+test("publication auto-archive requires an observed open request and releases its subscription", async () => {
+  type Event = import("../workspace-publication-service.js").WorkspacePublicationStatus;
+  let publicationListener!: (event: Event) => void;
+  const stopPublication = vi.fn();
+  const archivePublicationIfSafe = vi.fn(async () => {});
+  const options = {
+    logger: { child: () => ({ warn: vi.fn() }) },
+    daemonConfigStore: { get: () => ({ autoArchiveAfterMerge: true }) },
+    vcs: {
+      publication: {
+        subscribe(listener: (event: Event) => void) {
+          publicationListener = listener;
+          return stopPublication;
+        },
+      },
+    },
+    workspaceGitService: { onSnapshotUpdated: () => ({ unsubscribe: vi.fn() }) },
+  } as unknown as AutoArchiveOnMergeOptions;
+  const subscription = setupAutoArchiveOnMerge(options, {
+    archiveIfSafe: vi.fn(),
+    archivePublicationIfSafe,
+    resolvePath: resolve,
+  });
+  const event: Event = {
+    workspaceId: "workspace",
+    binding: {
+      providerId: "fixture",
+      repositoryId: "repository",
+      workingCopyId: "copy",
+      cwd: "/copy",
+      root: "/copy",
+    },
+    target: {
+      remote: "origin",
+      repositoryUrl: "https://forge.test/acme/repo",
+      headRef: "feature",
+      baseRef: "main",
+      headRevision: "revision",
+    },
+    forge: "fixture",
+    status: {
+      number: 7,
+      title: "Task",
+      url: "https://forge.test/acme/repo/pull/7",
+      state: "merged",
+      baseRefName: "main",
+      headRefName: "feature",
+      isMerged: true,
+      mergeable: "UNKNOWN",
+      checks: [],
+      checksStatus: "none",
+      reviewDecision: null,
+    },
+  };
+  publicationListener(event);
+  expect(archivePublicationIfSafe).not.toHaveBeenCalled();
+  publicationListener({ ...event, status: { ...event.status!, state: "open", isMerged: false } });
+  publicationListener(event);
+  await vi.waitFor(() => expect(archivePublicationIfSafe).toHaveBeenCalledTimes(1));
+  expect(archivePublicationIfSafe).toHaveBeenCalledWith(expect.objectContaining({ event }));
+  subscription.unsubscribe();
+  expect(stopPublication).toHaveBeenCalledTimes(1);
+});

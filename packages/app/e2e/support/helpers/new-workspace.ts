@@ -332,7 +332,7 @@ export async function selectNewWorkspaceProject(
 // worktree"), so asserting its text proves what the screen currently remembers.
 const ISOLATION_TRIGGER_LABEL: Record<"local" | "worktree", string> = {
   local: "Local",
-  worktree: "New worktree",
+  worktree: "New working copy",
 };
 
 export async function expectWorkspaceIsolationSelected(
@@ -389,7 +389,9 @@ export async function searchAndSelectBranchInPicker(page: Page, name: string): P
 // Ref picker rows are named for a user: "main, origin branch" is the upstream copy and
 // "main, local branch, 2 commits ahead of origin main" is the local one.
 export function startingRefRow(page: Page, accessibleName: string) {
-  return page.getByRole("button", { name: accessibleName, exact: true });
+  return page
+    .getByTestId(/^new-workspace-ref-picker-branch-/)
+    .and(page.getByRole("button", { name: accessibleName, exact: true }));
 }
 
 export async function expectStartingRefRows(page: Page, accessibleNames: string[]): Promise<void> {
@@ -413,14 +415,14 @@ export async function expectStartingRefPickerTriggerPr(
   page: Page,
   input: { number: number; title: string; headRef: string },
 ): Promise<void> {
-  const trigger = page.getByRole("button", { name: "Starting ref" });
+  const trigger = page.getByTestId("new-workspace-ref-picker-trigger");
   await expect(trigger).toContainText(`#${input.number}`);
   await expect(trigger).toContainText(input.title);
   await expect(trigger).not.toContainText(input.headRef);
 }
 
 export async function openBranchPicker(page: Page): Promise<void> {
-  const trigger = page.getByRole("button", { name: "Starting ref" });
+  const trigger = page.getByTestId("new-workspace-ref-picker-trigger");
   await expect(trigger).toBeVisible({ timeout: 30_000 });
   await trigger.click();
 }
@@ -450,7 +452,7 @@ export async function expectPickerClosed(page: Page): Promise<void> {
 }
 
 export async function expectPickerSelected(page: Page, label: string): Promise<void> {
-  const trigger = page.getByRole("button", { name: "Starting ref" });
+  const trigger = page.getByTestId("new-workspace-ref-picker-trigger");
   await expect(trigger).toContainText(label);
 }
 

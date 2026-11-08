@@ -24,7 +24,7 @@ export default function contribute(server: PluginServerContext) {
 
 ## Naming and timing
 
-Names follow `subject.operation.position`: the subject, the operation, then `before` or `after`. The name identifies a lifecycle position. Whether Paseo waits is a per-hook property shown in the table below. `workspace` covers every workspace; `worktree` covers only git worktrees.
+Names follow `subject.operation.position`: the subject, the operation, then `before` or `after`. The name identifies a lifecycle position. Whether Paseo waits is a per-hook property shown in the table below. `workspace` covers every workspace; `working-copy` covers VCS-backed creation; `worktree` covers only the legacy Git worktree workflow.
 
 - Waiting hooks finish before Paseo continues. Throwing, returning invalid data, or exceeding 30 seconds fails the operation with `Plugin <id> <hook> failed: …`. Request-changing hooks receive `{ request }` and may return a complete replacement request or `undefined`.
 - Notifications receive the event object and return `Promise<void>`. Paseo does not wait; errors are logged against the plugin and the operation continues. `agent.turn.before` and `agent.permission.before` are notifications fired when a turn starts or a permission becomes pending.
@@ -33,7 +33,9 @@ All handlers must be async. Turn completion includes success, failure, and cance
 
 Creating an agent happens once, and `agent.create.before` changes its saved configuration. Opening starts the provider process: the first run, resume after a daemon restart, reading history, importing an outside session, or reload. `agent.open.before` contributes launch-only environment, tools, and MCP servers each time. Creating opens the agent; opening an existing agent does not create it; closing ends the running instance. Opening a tab in the app is a separate action.
 
-`worktree.create.after` runs before the workspace is registered. It precedes `workspace.create.after`, and both precede the first agent's `agent.create.before` / `agent.open.before`.
+`working-copy.create.after` runs before the workspace is registered. The legacy Git
+workflow runs `worktree.create.after` first, then the neutral hook. Both precede
+`workspace.create.after` and the first agent's `agent.create.before` / `agent.open.before`.
 
 ### Return early from a waiting hook
 
@@ -49,22 +51,24 @@ Paseo only sees the returned promise, so detached work gets no error reporting a
 
 ## Hooks
 
-| Hook                      | Waits | Payload                                | Handler may change                             |
-| ------------------------- | ----- | -------------------------------------- | ---------------------------------------------- |
-| `workspace.create.before` | yes   | `{ request }`                          | Entire create request                          |
-| `workspace.create.after`  | no    | `{ workspace }`                        |                                                |
-| `workspace.archive.after` | no    | `{ workspace }`                        |                                                |
-| `worktree.create.before`  | yes   | `{ request }`                          | Creation options and destination               |
-| `worktree.create.after`   | yes   | `{ worktree }`                         | Files in the worktree; throw to abort creation |
-| `agent.create.before`     | yes   | `{ request: { config, env? } }`        | Saved config except `cwd`; `env`               |
-| `agent.create.after`      | no    | `{ agent }`                            |                                                |
-| `agent.open.before`       | yes   | `{ request }`                          | Launch-only `env`, `tools`, `mcpServers`       |
-| `agent.close.after`       | no    | `{ agent }`                            |                                                |
-| `agent.archive.after`     | no    | `{ agent, archivedAt }`                |                                                |
-| `agent.turn.before`       | no    | `{ agent, turnId }`                    |                                                |
-| `agent.turn.after`        | no    | `{ agent, turnId, outcome, timeline }` |                                                |
-| `agent.permission.before` | no    | `{ agent, request }`                   |                                                |
-| `agent.permission.after`  | no    | `{ agent, requestId, resolution }`     |                                                |
+| Hook                         | Waits | Payload                                | Handler may change                             |
+| ---------------------------- | ----- | -------------------------------------- | ---------------------------------------------- |
+| `workspace.create.before`    | yes   | `{ request }`                          | Entire create request                          |
+| `workspace.create.after`     | no    | `{ workspace }`                        |                                                |
+| `workspace.archive.after`    | no    | `{ workspace }`                        |                                                |
+| `working-copy.create.before` | yes   | `{ request: { binding, input } }`      | Name, revision, provider data                  |
+| `working-copy.create.after`  | yes   | `{ source, workingCopy }`              | Files in the new copy; throw to abort          |
+| `worktree.create.before`     | yes   | `{ request }`                          | Creation options and destination               |
+| `worktree.create.after`      | yes   | `{ worktree }`                         | Files in the worktree; throw to abort creation |
+| `agent.create.before`        | yes   | `{ request: { config, env? } }`        | Saved config except `cwd`; `env`               |
+| `agent.create.after`         | no    | `{ agent }`                            |                                                |
+| `agent.open.before`          | yes   | `{ request }`                          | Launch-only `env`, `tools`, `mcpServers`       |
+| `agent.close.after`          | no    | `{ agent }`                            |                                                |
+| `agent.archive.after`        | no    | `{ agent, archivedAt }`                |                                                |
+| `agent.turn.before`          | no    | `{ agent, turnId }`                    |                                                |
+| `agent.turn.after`           | no    | `{ agent, turnId, outcome, timeline }` |                                                |
+| `agent.permission.before`    | no    | `{ agent, request }`                   |                                                |
+| `agent.permission.after`     | no    | `{ agent, requestId, resolution }`     |                                                |
 
 ## Shared payloads
 
@@ -146,6 +150,25 @@ server.addHook("workspace.archive.after", async ({ workspace }) => {
 });
 ```
 
+## working-copy.create.before
+
+Receives `{ request: { binding, input } }` before provider-based creation. You can
+change `input.name`, `input.revision`, and versioned `input.data`. The source
+binding and destination `input.root` are fixed. Return the complete request or
+nothing. The legacy Git workflow keeps its own `worktree.create.before` instead.
+
+## working-copy.create.after
+
+Receives `{ source, workingCopy }` after an isolated copy exists and before its
+workspace record, setup, terminals, or agents. `source` is a `VcsBinding` and
+`workingCopy` is a `VcsWorkingCopyRecord`, with exact roots and no required branch.
+This hook covers provider-based Git/Jujutsu creation and the legacy Git worktree
+workflow. A throw or timeout aborts creation and rolls back the new copy.
+
+Query provider-owned file facts with `server.vcs.listLocalFiles(source, query)`;
+the new workspace is not registered yet, so workspace-scoped calls cannot query it. The built-in copier
+uses this API for [`.worktreeinclude`](../worktrees.md#copy-local-files-with-worktreeinclude).
+
 ## worktree.create.before {#worktreecreatebefore}
 
 Choose the location and creation options for a new worktree. Paseo awaits this hook before `git worktree add`, on creation from the app, CLI, MCP, and agent creation. Receives `{ request }`; return a complete replacement request or `undefined` to keep it. Throwing, invalid returned data, or a 30-second timeout aborts creation with the plugin and hook named in the error.
@@ -184,7 +207,7 @@ Every field except `repoRoot` and `sourceCheckout` is transformable. Return all 
 
 Paseo resolves symlinked parents and validates the returned path. It must be absolute, must not exist, and must not be the filesystem root, your home directory, the repository root, inside a `.git` directory, or an ancestor of the repository. An existing destination fails creation; Paseo never adds a suffix to a plugin-chosen path. The plugin must leave directory creation to Paseo.
 
-Ordering: `worktree.create.before` → `git worktree add` → `worktree.create.after` → workspace registration. Restoring a missing worktree recreates it at its recorded path without running either worktree creation hook.
+Ordering: `worktree.create.before` → `git worktree add` → `worktree.create.after` → `working-copy.create.after` → workspace registration. Restoring a missing worktree recreates it at its recorded path without running either worktree creation hook.
 
 ## worktree.create.after
 

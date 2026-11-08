@@ -604,3 +604,130 @@ describe("archiveIfSafe", () => {
     expect(existsSync(worktree.worktreePath)).toBe(true);
   });
 });
+
+test("Git observations cannot archive provider-managed colocated copies", async () => {
+  const harness = createHarness();
+  harness.options.listActiveWorkspaces = async () => [
+    {
+      workspaceId: "ws-auto-archive",
+      cwd: CWD,
+      kind: "worktree",
+      worktreeRoot: CWD,
+      mainRepoRoot: "/repo",
+      isPaseoOwnedWorktree: true,
+      vcsWorkingCopy: {
+        owned: true,
+        binding: {
+          providerId: "fixture",
+          repositoryId: "repo",
+          workingCopyId: "copy",
+          cwd: CWD,
+          root: CWD,
+        },
+      },
+    },
+  ];
+  await runArchiveIfSafe(harness);
+  expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
+  expect(harness.deps.isPaseoOwnedWorktreeCwd).not.toHaveBeenCalled();
+});
+
+test("publication archive stops when the provider reports new work", async () => {
+  const { archivePublicationIfSafe } = await import("./archive-if-safe.js");
+  const harness = createHarness();
+  const canArchive = vi.fn(async () => false);
+  harness.options.vcs = { publication: { canArchive } } as unknown as NonNullable<
+    AutoArchiveArchiveOptions["vcs"]
+  >;
+  await archivePublicationIfSafe({
+    event: {
+      workspaceId: "ws-auto-archive",
+      binding: {
+        providerId: "fixture",
+        repositoryId: "repo",
+        workingCopyId: "copy",
+        cwd: CWD,
+        root: CWD,
+      },
+      target: {
+        remote: "origin",
+        repositoryUrl: "https://forge.test/acme/repo",
+        headRef: "feature",
+        baseRef: "main",
+        headRevision: "revision",
+      },
+      forge: "fixture",
+      status: {
+        ...createPullRequest(),
+        mergeable: "UNKNOWN",
+        checks: [],
+        checksStatus: "none",
+        reviewDecision: null,
+      },
+    },
+    options: harness.options,
+    log: harness.log,
+    deps: harness.deps,
+  });
+  expect(canArchive).toHaveBeenCalledWith(
+    "ws-auto-archive",
+    "fixture",
+    expect.objectContaining({ headRevision: "revision" }),
+  );
+  expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
+});
+
+test.each([true, false])(
+  "publication archive rechecks provider approval immediately before archiving: %s",
+  async (stillSafe) => {
+    const { archivePublicationIfSafe } = await import("./archive-if-safe.js");
+    const harness = createHarness({
+      archiveByScope: async (dependencies) => {
+        await dependencies.archiveWorkspaceRecord("ws-auto-archive");
+        return {
+          archivedAgentIds: [],
+          archivedWorkspaceIds: ["ws-auto-archive"],
+          removedDirectory: true,
+        };
+      },
+    });
+    let checks = 0;
+    const canArchive = vi.fn(async () => ++checks === 1 || stillSafe);
+    const status = {
+      ...createPullRequest(),
+      mergeable: "UNKNOWN" as const,
+      checks: [],
+      checksStatus: "none" as const,
+      reviewDecision: null,
+    };
+    harness.options.vcs = {
+      publication: { canArchive, status: async () => ({ forge: "fixture", status }) },
+    } as unknown as NonNullable<AutoArchiveArchiveOptions["vcs"]>;
+    await archivePublicationIfSafe({
+      event: {
+        workspaceId: "ws-auto-archive",
+        binding: {
+          providerId: "fixture",
+          repositoryId: "repo",
+          workingCopyId: "copy",
+          cwd: CWD,
+          root: CWD,
+        },
+        target: {
+          remote: "origin",
+          repositoryUrl: "https://forge.test/acme/repo",
+          headRef: "feature",
+          baseRef: "main",
+          headRevision: "revision",
+        },
+        forge: "fixture",
+        status,
+      },
+      options: harness.options,
+      log: harness.log,
+      deps: harness.deps,
+    });
+    expect(canArchive).toHaveBeenCalledTimes(2);
+    expect(harness.options.archiveWorkspaceRecord).toHaveBeenCalledTimes(stillSafe ? 1 : 0);
+  },
+);

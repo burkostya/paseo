@@ -1041,6 +1041,7 @@ export class GitHubEnterpriseHostProbeError extends Error {
 }
 
 interface CreateGitHubServiceOptions {
+  repositoryUrl?: string;
   ttlMs?: number;
   runner?: GitHubCommandRunner;
   resolveGhPath?: () => Promise<string | null>;
@@ -1121,13 +1122,23 @@ interface ResolvedPullRequestCandidate {
 }
 
 export function createGitHubService(options: CreateGitHubServiceOptions = {}): GitHubService {
+  const publicationRepository = options.repositoryUrl
+    ? parseGitRemoteLocation(options.repositoryUrl)
+    : null;
+  if (options.repositoryUrl && !publicationRepository)
+    throw new Error("Invalid GitHub repository URL");
   const ttlMs = options.ttlMs ?? DEFAULT_GITHUB_CACHE_TTL_MS;
   const deps: GitHubServiceDependencies = {
     runner: options.runner ?? runGhCommand,
     resolveGhPath: options.resolveGhPath ?? resolveGhPath,
     now: options.now ?? Date.now,
-    resolveRepoHost: options.resolveRepoHost ?? resolveGitHubEnterpriseHost,
-    resolveRepoSlug: options.resolveRepoSlug ?? resolveGitHubSlugFromOrigin,
+    resolveRepoHost: publicationRepository
+      ? async () =>
+          `${publicationRepository.host}${publicationRepository.port ? `:${publicationRepository.port}` : ""}`
+      : (options.resolveRepoHost ?? resolveGitHubEnterpriseHost),
+    resolveRepoSlug: publicationRepository
+      ? async () => publicationRepository.path
+      : (options.resolveRepoSlug ?? resolveGitHubSlugFromOrigin),
   };
   // A resolved enterprise host is cached permanently; a null resolution (no
   // host, or the auth probe said no) expires so `gh auth login --hostname`
@@ -1325,7 +1336,14 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     // safe even for auto-routing subcommands because it matches the repo's host.
     const host = await resolveRepoHostCached(runOptions.cwd);
     const effectiveOptions: GitHubCommandRunnerOptions = host
-      ? { ...runOptions, envOverlay: { ...runOptions.envOverlay, GH_HOST: host } }
+      ? {
+          ...runOptions,
+          envOverlay: {
+            ...runOptions.envOverlay,
+            GH_HOST: host,
+            ...(publicationRepository ? { GH_REPO: `${host}/${publicationRepository.path}` } : {}),
+          },
+        }
       : runOptions;
     try {
       const result = await deps.runner(args, effectiveOptions);
@@ -2483,7 +2501,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       // transient `gh repo view` failure can't block PR creation on github.com.
       // `gh repo view` is the fallback: it auto-routes to the cwd remote's host
       // (covering GitHub Enterprise Server) and survives a renamed repo.
-      let slug = await resolveGitHubSlugFromOrigin(input.cwd);
+      let slug = await deps.resolveRepoSlug(input.cwd);
       if (!slug) {
         const repoView = await getGitHubRepoView({ cwd: input.cwd, run });
         slug =
@@ -2505,11 +2523,12 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         { cwd: input.cwd },
         z.object({
           url: z.string(),
+          html_url: z.string().optional(),
           number: z.number(),
         }),
         "{}",
       );
-      return parsed;
+      return { url: parsed.html_url ?? parsed.url, number: parsed.number };
     },
 
     async mergePullRequest(input) {

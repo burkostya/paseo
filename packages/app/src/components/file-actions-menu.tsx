@@ -1,4 +1,4 @@
-import { Fragment, useMemo, type ReactElement } from "react";
+import { Fragment, useMemo, type ReactElement, type ReactNode } from "react";
 import { withUnistyles } from "react-native-unistyles";
 import {
   ArrowRightToLine,
@@ -49,6 +49,7 @@ function optionalFileAction(
 }
 
 interface FileActionsContextMenuContentProps {
+  extraActions?: ReactNode;
   fileKind: "file" | "directory";
   fileExists?: boolean;
   onOpenFile?: () => void;
@@ -76,6 +77,7 @@ interface FileActionsContextMenuContentProps {
  * own their row triggers while sharing action availability, ordering, and chrome here.
  */
 export function FileActionsContextMenuContent({
+  extraActions,
   fileKind,
   fileExists = true,
   onOpenFile,
@@ -271,7 +273,7 @@ export function FileActionsContextMenuContent({
     testIDPrefix,
   ]);
 
-  if (actions.length === 0) {
+  if (actions.length === 0 && !extraActions) {
     return null;
   }
   return (
@@ -280,6 +282,7 @@ export function FileActionsContextMenuContent({
       width={220}
       testID={testIDPrefix ? `${testIDPrefix}-context-menu` : undefined}
     >
+      {extraActions}
       {actions.map((action) => (
         <Fragment key={action.key}>
           {action.separatorBefore ? <ContextMenuSeparator /> : null}

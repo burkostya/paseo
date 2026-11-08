@@ -33,6 +33,7 @@ interface PickerControl {
 export interface NewWorkspaceFormProps {
   isCompact: boolean;
   isPending: boolean;
+  vcsBase?: ReactNode;
   project: PickerControl & {
     options: ComboboxOption[];
     projectByOptionId: Map<string, HostProjectListItem>;
@@ -54,6 +55,7 @@ export interface NewWorkspaceFormProps {
   };
   isolation: PickerControl & {
     effectiveIsolation: Isolation;
+    copyLabel?: string;
     canCreateWorktree: boolean;
     onSelect: (isolation: Isolation) => void;
   };
@@ -128,14 +130,19 @@ function useIsolationPicker(
   isPending: boolean,
 ): { options: ComboboxOption[]; onSelect: (id: string) => void; renderOption: RenderOption } {
   const { t } = useTranslation();
-  const { canCreateWorktree, onSelect, onOpenChange } = isolation;
-  // "New worktree" is omitted entirely (not disabled) when the project isn't a
-  // git checkout, since worktree isolation is impossible there.
+  const { canCreateWorktree, onSelect, onOpenChange, copyLabel } = isolation;
+  // Hide isolation when the selected provider cannot create working copies.
   const options = useMemo<ComboboxOption[]>(() => {
     const local = { id: "local", label: t("newWorkspace.isolation.local") };
     if (!canCreateWorktree) return [local];
-    return [local, { id: "worktree", label: t("newWorkspace.isolation.worktree") }];
-  }, [canCreateWorktree, t]);
+    return [
+      local,
+      {
+        id: "worktree",
+        label: copyLabel ?? t("newWorkspace.isolation.worktree"),
+      },
+    ];
+  }, [canCreateWorktree, copyLabel, t]);
   const handleSelect = useCallback(
     (id: string) => {
       onSelect(id === "worktree" ? "worktree" : "local");
@@ -196,7 +203,7 @@ export function useNewWorkspaceForm(props: NewWorkspaceFormProps): ReactElement 
   );
   const isWorktree = isolation.effectiveIsolation === "worktree";
   const isolationValue = isWorktree
-    ? t("newWorkspace.isolation.worktree")
+    ? (isolation.copyLabel ?? t("newWorkspace.isolation.worktree"))
     : t("newWorkspace.isolation.local");
   const refIcon = base.selectedItem?.kind === "github-pr" ? pullRequestIcon : branchIcon;
 
@@ -258,20 +265,22 @@ export function useNewWorkspaceForm(props: NewWorkspaceFormProps): ReactElement 
       testID="workspace-create-isolation-trigger"
     />
   ) : null;
-  const baseField = base.showRefPicker ? (
-    <FieldTrigger
-      ref={base.anchorRef}
-      variant={variant}
-      label={t("newWorkspace.fields.branch")}
-      accessibilityLabel={t("newWorkspace.refPicker.startingRef")}
-      tooltip={t("newWorkspace.tooltips.startingRef")}
-      icon={refIcon}
-      value={base.triggerLabel}
-      onPress={base.open}
-      disabled={isPending || !base.selectedSourceDirectory}
-      testID="new-workspace-ref-picker-trigger"
-    />
-  ) : null;
+  const baseField =
+    props.vcsBase ??
+    (base.showRefPicker ? (
+      <FieldTrigger
+        ref={base.anchorRef}
+        variant={variant}
+        label={t("newWorkspace.fields.branch")}
+        accessibilityLabel={t("newWorkspace.refPicker.startingRef")}
+        tooltip={t("newWorkspace.tooltips.startingRef")}
+        icon={refIcon}
+        value={base.triggerLabel}
+        onPress={base.open}
+        disabled={isPending || !base.selectedSourceDirectory}
+        testID="new-workspace-ref-picker-trigger"
+      />
+    ) : null);
   const launchField = (
     <LaunchControl
       variant={variant}

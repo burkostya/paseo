@@ -2,6 +2,7 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const zhCN: TranslationResources = {
+  vcs: { ...en.vcs, diffUnavailable: "此提供程序不支持差异比较。" },
   worktreeImport: {
     title: "添加现有工作树…",
     chooseHost: "选择主机",
@@ -1383,6 +1384,7 @@ export const zhCN: TranslationResources = {
     title: "新建 workspace",
     create: "创建",
     isolation: {
+      workingCopy: "新工作副本",
       local: "本地",
       worktree: "新建 worktree",
       label: "隔离",
@@ -3038,6 +3040,16 @@ export const zhCN: TranslationResources = {
       },
     },
     project: {
+      vcs: {
+        title: "版本控制",
+        provider: "提供方",
+        none: "无",
+        unavailable: "{{provider}}（不可用）",
+        loading: "加载中…",
+        saving: "切换中…",
+        retry: "重试",
+        offline: "主机已断开连接",
+      },
       noEditableTarget: "此项目无法在这个 Host 上编辑。",
       backToProjects: "返回 Projects",
       edit: {

@@ -1,3 +1,9 @@
+import { vcsRpc } from "@getpaseo/plugin";
+import {
+  createVcsHandler,
+  VcsError,
+  type VcsProviderRegistration,
+} from "@getpaseo/plugin/server/vcs";
 import { PluginAgentTools } from "./agent-tools.js";
 import { PluginHookHandlers } from "./lifecycle/index.js";
 import { evaluateBundle } from "./bundle-evaluator.js";
@@ -67,6 +73,8 @@ export function createPluginWorker(options: {
   }, agentTools);
   const handlers = new Map<string, RegisteredRpc>();
   const providers = new Map<string, ProviderRegistration>();
+  const vcsProviders = new Map<string, { id: string; label: string; detectionPriority?: number }>();
+  const vcsCleanups: Array<() => void> = [];
   const usageSources = new Map<string, UsageSourceRegistration>();
   const providerConnections = new Map<
     string,
@@ -137,6 +145,25 @@ export function createPluginWorker(options: {
       throw new Error(`Invalid command for plugin provider ${id}`);
     if (providers.has(id)) throw new Error(`Duplicate plugin provider ID: ${id}`);
     providers.set(id, { ...provider, id });
+  }
+
+  function registerVcsProvider(provider: VcsProviderRegistration): void {
+    if (vcsProviders.has(provider.id)) throw new Error(`Duplicate VCS provider: ${provider.id}`);
+    const runtime = createVcsHandler(provider);
+    register(vcsRpc(provider.id), (input) =>
+      runtime.handle(vcsRpc(provider.id).input.parse(input)).catch((error: unknown) => {
+        if (error instanceof VcsError) return { kind: "error" as const, error: error.problem };
+        throw error;
+      }),
+    );
+    vcsProviders.set(provider.id, {
+      id: provider.id,
+      label: provider.label,
+      ...(provider.detectionPriority !== undefined
+        ? { detectionPriority: provider.detectionPriority }
+        : {}),
+    });
+    vcsCleanups.push(runtime.dispose);
   }
 
   function registerUsageSource(source: UsageSourceRegistration): void {
@@ -288,6 +315,29 @@ export function createPluginWorker(options: {
         register(contract, (input, context) => handler(contract.input.parse(input), context)),
       registerProvider,
       registerUsageSource,
+      registerVcsProvider,
+      vcs: {
+        async comparisonContext(binding) {
+          if (!daemonClient) throw new Error("Plugin daemon connection is unavailable");
+          return daemonClient.requestVcs({ type: "vcs.comparison.context.request", binding });
+        },
+        async resolveChangeRequest(query) {
+          if (!daemonClient) throw new Error("Plugin daemon connection is unavailable");
+          return daemonClient.requestVcs({
+            type: "vcs.change-request.resolve-checkout.request",
+            query,
+          });
+        },
+        async listLocalFiles(binding, query) {
+          if (!daemonClient) throw new Error("Plugin daemon connection is unavailable");
+          const result = await daemonClient.requestVcs({
+            type: "vcs.local-files.list.request",
+            binding,
+            query,
+          });
+          return result.paths;
+        },
+      },
       registerSettings,
       addHook: hooks.addHook,
       on: hooks.on,
@@ -316,6 +366,7 @@ export function createPluginWorker(options: {
         .sort((left, right) => left.id.localeCompare(right.id))
         .map(providerMetadata),
       usageSources: usageSourceMetadata,
+      vcsProviders: [...vcsProviders.values()],
     });
   }
 
@@ -325,6 +376,7 @@ export function createPluginWorker(options: {
     const releaseApi = paseo
       ?.dispose()
       .catch((error) => console.error("Plugin API cleanup failed", error));
+    for (const dispose of vcsCleanups) dispose();
     hooks.close();
     agentTools.close();
     for (const pending of pendingProviderConnections.values()) pending.tombstoned = true;

@@ -78,6 +78,7 @@ interface LoadedPlugin {
   hooks: string[];
   providers: readonly PluginProviderMetadata[];
   usageSources: readonly PluginUsageSourceMetadata[];
+  vcsProviders: readonly { id: string; label: string; detectionPriority?: number }[];
   child: PluginChild | null;
   outputCapture: PluginOutputCapture | null;
   pending: Map<string, PendingInvocation>;
@@ -393,6 +394,12 @@ export class PluginRuntime {
     return this.plugins.get(pluginId)?.providers ?? [];
   }
 
+  getVcsProviderRegistrations(
+    pluginId: string,
+  ): readonly { id: string; label: string; detectionPriority?: number }[] {
+    return this.plugins.get(pluginId)?.vcsProviders ?? [];
+  }
+
   getUsageSourceRegistrations(pluginId: string): readonly PluginUsageSourceMetadata[] {
     return this.plugins.get(pluginId)?.usageSources ?? [];
   }
@@ -542,9 +549,9 @@ export class PluginRuntime {
     await Promise.all(this.pendingEvents);
   }
 
-  async wait(
-    name: "worktree.create.after",
-    payload: PluginHookPayload<"worktree.create.after">,
+  async wait<Name extends "worktree.create.after" | "working-copy.create.after">(
+    name: Name,
+    payload: PluginHookPayload<Name>,
   ): Promise<void> {
     const plugins = [...this.plugins.values()].sort((left, right) =>
       left.id.localeCompare(right.id),
@@ -784,6 +791,7 @@ export class PluginRuntime {
         hooks: [],
         providers: [],
         usageSources: [],
+        vcsProviders: [],
         child: null,
         outputCapture: null,
         pending: new Map(),
@@ -914,6 +922,7 @@ export class PluginRuntime {
       hooks: ready.hooks ?? [],
       providers: ready.providers ?? [],
       usageSources: ready.usageSources ?? [],
+      vcsProviders: ready.vcsProviders ?? [],
       child,
       outputCapture,
       pending,

@@ -1,3 +1,4 @@
+import { BuiltinPluginLoader, resolveBuiltinPluginsRoot } from "../plugins/builtin/index.js";
 import { execFileSync } from "node:child_process";
 import type { z } from "zod";
 import { BUILTIN_PROVIDER_IDS } from "@getpaseo/protocol/provider-manifest";
@@ -573,3 +574,86 @@ test("Hub-shaped keyed agent worktree creation uses workspace setup and preserve
     await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }
 }, 60000);
+
+test.each(["git", "jj"])(
+  "provider working-copy creation runs setup once and reconnects with the same resources for %s",
+  async (providerId) => {
+    const directory = await mkdtemp(join(tmpdir(), "provider-working-copy-"));
+    const daemon = await createCreationDaemon({
+      builtinPlugins: new BuiltinPluginLoader(resolveBuiltinPluginsRoot(), ["git-vcs", "jj-vcs"]),
+    });
+    let client = new DaemonClient({
+      url: `ws://127.0.0.1:${daemon.port}/ws`,
+      clientId: "working-copy-owner",
+    });
+    try {
+      await initializeSetupRepository(directory);
+      if (providerId === "jj")
+        execFileSync("jj", ["git", "init", "--colocate", directory], { stdio: "pipe" });
+      await client.connect();
+      const imported = await client.createWorkspace({
+        source: { kind: "directory", path: directory },
+      });
+      expect(imported.error).toBeNull();
+      const projectId = imported.workspace!.projectId;
+      const request = {
+        idempotencyKey: `provider-copy-${providerId}`,
+        source: { kind: "working-copy" as const, projectId },
+        agent: { config: { provider: "codex", cwd: directory } },
+      };
+      const first = await client.createWorkspace(request);
+      expect(first.error).toBeNull();
+      expect(first.workspace!.workspaceDirectory).not.toBe(directory);
+      expect(first.agent!.cwd).toBe(first.workspace!.workspaceDirectory);
+      await expect
+        .poll(async () => (await client.fetchWorkspaceSetupStatus(first.workspace!.id)).snapshot, {
+          timeout: 10000,
+        })
+        .toMatchObject({ status: "completed" });
+      expect(await readFile(join(first.workspace!.workspaceDirectory!, "setup-runs"), "utf8")).toBe(
+        "once\n",
+      );
+      await client.close();
+      client = new DaemonClient({
+        url: `ws://127.0.0.1:${daemon.port}/ws`,
+        clientId: "working-copy-owner",
+      });
+      await client.connect();
+      const replay = await client.createWorkspace(request);
+      expect(replay.error).toBeNull();
+      expect(replay.workspace!.id).toBe(first.workspace!.id);
+      expect(replay.agent!.id).toBe(first.agent!.id);
+      expect(await readFile(join(first.workspace!.workspaceDirectory!, "setup-runs"), "utf8")).toBe(
+        "once\n",
+      );
+      const snapshot = await client.requestVcs({
+        type: "vcs.snapshot.get.request",
+        workspaceId: first.workspace!.id,
+      });
+      expect(snapshot.binding.providerId).toBe(providerId);
+      await expect(
+        client.requestVcs({
+          type: "vcs.actions.execute.request",
+          workspaceId: first.workspace!.id,
+          operationId: "bypass",
+          version: snapshot.version,
+          action: "working-copy.create",
+          input: {},
+        }),
+      ).rejects.toThrow("Use workspace creation");
+      const rejected = await client.createWorkspace({
+        source: {
+          kind: "working-copy",
+          projectId,
+          providerData: { version: 1, data: { unsupported: true } },
+        },
+      });
+      expect(rejected.error).toContain("no custom working-copy creation options");
+      expect(rejected.workspace).toBeNull();
+    } finally {
+      await client.close();
+      await daemon.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);

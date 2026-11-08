@@ -1,3 +1,4 @@
+export type { JsonValue } from "@getpaseo/protocol/agent-types";
 // Shared SDK entry. Keep runtime-specific imports and re-exports on /client or /server.
 export type {
   PluginTheme,
@@ -29,3 +30,5 @@ export {
   type PluginSerializableIcon,
   type PluginSvgIcon,
 } from "./icons.js";
+
+export * from "./vcs.js";

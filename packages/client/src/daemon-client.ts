@@ -1,4 +1,10 @@
 import {
+  VcsRequestError,
+  type VcsClientRequest,
+  type VcsResult,
+  type VcsResponseType,
+} from "./vcs/index.js";
+import {
   ChunkedTransport,
   ChunkedTransportProtocolError,
 } from "@getpaseo/protocol/chunked-transport";
@@ -2673,6 +2679,19 @@ export class DaemonClient {
                   requestId: payload.requestId,
                   requestType: message.type,
                   error: payload.error,
+                });
+              if (
+                responseType === "vcs.snapshot.get.response" &&
+                "error" in payload &&
+                payload.error &&
+                typeof payload.error === "object" &&
+                "message" in payload.error &&
+                typeof payload.error.message === "string"
+              )
+                throw new DaemonRpcError({
+                  requestId,
+                  requestType: message.type,
+                  error: payload.error.message,
                 });
               accept(payload);
               return payload;
@@ -6333,6 +6352,38 @@ export class DaemonClient {
     return payload.plugin;
   }
 
+  observeVcsSnapshot(workspaceId: string, providerId?: string, options?: { signal?: AbortSignal }) {
+    if (
+      this.getLastServerInfoMessage()?.features?.vcsObservation !== true ||
+      this.getLastServerInfoMessage()?.features?.ownedSubscriptions !== true
+    )
+      throw new Error("Update the host to observe VCS changes.");
+    return this.observe(
+      "vcs.snapshot.get.response",
+      { type: "vcs.snapshot.get.request", workspaceId, providerId, subscribe: {} },
+      options,
+    );
+  }
+
+  async requestVcs<Request extends VcsClientRequest>(
+    request: Request,
+    requestId?: string,
+  ): Promise<VcsResult<Request["type"]>> {
+    this.ensureConnected();
+    assertVcsCapabilities(request, this.getLastServerInfoMessage()?.features ?? {});
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: request,
+      responseType: request.type.replace(/\.request$/, ".response") as VcsResponseType<
+        Request["type"]
+      >,
+    });
+    if (payload.error) throw new VcsRequestError(payload.error);
+    if (payload.result === null) throw new Error("VCS response is missing its result");
+    // The response discriminator is derived from the request and validated at the transport boundary.
+    return payload.result as VcsResult<Request["type"]>;
+  }
+
   async invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown> {
     const requestId = this.createRequestId();
     const payload = await this.sendCorrelatedSessionRequest({
@@ -7752,4 +7803,46 @@ function resolveAgentConfig(options: CreateAgentRequestOptions): AgentSessionCon
     provider: merged.provider,
     cwd: merged.cwd,
   };
+}
+
+function assertVcsCapabilities(
+  request: VcsClientRequest,
+  features: NonNullable<ServerInfoStatusPayload["features"]>,
+) {
+  if (request.type === "vcs.actions.preview.request" && features.vcsActionPreview !== true)
+    throw new Error("Update the host to preview VCS actions.");
+  if (request.type === "vcs.comparison.context.request" && features.vcsComparisonContext !== true)
+    throw new Error("Update the host to read VCS comparison context.");
+  if (
+    (request.type === "vcs.comparison.get.request" ||
+      request.type === "vcs.comparison.set.request") &&
+    features.vcsComparisonSettings !== true
+  )
+    throw new Error("Update the host to save VCS comparison settings.");
+  if (features.vcsProviders !== true) {
+    throw new Error("Update the host to use VCS providers.");
+  }
+  if (
+    (request.type.startsWith("vcs.publication.") ||
+      request.type.startsWith("vcs.change-request.")) &&
+    features.vcsPublication !== true
+  ) {
+    throw new Error("Update the host to use VCS publication.");
+  }
+  if (
+    (request.type === "vcs.project.snapshot.get.request" ||
+      request.type === "vcs.project.history.list.request") &&
+    features.vcsProjectReads !== true
+  )
+    throw new Error("Update the host to read project VCS state.");
+  if (
+    request.type === "vcs.change-request.resolve-checkout.request" &&
+    features.vcsForgeCheckout !== true
+  )
+    throw new Error("Update the host to resolve forge checkout sources.");
+  if (
+    request.type === "vcs.project.working-copy.resolve-source.request" &&
+    features.vcsWorkingCopySources !== true
+  )
+    throw new Error("Update the host to prepare working-copy sources.");
 }

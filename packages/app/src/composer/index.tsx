@@ -921,6 +921,8 @@ interface ComposerProps {
   agentId: string;
   serverId: string;
   workspaceId?: string | null;
+  /** Supply a resolved remote, or null to avoid the legacy Git lookup. */
+  repositoryRemoteUrl?: string | null;
   isPaneFocused: boolean;
   onSubmitMessage?: (payload: MessagePayload) => Promise<void>;
   onClientSlashCommand?: (command: ClientSlashCommand) => Promise<void>;
@@ -1249,6 +1251,7 @@ function ComposerContentImpl({
   agentId,
   serverId,
   workspaceId,
+  repositoryRemoteUrl,
   onSubmitMessage,
   onClientSlashCommand,
   hasExternalContent = false,
@@ -1346,7 +1349,10 @@ function ComposerContentImpl({
     onOpenWorkspaceAttachment,
   });
   const setSelectedAttachments = onChangeAttachments;
-  const checkoutStatusQuery = useCheckoutStatusQuery({ serverId, cwd });
+  const checkoutStatusQuery = useCheckoutStatusQuery({
+    serverId,
+    cwd: repositoryRemoteUrl === undefined ? cwd : "",
+  });
   const supportsForgeSearch = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.forgeSearch === true,
   );
@@ -1354,7 +1360,10 @@ function ComposerContentImpl({
   const [isForgeResolving, setIsForgeResolving] = useState(false);
   const forgeConfiguration = useMemo(
     () => ({
-      remoteUrl: resolveCheckoutRemoteUrl(checkoutStatusQuery.status),
+      remoteUrl:
+        repositoryRemoteUrl === undefined
+          ? resolveCheckoutRemoteUrl(checkoutStatusQuery.status)
+          : repositoryRemoteUrl,
       attachments,
       client,
       isConnected,
@@ -1367,6 +1376,7 @@ function ComposerContentImpl({
     }),
     [
       checkoutStatusQuery.status,
+      repositoryRemoteUrl,
       attachments,
       client,
       isConnected,

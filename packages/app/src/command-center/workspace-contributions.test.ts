@@ -116,6 +116,19 @@ function source(gitActions: GitActions): {
 }
 
 describe("workspace command center contributions", () => {
+  it("omits actions supplied by the VCS catalog and retains other Git actions", () => {
+    const fixture = source({
+      primary: gitAction("commit", "Commit"),
+      secondary: [gitAction("push", "Push"), gitAction("merge-branch", "Merge branch")],
+      menu: [],
+    });
+    fixture.value.omitGitActionIds = ["commit", "push"];
+    const contributions = buildWorkspaceCommandCenterContributions(fixture.value);
+    expect(
+      contributions.filter((item) => item.id.startsWith("git:")).map((item) => item.id),
+    ).toEqual(["git:merge-branch"]);
+  });
+
   it("makes only the policy-selected primary Git action default-visible and runs it", () => {
     const primary = gitAction("commit", "Commit");
     const fixture = source({

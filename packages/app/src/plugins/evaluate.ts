@@ -21,6 +21,7 @@ import {
   type PluginScreenProps,
   type PluginScreenTitle,
   type PluginText,
+  type PluginVcsContribution,
   type PluginSurfaceProps,
   type PluginTimelineRendererContribution,
   type PluginTimelineTransformerContribution,
@@ -132,6 +133,7 @@ export function runPluginClientBundle(
     legacySidebarItems: [],
     filePanels: [],
     workspacePanels: [],
+    vcsContributions: [],
     commandCenterItems: [],
     clientSlashCommands: [],
     attachmentSources: [],
@@ -344,6 +346,75 @@ export function runPluginClientBundle(
         },
         () => filePanelIds.delete(panelId),
       );
+    },
+    addVcsContribution(input) {
+      const providerId = requireId(input.providerId, "VCS provider ID");
+      if (collector.vcsContributions.some((item) => item.providerId === providerId))
+        throw new Error(`Duplicate VCS contribution: ${providerId}`);
+      const actions = input.actions.map((action) => {
+        if (!action.id.trim() || action.id.startsWith("working-copy."))
+          throw new Error(`Invalid VCS action: ${action.id}`);
+        const contexts = [...action.contexts];
+        if (
+          !contexts.length ||
+          contexts.some((value) => !["workspace", "revision", "ref"].includes(value))
+        )
+          throw new Error(`Invalid VCS action context: ${action.id}`);
+        const fileContexts = action.fileContexts ? [...action.fileContexts] : undefined;
+        if (fileContexts?.some((value) => value !== "file" && value !== "directory"))
+          throw new Error(`Invalid VCS file action context: ${action.id}`);
+        if (action.Form ? !isComponentType(action.Form) : typeof action.input !== "function")
+          throw new Error(`VCS action ${action.id} needs a form or input function`);
+        return {
+          ...action,
+          title: normalizePluginText(action.title),
+          contexts,
+          fileContexts,
+          ...(action.icon
+            ? { icon: parsePluginIcon(`VCS action ${action.id} icon`, action.icon) }
+            : {}),
+        };
+      });
+      if (new Set(actions.map((action) => action.id)).size !== actions.length)
+        throw new Error("Duplicate VCS action ID");
+      const panels = input.panels?.map((panel) => {
+        if (!isComponentType(panel.Component)) throw new Error(`Invalid VCS panel: ${panel.id}`);
+        const entryPoints = panel.entryPoints ? [...panel.entryPoints] : undefined;
+        if (entryPoints?.some((value) => value !== "workspace" && value !== "command-center"))
+          throw new Error(`Invalid VCS panel entry point: ${panel.id}`);
+        return {
+          ...panel,
+          id: requireId(panel.id, "VCS panel ID"),
+          title: normalizePluginText(panel.title),
+          entryPoints,
+          ...(panel.icon
+            ? { icon: parsePluginIcon(`VCS panel ${panel.id} icon`, panel.icon) }
+            : {}),
+        };
+      });
+      if (panels && new Set(panels.map((panel) => panel.id)).size !== panels.length)
+        throw new Error("Duplicate VCS panel ID");
+      if (input.resolveComparison !== undefined && typeof input.resolveComparison !== "function")
+        throw new Error("Invalid VCS comparison resolver");
+      if (input.repositoryUrl !== undefined && typeof input.repositoryUrl !== "function")
+        throw new Error("Invalid VCS repository URL resolver");
+      validateVcsForms(input);
+      const comparisons = input.comparisons?.map((item) => ({
+        id: requireId(item.id, "VCS comparison ID"),
+        title: normalizePluginText(item.title),
+      }));
+      if (comparisons && new Set(comparisons.map((item) => item.id)).size !== comparisons.length)
+        throw new Error("Duplicate VCS comparison ID");
+      const contribution = {
+        ...input,
+        comparisons,
+        resolveComparison: input.resolveComparison,
+        providerId,
+        title: normalizePluginText(input.title),
+        actions,
+        panels,
+      };
+      return register(collector.vcsContributions, contribution, () => {});
     },
     addAgentPanel(contribution: PluginAgentPanelContribution<PluginText>) {
       return registerPanel({ ...contribution, context: "agent" });
@@ -586,6 +657,7 @@ export function runPluginClientBundle(
     legacySidebarItems: collector.legacySidebarItems,
     filePanels: collector.filePanels,
     workspacePanels: collector.workspacePanels as EvaluatedPlugin["workspacePanels"],
+    vcsContributions: collector.vcsContributions,
     commandCenterItems: collector.commandCenterItems,
     clientSlashCommands: collector.clientSlashCommands,
     attachmentSources: collector.attachmentSources,
@@ -593,4 +665,15 @@ export function runPluginClientBundle(
     timelineTransformers: collector.timelineTransformers,
     timelineRenderers: collector.timelineRenderers,
   };
+}
+
+function validateVcsForms(input: PluginVcsContribution<PluginText>) {
+  if (input.ComparisonSettings !== undefined && !isComponentType(input.ComparisonSettings))
+    throw new Error("Invalid VCS comparison settings form");
+  if (input.ProjectSource !== undefined && !isComponentType(input.ProjectSource))
+    throw new Error("Invalid VCS project source form");
+  if (input.workingCopy !== undefined && !isComponentType(input.workingCopy.Form))
+    throw new Error("Invalid VCS working-copy form");
+  if (input.workingCopy?.validate !== undefined && typeof input.workingCopy.validate !== "function")
+    throw new Error("Invalid VCS working-copy validator");
 }

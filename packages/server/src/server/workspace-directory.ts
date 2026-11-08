@@ -1,3 +1,4 @@
+import { legacyProjectKind } from "./workspace-registry-model.js";
 import { resolve } from "node:path";
 import type pino from "pino";
 import type {
@@ -585,6 +586,7 @@ export class WorkspaceDirectory {
       )
       .map((project) => ({
         projectId: project.projectId,
+        vcsProviderId: project.vcsProviderId,
         projectKey: project.projectKey ?? undefined,
         projectDisplayName: resolveProjectDisplayName(project),
         projectCustomName: project.customName ?? null,
@@ -592,7 +594,7 @@ export class WorkspaceDirectory {
         diffComparisonV2: project.diffComparisonV2,
         projectCustomIconRevision: project.customIconRevision ?? null,
         projectRootPath: project.rootPath,
-        projectKind: project.kind,
+        projectKind: legacyProjectKind(project),
       }));
   }
 

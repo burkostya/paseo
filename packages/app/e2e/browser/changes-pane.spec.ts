@@ -1,8 +1,18 @@
+import { openCommandCenter } from "../support/helpers/command-center";
+import {
+  loadSessionMessageReaders,
+  selectWorkspaceIsolation,
+} from "../support/helpers/new-workspace";
+import { copyPluginExample } from "../support/helpers/plugin-fixture";
 import { execFileSync } from "node:child_process";
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rmdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { type Locator, type Page } from "@playwright/test";
-import { buildHostWorkspaceRoute, buildSettingsSectionRoute } from "../../src/utils/host-routes";
+import {
+  buildHostWorkspaceRoute,
+  buildSettingsSectionRoute,
+  buildNewWorkspaceRoute,
+} from "../../src/utils/host-routes";
 import { test, expect } from "../support/fixtures";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { getServerId } from "../support/helpers/server-id";
@@ -52,6 +62,27 @@ async function readFileIfPresent(filePath: string): Promise<string | null> {
   }
 }
 
+// COMPAT(vcsGitUi): v0.15.2; retain old Git controls for pre-base-comparison hosts until 2027-06-06.
+async function useLegacyGitSurface(page: Page): Promise<void> {
+  await page.routeWebSocket(daemonWsRoutePattern(), (browser) => {
+    const server = browser.connectToServer();
+    browser.onMessage((message) => server.send(message));
+    server.onMessage((message) => browser.send(legacyGitMessage(message)));
+  });
+}
+
+function legacyGitMessage(message: string | Buffer): string | Buffer {
+  if (typeof message !== "string") return message;
+  const envelope = JSON.parse(message) as {
+    message?: { type?: string; payload?: { status?: string; features?: Record<string, unknown> } };
+  };
+  if (envelope.message?.type === "status" && envelope.message.payload?.status === "server_info") {
+    delete envelope.message.payload.features?.vcsComparisonViews;
+    delete envelope.message.payload.features?.vcsBaseComparisons;
+  }
+  return JSON.stringify(envelope);
+}
+
 async function failNextDiscardRequest(page: Page): Promise<void> {
   await page.routeWebSocket(daemonWsRoutePattern(), (browserSocket) => {
     const serverSocket = browserSocket.connectToServer();
@@ -80,7 +111,7 @@ async function failNextDiscardRequest(page: Page): Promise<void> {
       }
       serverSocket.send(message);
     });
-    serverSocket.onMessage((message) => browserSocket.send(message));
+    serverSocket.onMessage((message) => browserSocket.send(legacyGitMessage(message)));
   });
 }
 
@@ -264,13 +295,81 @@ test.afterEach(async () => {
 
 test("Changes opens All changes for a clean checkout", async ({ page }) => {
   const workspace = await createWorkspaceWithCommittedDiff();
-
+  const reviewKey = `review:server=${encodeURIComponent(getServerId())}:workspace=${encodeURIComponent(workspace.id)}:mode=all:base=refs%2Fremotes%2Fpaseo-fixture%2Fmain:ignoreWhitespace=false`;
+  await page.addInitScript(
+    ({ key }) => {
+      if (localStorage.getItem("@paseo:review-draft-store")) return;
+      localStorage.setItem(
+        "@paseo:review-draft-store",
+        JSON.stringify({
+          version: 2,
+          state: {
+            drafts: {
+              [key]: [
+                {
+                  id: "legacy-comment",
+                  filePath: "committed-only.ts",
+                  side: "new",
+                  lineNumber: 1,
+                  body: "Saved before the common VCS screen",
+                  createdAt: "2026-11-01T00:00:00Z",
+                  updatedAt: "2026-11-01T00:00:00Z",
+                },
+              ],
+            },
+          },
+        }),
+      );
+    },
+    { key: reviewKey },
+  );
   await openWorkspaceChangesSurface(page, workspace, 90_000);
 
   const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
   const tree = page.getByTestId("changes-tree-panel").filter({ visible: true });
-  await expect(tree.getByTestId("changes-comparison-trigger")).toContainText("All changes");
+  await expect(tree.getByTestId("vcs-comparison")).toContainText("Workspace settings");
   await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("committed-only.ts, +1, -0");
+  await expect(
+    panel.getByText("Saved before the common VCS screen", { exact: true }),
+  ).toBeVisible();
+  await panel.getByTestId("vcs-comparison").click();
+  await page.getByRole("button", { name: "Committed", exact: true }).last().click();
+  await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("committed-only.ts, +1, -0");
+  await expect(panel.getByText("Saved before the common VCS screen", { exact: true })).toHaveCount(
+    0,
+  );
+  await panel.getByTestId("vcs-comparison").click();
+  await page.getByRole("button", { name: "Workspace settings", exact: true }).last().click();
+  await expect(
+    panel.getByText("Saved before the common VCS screen", { exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await openChangesPanel(page, 30_000);
+  await expect(panel.getByTestId("diff-file-0")).toBeVisible({ timeout: 30_000 });
+  await expect(
+    panel.getByText("Saved before the common VCS screen", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByTestId("git-legacy-review")).toHaveCount(0);
+  await tree.getByTestId("vcs-comparison").click();
+  await page.getByRole("button", { name: "Committed", exact: true }).last().click();
+  await tree.getByTestId("diff-tree-file-0-toggle").click();
+  await expect(panel.getByTestId("vcs-comparison")).toContainText("Committed");
+  await expect(panel.getByText("Saved before the common VCS screen", { exact: true })).toHaveCount(
+    0,
+  );
+  await page.reload();
+  await expect(panel.getByTestId("vcs-comparison")).toContainText("Committed");
+  await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("committed-only.ts, +1, -0");
+});
+
+test("Git retains Changes when the host lacks VCS comparison views", async ({ page }) => {
+  await useLegacyGitSurface(page);
+  const workspace = await createWorkspaceWithCommittedDiff();
+  await openWorkspaceChangesSurface(page, workspace, 90_000);
+  const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
+  await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("committed-only.ts, +1, -0");
+  await expect(page.getByTestId("git-modern-vcs")).toHaveCount(0);
+  await expect(page.getByTestId("vcs-panel")).toHaveCount(0);
 });
 
 test("All changes combines committed and pending edits and preserves an unfinished review", async ({
@@ -283,8 +382,8 @@ test("All changes combines committed and pending edits and preserves an unfinish
   await openWorkspaceChangesSurface(page, workspace);
   const tree = page.getByTestId("changes-tree-panel").filter({ visible: true });
   const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
-  const mode = tree.getByTestId("changes-comparison-trigger");
-  await expect(mode).toContainText("All changes");
+  const mode = tree.getByTestId("vcs-comparison");
+  await expect(mode).toContainText("Workspace settings");
   await expectNetComparisonFiles(page, ["a-tracked.ts", "b-committed.ts"]);
   await expectRenderedAddedLine(page, "committed");
 
@@ -295,7 +394,7 @@ test("All changes combines committed and pending edits and preserves an unfinish
       .fill("Unfinished review stays here");
     await writeFile(path.join(workspace.repoPath, "c-untracked.txt"), "untracked\n");
     await expectNetComparisonFiles(page, ["a-tracked.ts", "b-committed.ts", "c-untracked.txt"]);
-    await expect(mode).toContainText("All changes");
+    await expect(mode).toContainText("Workspace settings");
     await expect(page.getByRole("textbox", { name: "Review comment" })).toHaveValue(
       "Unfinished review stays here",
     );
@@ -309,17 +408,15 @@ test("All changes combines committed and pending edits and preserves an unfinish
   await test.step("committing the same contents preserves the rendered comparison", async () => {
     execFileSync("git", ["add", "--all"], { cwd: workspace.repoPath });
     execFileSync("git", ["commit", "-m", "Commit pending changes"], { cwd: workspace.repoPath });
-    await expect(page.getByTestId("changes-primary-cta")).toContainText("Merge", {
-      timeout: 30_000,
-    });
-    await expect(mode).toContainText("All changes");
+    await expect(panel.getByTestId("vcs-refresh")).toBeEnabled();
+    await expect(mode).toContainText("Workspace settings");
     await expectNetComparisonFiles(page, ["a-tracked.ts", "b-committed.ts", "c-untracked.txt"]);
     await expectRenderedAddedLine(page, "working");
   });
   await test.step("undoing to the comparison base removes the net change", async () => {
     await writeFile(path.join(workspace.repoPath, "a-tracked.ts"), "base\n");
     await expectNetComparisonFiles(page, ["b-committed.ts", "c-untracked.txt"]);
-    await expect(mode).toContainText("All changes");
+    await expect(mode).toContainText("Workspace settings");
   });
 });
 
@@ -328,34 +425,34 @@ test("Changes keeps a manual comparison when checkout dirtiness changes", async 
   await openWorkspaceChanges(page, workspace);
 
   const tree = page.getByTestId("changes-tree-panel").filter({ visible: true });
-  const mode = tree.getByTestId("changes-comparison-trigger");
-  await expect(mode).toContainText("All changes");
+  const mode = tree.getByTestId("vcs-comparison");
+  await expect(mode).toContainText("Workspace settings");
 
   await selectChangesComparison(page, "Committed");
-  await expect(mode).toContainText("Committed");
-  await expect(tree.getByText("No changes to display", { exact: true })).toBeVisible();
+  await expect(mode).toContainText("Workspace settings");
+  await expect(tree.getByText("No changes", { exact: true })).toBeVisible();
 
   execFileSync("git", ["add", "--all"], { cwd: workspace.repoPath });
   execFileSync("git", ["commit", "-m", "Commit working changes"], { cwd: workspace.repoPath });
-  await expect(mode).toContainText("Committed");
+  await expect(mode).toContainText("Workspace settings");
   await expect(tree.getByText("use-mounted-tab-set.ts", { exact: true })).toBeVisible();
 
   await writeFile(path.join(workspace.repoPath, "new-working-change.txt"), "uncommitted\n");
   await expect(tree.getByText("new-working-change.txt", { exact: true })).toHaveCount(0);
-  await expect(mode).toContainText("Committed");
+  await expect(mode).toContainText("Workspace settings");
 
   await selectChangesComparison(page, "Uncommitted");
   execFileSync("git", ["add", "--all"], { cwd: workspace.repoPath });
   execFileSync("git", ["commit", "-m", "Commit new working change"], { cwd: workspace.repoPath });
-  await expect(tree.getByText("No changes to display", { exact: true })).toBeVisible({
+  await expect(tree.getByText("No changes", { exact: true })).toBeVisible({
     timeout: 30_000,
   });
-  await expect(mode).toContainText("Uncommitted");
+  await expect(mode).toContainText("Workspace settings");
   await writeFile(path.join(workspace.repoPath, "another-working-change.txt"), "pending\n");
   await expect(tree.getByText("another-working-change.txt", { exact: true })).toBeVisible({
     timeout: 30_000,
   });
-  await expect(mode).toContainText("Uncommitted");
+  await expect(mode).toContainText("Workspace settings");
 });
 
 test("an empty Changes comparison can switch to the populated comparison", async ({ page }) => {
@@ -364,16 +461,16 @@ test("an empty Changes comparison can switch to the populated comparison", async
 
   const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
   const tree = page.getByTestId("changes-tree-panel").filter({ visible: true });
-  const mode = tree.getByTestId("changes-comparison-trigger");
+  const mode = tree.getByTestId("vcs-comparison");
   await selectChangesComparison(page, "Committed");
   await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("committed-only.ts, +1, -0");
 
   await selectChangesComparison(page, "Uncommitted");
 
-  await expect(tree.getByText("No changes to display", { exact: true })).toBeVisible();
-  await expect(panel.getByText("No changes to display", { exact: true })).toBeVisible();
+  await expect(tree.getByText("No changes", { exact: true })).toBeVisible();
+  await expect(panel.getByText("No changes", { exact: true })).toBeVisible();
   await selectChangesComparison(page, "Committed");
-  await expect(mode).toContainText("Committed");
+  await expect(mode).toContainText("Workspace settings");
   await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("committed-only.ts, +1, -0");
 });
 
@@ -684,9 +781,10 @@ test("changes context menu recursively collapses descendant folders", async ({ p
   await expect(tree.getByText("changed.ts", { exact: true })).toBeVisible();
 });
 
-test("changes context menus expose folder revert and restore a file after confirmation", async ({
+test("legacy Git host: changes context menus expose folder revert and restore a file after confirmation", async ({
   page,
 }) => {
+  await useLegacyGitSurface(page);
   const workspace = await createWorkspaceWithMountedTabDiff();
   await useUnwrappedDiffLines(page);
   await openWorkspaceChanges(page, workspace);
@@ -734,7 +832,8 @@ test("changes context menus expose folder revert and restore a file after confir
     .toBe(BEFORE);
 });
 
-test("discarding a staged rename restores its source path", async ({ page }) => {
+test("legacy Git host: discarding a staged rename restores its source path", async ({ page }) => {
+  await useLegacyGitSurface(page);
   const workspace = await createWorkspaceWithMountedTabDiff({ includeRenamedFile: true });
   await useUnwrappedDiffLines(page);
   await openWorkspaceChanges(page, workspace);
@@ -765,7 +864,10 @@ test("discarding a staged rename restores its source path", async ({ page }) => 
     .toBe("export const renamed = true;\n");
 });
 
-test("discarding an untracked file removes it from the working tree", async ({ page }) => {
+test("legacy Git host: discarding an untracked file removes it from the working tree", async ({
+  page,
+}) => {
+  await useLegacyGitSurface(page);
   const workspace = await createWorkspaceWithMountedTabDiff({ includeUntrackedFile: true });
   await useUnwrappedDiffLines(page);
   await openWorkspaceChanges(page, workspace);
@@ -796,7 +898,7 @@ test("discarding an untracked file removes it from the working tree", async ({ p
   ).rejects.toThrow();
 });
 
-test("shows a revert error returned by the daemon", async ({ page }) => {
+test("legacy Git host: shows a revert error returned by the daemon", async ({ page }) => {
   const workspace = await createWorkspaceWithMountedTabDiff();
   await failNextDiscardRequest(page);
   await useUnwrappedDiffLines(page);
@@ -822,7 +924,10 @@ test("shows a revert error returned by the daemon", async ({ page }) => {
     .toBe(AFTER);
 });
 
-test("Changes keeps review navigation and controls inside its workspace tab", async ({ page }) => {
+test("legacy Git host: Changes keeps review navigation and controls inside its workspace tab", async ({
+  page,
+}) => {
+  await useLegacyGitSurface(page);
   const workspace = await createWorkspaceWithMountedTabDiff({ includeDeletedFile: true });
   await useUnwrappedDiffLines(page);
   await openWorkspaceChanges(page, workspace);
@@ -898,7 +1003,10 @@ test("Changes keeps review navigation and controls inside its workspace tab", as
   );
 });
 
-test("compact Changes keeps its actions compact and menu-only", async ({ page }) => {
+test("legacy Git host: compact Changes keeps its actions compact and menu-only", async ({
+  page,
+}) => {
+  await useLegacyGitSurface(page);
   const workspace = await createWorkspaceWithMountedTabDiff();
   await useUnwrappedDiffLines(page);
   await openWorkspaceChanges(page, workspace);
@@ -952,9 +1060,10 @@ test("compact Changes keeps its actions compact and menu-only", async ({ page })
   ).toContainText("Scroll long lines");
 });
 
-test("compact Explorer renders inline hunks with a saved tree-only desktop preference", async ({
+test("legacy Git host: compact Explorer renders inline hunks with a saved tree-only desktop preference", async ({
   page,
 }) => {
+  await useLegacyGitSurface(page);
   const workspace = await createWorkspaceWithMountedTabDiff();
   await page.addInitScript(
     ({ key }) => {
@@ -974,7 +1083,10 @@ test("compact Explorer renders inline hunks with a saved tree-only desktop prefe
     .toBe(BEFORE);
 });
 
-test("compact Changes jumps to a file from the changed-files sheet", async ({ page }) => {
+test("legacy Git host: compact Changes jumps to a file from the changed-files sheet", async ({
+  page,
+}) => {
+  await useLegacyGitSurface(page);
   const workspace = await createWorkspaceWithMountedTabDiff({ includeNestedFolders: true });
   await useUnwrappedDiffLines(page);
   const explorer = await openCompactChanges(page, workspace);
@@ -988,7 +1100,10 @@ test("compact Changes jumps to a file from the changed-files sheet", async ({ pa
   });
 });
 
-test("Jump to file stays out of the desktop diff and of an empty comparison", async ({ page }) => {
+test("legacy Git host: Jump to file stays out of the desktop diff and of an empty comparison", async ({
+  page,
+}) => {
+  await useLegacyGitSurface(page);
   const committed = await createWorkspaceWithCommittedDiff();
   await openWorkspaceChangesSurface(page, committed, 90_000);
   await expect(page.getByRole("button", { name: "Jump to file" })).toHaveCount(0);
@@ -1445,7 +1560,7 @@ async function useUnwrappedDiffLines(page: Page): Promise<void> {
 
 async function configureDiffPresentation(
   page: Page,
-  requestedPresentation: { layout: "unified" | "split"; wrapLines: boolean },
+  requestedPresentation: { layout: "unified" | "split"; wrapLines: boolean; inlineDiff?: boolean },
 ): Promise<void> {
   await page.addInitScript(
     ({ preferencesKey, presentation }) => {
@@ -1454,6 +1569,7 @@ async function configureDiffPresentation(
         JSON.stringify({
           layout: presentation.layout,
           desktopTreeVisible: false,
+          inlineDiff: presentation.inlineDiff ?? false,
           wrapLines: presentation.wrapLines,
           hideWhitespace: false,
         }),
@@ -1659,7 +1775,7 @@ async function expectRenderedAddedLine(page: Page, contents: string): Promise<vo
     });
     const copyLine = page.getByRole("menuitem", { name: "Copy line", exact: true });
     await expect(copyLine).toBeEnabled({ timeout: 1000 });
-    await copyLine.click();
+    await copyLine.click({ timeout: 1000 });
     await expect
       .poll(() => page.evaluate(() => navigator.clipboard.readText()), { timeout: 1000 })
       .toBe(contents);
@@ -1932,6 +2048,17 @@ async function selectChangesComparison(
   comparison: "Committed" | "Uncommitted",
 ): Promise<void> {
   const tree = page.getByTestId("changes-tree-panel").filter({ visible: true });
+  if (await tree.getByTestId("vcs-comparison-settings").isVisible()) {
+    await tree.getByTestId("vcs-comparison-settings").click();
+    await tree.getByTestId("git-comparison-settings-mode").click();
+    await page.getByRole("button", { name: comparison, exact: true }).click();
+    await tree.getByTestId("vcs-comparison-settings-save").click();
+    await expect(tree.getByText("Settings saved", { exact: true })).toBeVisible();
+    await expect(tree.getByTestId("git-comparison-settings-mode")).toContainText(comparison);
+    await tree.getByTestId("vcs-comparison-settings").click();
+    return;
+  }
+  // COMPAT(vcsComparisonSettings): legacy-host fixtures retain the old settings UI until 2027-06-06.
   await tree.getByTestId("changes-comparison-trigger").click();
   await page
     .getByTestId(
@@ -2026,6 +2153,40 @@ async function expectStoredCodeFontSize(page: Page, codeFontSize: number): Promi
       return (JSON.parse(raw) as { codeFontSize?: number }).codeFontSize ?? null;
     })
     .toBe(codeFontSize);
+}
+
+async function saveVcsReview(page: Page, panel: Locator, body: string) {
+  await expect(async () => {
+    const bounds = await panel.getByTestId("diff-file-0-body").boundingBox();
+    const fontSize = await panel
+      .getByTestId("git-diff-canvas")
+      .evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize));
+    if (!bounds) throw new Error("Missing diff body");
+    await page.mouse.move(bounds.x + 20, bounds.y + Math.round(fontSize * 1.5) * 1.5);
+    await expect(page.getByRole("button", { name: "Add review comment" })).toBeVisible({
+      timeout: 500,
+    });
+  }).toPass({ timeout: 10_000 });
+  await page.getByRole("button", { name: "Add review comment" }).click();
+  await page.getByRole("textbox", { name: "Review comment", exact: true }).fill(body);
+  await page.getByRole("button", { name: "Save review comment", exact: true }).click();
+  await expect(panel.getByText(body, { exact: true })).toBeVisible();
+  await expect(page.getByTestId("review-comment-sheet")).toBeHidden();
+  await expect(page.getByTestId("inline-review-editor")).toBeHidden();
+  const toolbar = panel.getByTestId("vcs-diff-toolbar");
+  const toolbarBounds = await toolbar.boundingBox();
+  if (!toolbarBounds) throw new Error("Missing diff toolbar");
+  for (const button of await toolbar.getByRole("button").all()) {
+    const buttonBounds = await button.boundingBox();
+    if (!buttonBounds) throw new Error("Missing toolbar button");
+    expect(buttonBounds.y).toBeGreaterThanOrEqual(toolbarBounds.y);
+    expect(buttonBounds.y + buttonBounds.height).toBeLessThanOrEqual(
+      toolbarBounds.y + toolbarBounds.height,
+    );
+  }
+  await page.screenshot({
+    path: test.info().outputPath(`vcs-review-${page.viewportSize()?.width}.png`),
+  });
 }
 
 async function startReviewOnFirstChangedLine(
@@ -2400,4 +2561,2087 @@ async function scrollToLowerUnwrappedDiffRows(page: Page): Promise<void> {
     element.dispatchEvent(new Event("scroll", { bubbles: false }));
   });
   await expect(page.getByTestId("git-diff-canvas")).toBeVisible();
+}
+
+for (const width of [1400, 390]) {
+  test(`jj Changes displays diffs, runs extension forms and reports stale targets at width ${width}`, async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    page.setDefaultTimeout(15_000);
+    const { connectDaemonClient } = await import("../support/helpers/daemon-client-loader");
+    const client = await connectDaemonClient<
+      import("@getpaseo/client/internal/daemon-client").DaemonClient
+    >({ clientIdPrefix: "jj-vcs-ui" });
+    const repo = await createTempGitRepo("jj-ui-", {
+      files: [
+        { path: "counter.ts", content: "export const count = 1;\n" },
+        { path: "spaces.txt", content: "one two\n" },
+      ],
+    });
+    execFileSync("jj", ["git", "init", "--colocate", repo.path], { stdio: "pipe" });
+    let root: string | undefined;
+    let projectId: string | undefined;
+    cleanupTasks.push({
+      run: async () => {
+        if (projectId) await client.removeProject(projectId);
+        await client.close();
+        if (root) {
+          const { rm } = await import("node:fs/promises");
+          await rm(root, { recursive: true, force: true });
+        }
+        await repo.cleanup();
+      },
+    });
+    const project = await client.addProject(repo.path);
+    if (!project.project) throw new Error(project.error ?? "Missing jj project");
+    projectId = project.project.projectId;
+    const created = await client.createWorkspace({
+      source: { kind: "working-copy", projectId: project.project.projectId },
+    });
+    if (!created.workspace?.workspaceDirectory)
+      throw new Error(created.error ?? "Missing jj workspace");
+    root = created.workspace.workspaceDirectory;
+    execFileSync("jj", ["bookmark", "create", "comparison-base", "-r", "@-"], {
+      cwd: root,
+      stdio: "pipe",
+    });
+    await writeFile(path.join(root, "spaces.txt"), "one   two\n");
+    await writeFile(path.join(root, "counter.ts"), "export const count = 2;\n");
+    await page.setViewportSize({ width, height: 900 });
+    await configureDiffPresentation(page, {
+      layout: "unified",
+      wrapLines: false,
+      inlineDiff: true,
+    });
+    await page.goto(buildHostWorkspaceRoute(getServerId(), created.workspace.id));
+    await expect(
+      page.getByRole("button", { name: "Open Explorer sidebar", exact: true }),
+    ).toBeVisible();
+    if (width === 390) {
+      await page.reload();
+      await page.getByTestId("workspace-explorer-toggle").first().click();
+      await page.getByTestId("workspace-tab-changes_tree").filter({ visible: true }).click();
+    } else {
+      await page.keyboard.press(`${process.platform === "darwin" ? "Meta" : "Control"}+Shift+G`);
+    }
+    const panel = page.getByTestId("vcs-panel").filter({ visible: true });
+    await expect(panel).toBeVisible({ timeout: 30_000 });
+    await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName(/counter\.ts/);
+
+    const settingsToggle = page.getByTestId("vcs-comparison-settings").filter({ visible: true });
+    await settingsToggle.click();
+    await page.getByTestId("vcs-comparison-settings-scope").click();
+    await page.getByRole("button", { name: "Project", exact: true }).click();
+    await page.getByTestId("jj-comparison-settings-mode").click();
+    await page.getByRole("button", { name: "Since bookmark", exact: true }).click();
+    await page.getByTestId("vcs-comparison-settings-save").click();
+    await expect(page.getByText("Settings saved", { exact: true })).not.toBeVisible();
+    await page.getByTestId("jj-comparison-settings-base").click();
+    await page.getByRole("button", { name: "comparison-base", exact: true }).click();
+    await page.getByTestId("vcs-comparison-settings-save").click();
+    await expect(page.getByText("Settings saved", { exact: true })).toBeVisible();
+    const target = { kind: "workspace" as const, workspaceId: created.workspace.id };
+    const inherited = await client.requestVcs({
+      type: "vcs.comparison.get.request",
+      target,
+      providerId: "jj",
+    });
+    expect(inherited.selection).toBeNull();
+    expect(inherited.effective).toMatchObject({ version: 1, data: { mode: "base" } });
+    await page.getByTestId("vcs-comparison-settings-scope").click();
+    await page.getByRole("button", { name: "Workspace", exact: true }).click();
+    await expect(page.getByTestId("jj-comparison-settings-base")).toContainText("comparison-base");
+    await page.getByTestId("jj-comparison-settings-mode").click();
+    await page.getByRole("button", { name: "Current change", exact: true }).click();
+    await page.getByTestId("vcs-comparison-settings-save").click();
+    await expect(page.getByText("Settings saved", { exact: true })).toBeVisible();
+    await settingsToggle.click();
+    await settingsToggle.click();
+    await expect(page.getByTestId("jj-comparison-settings-mode")).toContainText("Current change");
+    await page.getByTestId("vcs-comparison-settings-reset").click();
+    await expect(page.getByTestId("jj-comparison-settings-base")).toContainText("comparison-base");
+    await settingsToggle.click();
+    // Keep the later explicit-comparison assertions independent of saved defaults.
+    await client.requestVcs({
+      type: "vcs.comparison.set.request",
+      target: { kind: "project", projectId },
+      providerId: "jj",
+      value: null,
+    });
+
+    await panel.getByTestId("vcs-comparison").click();
+    await page.getByRole("button", { name: "Since bookmark", exact: true }).click();
+    await expect(
+      panel.getByText("Select a bookmark with one unambiguous target.", { exact: true }),
+    ).toBeVisible();
+    await panel.getByTestId("vcs-comparison-base").click();
+    await page.getByRole("button", { name: "comparison-base", exact: true }).click();
+    await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName(/counter\.ts/);
+    await panel.getByTestId("vcs-comparison").click();
+    await page.getByRole("button", { name: "Current change", exact: true }).click();
+    await panel.getByTestId("vcs-comparison").click();
+    await page.getByRole("button", { name: "Between revisions", exact: true }).click();
+    await expect(panel.getByTestId("diff-file-1")).toHaveAccessibleName("spaces.txt, +1, -1");
+    await panel.getByTestId("vcs-whitespace").click();
+    await expect(panel.getByTestId("diff-file-1")).toHaveAccessibleName("spaces.txt, +0, -0");
+    await panel.getByTestId("vcs-whitespace").click();
+    await expect(panel.getByTestId("diff-file-1")).toHaveAccessibleName("spaces.txt, +1, -1");
+    await panel.getByTestId("vcs-comparison").click();
+    await page.getByRole("button", { name: "Current change", exact: true }).click();
+    await saveVcsReview(page, panel, "Review from jj Changes");
+    await panel.getByTestId("diff-file-0").click({ button: "right" });
+    await expect(page.getByTestId("vcs-file-action-restore")).toBeVisible();
+    await expect(page.getByTestId("diff-file-0-download")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await writeFile(
+      path.join(root, "counter.ts"),
+      "export const count = 3;\nexport const extra = true;\n",
+    );
+    await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("counter.ts, +2, -1", {
+      timeout: 15000,
+    });
+    await expect(panel.getByText("Review from jj Changes", { exact: true })).toBeVisible();
+    execFileSync("jj", ["describe", "-m", "External watched"], { cwd: root, stdio: "pipe" });
+    await panel.getByTestId("vcs-view").click();
+    await page.getByRole("button", { name: "History", exact: true }).last().click();
+    await expect(panel.getByText("External watched", { exact: true })).toBeVisible({
+      timeout: 15000,
+    });
+    await panel.getByText("External watched", { exact: true }).click();
+    await expect(panel.getByTestId("diff-file-1")).toHaveAccessibleName("spaces.txt, +1, -1");
+    await panel.getByTestId("vcs-whitespace").click();
+    await expect(panel.getByTestId("diff-file-1")).toHaveAccessibleName("spaces.txt, +0, -0");
+    await panel.getByTestId("vcs-whitespace").click();
+    await expect(panel.getByTestId("diff-file-1")).toHaveAccessibleName("spaces.txt, +1, -1");
+    await panel.getByRole("button", { name: "Working copy", exact: true }).click();
+    await expect(page.getByRole("button", { name: "References", exact: true })).toBeHidden();
+    await panel.getByTestId("vcs-view").click();
+    await page.getByRole("button", { name: "Changes", exact: true }).last().click();
+    await expect(page.getByRole("button", { name: "References", exact: true })).toBeHidden();
+    if (width === 390)
+      await page
+        .getByRole("button", { name: "Close Explorer sidebar", exact: true })
+        .last()
+        .click();
+    await page.getByTestId("workspace-header-menu-trigger").filter({ visible: true }).click();
+    await page.getByTestId("workspace-vcs-action-describe").click();
+    await expect(page.getByTestId("jj-message")).toBeVisible();
+    await page.getByTestId("jj-message").fill("Description from Paseo");
+    let previewMessage = "";
+    page.once("dialog", async (dialog) => {
+      previewMessage = dialog.message();
+      await dialog.dismiss();
+    });
+    await page.getByTestId("vcs-action-submit").click();
+    await expect(page.getByTestId("vcs-action-submit")).toBeEnabled();
+    expect(previewMessage).toContain("External watched");
+    expect(previewMessage).toContain(
+      execFileSync(
+        "jj",
+        ["log", "--ignore-working-copy", "--no-graph", "-r", "@", "-T", "commit_id"],
+        { cwd: root, encoding: "utf8" },
+      ),
+    );
+    await expect(panel.getByTestId("vcs-operation")).toHaveCount(0);
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByTestId("vcs-action-submit").click();
+    await expect(panel.getByTestId("vcs-operation")).toContainText("Operation completed");
+    expect(
+      execFileSync(
+        "jj",
+        ["log", "--ignore-working-copy", "--no-graph", "-r", "@", "-T", "description"],
+        { cwd: root, encoding: "utf8" },
+      ),
+    ).toBe("Description from Paseo\n");
+    await panel
+      .getByTestId("vcs-operation")
+      .getByRole("button", { name: "Dismiss", exact: true })
+      .click();
+    await expect(panel.getByTestId("vcs-operation")).toHaveCount(0);
+    await page.reload();
+    await expect(panel).toBeVisible({ timeout: 30_000 });
+    await expect(panel.getByTestId("vcs-operation")).toHaveCount(0);
+    await expect(page.getByTestId("vcs-action-sheet")).toBeHidden();
+    if (width === 390) await page.getByRole("button", { name: "Open menu", exact: true }).click();
+    const commands = await openCommandCenter(page);
+    await commands.getByTestId("command-center-input").fill("describe");
+    await commands.getByText("Describe change", { exact: true }).click();
+    await expect(page.getByTestId("jj-message")).toHaveValue("Description from Paseo\n");
+    execFileSync("jj", ["describe", "-m", "External edit"], { cwd: root, stdio: "pipe" });
+    await page.getByTestId("jj-message").fill("Must not overwrite external work");
+    await page.getByTestId("vcs-action-submit").click();
+    await expect(page.getByRole("alert").filter({ hasText: "Repository changed" })).toBeVisible();
+    expect(
+      execFileSync(
+        "jj",
+        ["log", "--ignore-working-copy", "--no-graph", "-r", "@", "-T", "description"],
+        { cwd: root, encoding: "utf8" },
+      ),
+    ).toBe("External edit\n");
+    await page
+      .getByTestId("vcs-action-sheet")
+      .getByRole("button", { name: "Close", exact: true })
+      .click();
+    await panel.getByTestId("vcs-view").click();
+    await page.getByRole("button", { name: "History", exact: true }).last().click();
+    await expect(panel.getByText("External edit", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "References", exact: true })).toBeHidden();
+    await page.screenshot({ path: test.info().outputPath(`jj-history-${width}.png`) });
+  });
+}
+
+const externalVcsTest = test.extend({
+  e2eDaemonEnvironment: [
+    async ({ e2eDaemonConfig }, provide) => {
+      void e2eDaemonConfig;
+      const { mkdtemp, rm } = await import("node:fs/promises");
+      const { tmpdir } = await import("node:os");
+      const directory = await mkdtemp(path.join(tmpdir(), "vcs-ui-forge-"));
+      const script = `#!${process.execPath}
+const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+const counter = path.join(__dirname, "creates");
+if (args.includes("POST") && args.some(value => value.endsWith("/pulls"))) {
+  const count = fs.existsSync(counter) ? Number(fs.readFileSync(counter, "utf8")) + 1 : 1;
+  fs.writeFileSync(counter, String(count));
+  if (count === 1) { process.stderr.write("Forge temporarily unavailable"); process.exit(1); }
+  process.stdout.write(JSON.stringify({ url: "https://api.github.com/repos/paseo/vcs-ui/pulls/7", html_url: "https://github.com/paseo/vcs-ui/pull/7", number: 7 }));
+} else if (args[0] === "pr" && args[1] === "view") { process.stderr.write("no pull requests found"); process.exit(1); }
+else if (args[0] === "repo" && args[1] === "view") { process.stdout.write(JSON.stringify({ name: "vcs-ui", owner: { login: "paseo" } })); }
+else if (args[0] === "pr" && args[1] === "list" && args[args.indexOf("--head") + 1] === "existing") {
+  process.stdout.write(JSON.stringify([{ number: 8, url: "https://github.com/paseo/vcs-ui/pull/8", title: "Existing external request", state: "OPEN", baseRefName: "main", headRefName: "existing", headRefOid: "revision:Changed from custom panel", headRepositoryOwner: { login: "paseo" }, statusCheckRollup: [{ __typename: "CheckRun", name: "Example check", status: "COMPLETED", conclusion: "SUCCESS", detailsUrl: "https://github.com/paseo/vcs-ui/actions/runs/8" }] }]));
+} else if (args[0] === "api" && args[1] === "graphql") { process.stderr.write("Optional facts unavailable"); process.exit(1); }
+else { process.stdout.write("[]"); }
+`;
+      await writeFile(path.join(directory, "gh"), script, { mode: 0o755 });
+      try {
+        await provide({ PATH: directory + path.delimiter + process.env.PATH });
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+    { scope: "worker" },
+  ],
+});
+
+for (const { width, loseReply } of [
+  { width: 1400, loseReply: false },
+  { width: 390, loseReply: false },
+  { width: 1400, loseReply: true },
+]) {
+  test(`jj working-copy creation uses the selected revision at width ${width}${loseReply ? " after losing the reply" : ""}`, async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const { connectDaemonClient } = await import("../support/helpers/daemon-client-loader");
+    const client = await connectDaemonClient<
+      import("@getpaseo/client/internal/daemon-client").DaemonClient
+    >({ clientIdPrefix: "jj-copy-ui" });
+    const repo = await createTempGitRepo("jj-copy-ui-", {
+      files: [{ path: "sub/file.txt", content: "Original\n" }],
+    });
+    execFileSync("jj", ["git", "init", "--colocate", repo.path], { stdio: "pipe" });
+    const revision = execFileSync(
+      "jj",
+      ["log", "--ignore-working-copy", "--no-graph", "-r", "@-", "-T", "commit_id"],
+      { cwd: repo.path, encoding: "utf8" },
+    ).trim();
+    let projectId: string | undefined;
+    cleanupTasks.push({
+      run: async () => {
+        if (projectId) await client.removeProject(projectId);
+        await client.close();
+        await repo.cleanup();
+      },
+    });
+    const source = await client.createWorkspace({
+      source: { kind: "directory", path: path.join(repo.path, "sub") },
+    });
+    if (!source.workspace) throw new Error(source.error ?? "Missing source workspace");
+    projectId = source.workspace.projectId;
+    const creationKeys: string[] = [];
+    let deliverCreation = !loseReply;
+    if (loseReply) {
+      const frames = await loadSessionMessageReaders();
+      await page.routeWebSocket(daemonWsRoutePattern(), (browser) => {
+        const server = browser.connectToServer();
+        browser.onMessage((frame) => {
+          const message = frames.client(frame);
+          if (message?.type === "workspace.create.request" && message.idempotencyKey)
+            creationKeys.push(message.idempotencyKey);
+          server.send(frame);
+        });
+        server.onMessage((frame) => {
+          const message = frames.server(frame);
+          if (
+            !deliverCreation &&
+            message &&
+            [
+              "workspace.create.response",
+              "workspace.create.update",
+              "creation.subscribe.response",
+            ].includes(message.type)
+          )
+            return;
+          browser.send(frame);
+        });
+      });
+    }
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(buildHostWorkspaceRoute(getServerId(), source.workspace.id));
+    await page.getByTestId("workspace-header-menu-trigger").filter({ visible: true }).click();
+    await page.getByTestId("workspace-vcs-view-working-copy").click();
+    const panel = page.getByTestId("vcs-panel").filter({ visible: true });
+    await panel.getByTestId("vcs-copy-title").fill("Isolated from jj");
+    await panel.getByTestId("jj-working-copy-name").fill("from-changes");
+    await panel.getByTestId("vcs-copy-revision").click();
+    await page.getByRole("button", { name: new RegExp(revision) }).click();
+    await writeFile(path.join(repo.path, "sub/file.txt"), "Newer source contents\n");
+    await panel.getByTestId("vcs-copy-create").click();
+    if (loseReply) {
+      await expect
+        .poll(
+          async () =>
+            (await client.fetchWorkspaces()).entries.filter(
+              (workspace) => workspace.projectId === projectId,
+            ).length,
+        )
+        .toBe(2);
+      await expect(panel.getByText("Creating working copy…", { exact: true })).toBeVisible();
+      deliverCreation = true;
+      await page.reload();
+      await expect(panel.getByTestId("vcs-copy-create")).toHaveText("Check creation result");
+      expect(creationKeys).toHaveLength(1);
+      await panel.getByTestId("vcs-copy-create").click();
+    }
+    await expect(panel.getByTestId("vcs-copy-success")).toBeVisible({ timeout: 30_000 });
+    if (loseReply) {
+      expect(creationKeys).toHaveLength(2);
+      expect(new Set(creationKeys).size).toBe(1);
+    }
+    const copies = (await client.fetchWorkspaces()).entries.filter(
+      (workspace) => workspace.projectId === projectId && workspace.id !== source.workspace!.id,
+    );
+    expect(copies).toHaveLength(1);
+    const copy = copies[0]!;
+    expect(copy.name).toBe("Isolated from jj");
+    expect(
+      execFileSync("jj", ["workspace", "root", "--name", "from-changes"], {
+        cwd: repo.path,
+        encoding: "utf8",
+      }).trim(),
+    ).toBe(path.dirname(copy.workspaceDirectory!));
+    expect(copy.workspaceDirectory).not.toBe(source.workspace.workspaceDirectory);
+    expect(path.basename(copy.workspaceDirectory!)).toBe("sub");
+    expect(await readFile(path.join(copy.workspaceDirectory!, "file.txt"), "utf8")).toBe(
+      "Original\n",
+    );
+    await page.reload();
+    await expect(panel.getByTestId("vcs-copy-success")).toBeVisible();
+    await expect(panel.getByTestId("jj-working-copy-name")).toHaveValue("from-changes");
+    await expect(panel.getByTestId("jj-working-copy-name")).not.toBeEditable();
+    expect(
+      (await client.fetchWorkspaces()).entries.filter(
+        (workspace) => workspace.projectId === projectId,
+      ),
+    ).toHaveLength(2);
+    await panel.getByTestId("vcs-copy-open").click();
+    await expect(page).toHaveURL(new RegExp(`/workspace/${copy.id}`));
+  });
+}
+
+for (const width of [1400, 390]) {
+  test(`checkpoint-vcs example uses the public VCS surfaces at width ${width}`, async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const { connectDaemonClient } = await import("../support/helpers/daemon-client-loader");
+    const { createTempDirectory } = await import("../support/helpers/workspace");
+    const client = await connectDaemonClient<
+      import("@getpaseo/client/internal/daemon-client").DaemonClient
+    >({ clientIdPrefix: "checkpoint-example" });
+    const example = await copyPluginExample("checkpoint-vcs");
+    const fixture = await createTempDirectory("checkpoint-ui-");
+    const repo = path.join(fixture.path, "repository");
+    execFileSync(process.execPath, [path.join(example.directory, "init.mjs"), repo]);
+    const previous = await client.getDaemonConfig();
+    let projectId: string | undefined;
+    let copyId: string | undefined;
+    let aliasId: string | undefined;
+    let aliasProjectId: string | undefined;
+    cleanupTasks.push({
+      run: async () => {
+        if (aliasId) await client.archiveWorkspace(aliasId);
+        if (copyId) await client.archiveWorkspace(copyId);
+        if (aliasProjectId && aliasProjectId !== projectId)
+          await client.removeProject(aliasProjectId);
+        if (projectId) await client.removeProject(projectId);
+        await client.removePlugin("checkpoint-vcs").catch(() => undefined);
+        await client.patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled });
+        await client.close();
+        await example.cleanup();
+        await fixture.cleanup();
+      },
+    });
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await client.installDirectoryPlugin(example.directory);
+    const created = await client.createWorkspace({ source: { kind: "directory", path: repo } });
+    if (!created.workspace) throw new Error(created.error ?? "Missing checkpoint workspace");
+    projectId = created.workspace.projectId;
+    await page.setViewportSize({ width, height: 900 });
+    await configureDiffPresentation(page, {
+      layout: "unified",
+      wrapLines: false,
+      inlineDiff: true,
+    });
+    await page.goto(buildHostWorkspaceRoute(getServerId(), created.workspace.id));
+    await page.getByTestId("workspace-header-menu-trigger").filter({ visible: true }).click();
+    await page.getByTestId("workspace-vcs-view-plugin:details").click();
+    const panel = page.getByTestId("vcs-panel").filter({ visible: true });
+    await expect(panel.getByTestId("checkpoint-current")).toHaveText("No checkpoints yet");
+    await panel.getByTestId("vcs-view").click();
+    await page.getByRole("button", { name: "Changes", exact: true }).last().click();
+    await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("note.txt, +1, -0");
+    if (width === 390) await page.getByRole("button", { name: "Open menu", exact: true }).click();
+    const commands = await openCommandCenter(page);
+    await commands.getByTestId("command-center-input").fill("Create checkpoint");
+    await commands.getByText("Create checkpoint", { exact: true }).click();
+    await expect(page.getByTestId("checkpoint-save")).toBeDisabled();
+    await page.getByTestId("checkpoint-description").fill("Initial checkpoint");
+    await page.getByTestId("checkpoint-save").click();
+    await expect(panel.getByTestId("vcs-operation")).toContainText("Operation completed");
+    await panel.getByTestId("vcs-view").click();
+    await page.getByRole("button", { name: "History", exact: true }).last().click();
+    await expect(panel.getByText("Initial checkpoint", { exact: true })).toBeVisible();
+    await panel.getByTestId(/^vcs-revision-/).click();
+    await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("note.txt, +1, -0");
+    await writeFile(path.join(repo, "note.txt"), "Changed outside Paseo\n");
+    if (width === 390) await page.getByRole("button", { name: "Open menu", exact: true }).click();
+    const nextCommands = await openCommandCenter(page);
+    await nextCommands.getByTestId("command-center-input").fill("Checkpoint details");
+    await nextCommands.getByText("Checkpoint details", { exact: true }).click();
+    await expect(panel.getByTestId("checkpoint-current")).toHaveText("Initial checkpoint");
+    await expect(panel.getByText("Changed files: 1", { exact: true })).toBeVisible();
+    await page.getByTestId("workspace-header-menu-trigger").filter({ visible: true }).click();
+    await page.getByTestId("workspace-vcs-action-checkpoint.create").click();
+    await page.getByTestId("checkpoint-description").fill("Must not save a stale checkpoint");
+    await writeFile(path.join(repo, "note.txt"), "Edited while the form was open\n");
+    await page.getByTestId("checkpoint-save").click();
+    await expect(panel.getByTestId("vcs-operation")).toContainText("Repository changed");
+    await expect(panel.getByTestId("checkpoint-current")).toHaveText("Initial checkpoint");
+    await client.disablePlugin("checkpoint-vcs");
+    await expect(panel.getByTestId("checkpoint-current")).toHaveCount(0);
+    await client.enablePlugin("checkpoint-vcs");
+    await expect(panel.getByTestId("checkpoint-current")).toHaveText("Initial checkpoint");
+
+    await page.getByTestId("workspace-header-menu-trigger").filter({ visible: true }).click();
+    await page.getByTestId("workspace-vcs-view-working-copy").click();
+    await panel.getByTestId("vcs-copy-title").fill("Checkpoint lifecycle");
+    await panel.getByTestId("vcs-copy-create").click();
+    await expect(panel.getByTestId("vcs-copy-success")).toBeVisible({ timeout: 30_000 });
+    const copies = (await client.fetchWorkspaces()).entries.filter(
+      (entry) => entry.projectId === projectId && entry.id !== created.workspace!.id,
+    );
+    expect(copies).toHaveLength(1);
+    const copy = copies[0]!;
+    copyId = copy.id;
+    if (!copy.workspaceDirectory) throw new Error("Missing isolated copy path");
+    const note = path.join(copy.workspaceDirectory, "note.txt");
+    const original = await readFile(note, "utf8");
+    expect(original).not.toContain("Edited while the form was open");
+    await panel.getByTestId("vcs-copy-open").click();
+    await expect(page).toHaveURL(new RegExp(`/workspace/${copy.id}`));
+    await writeFile(note, "Uncommitted recovery contents\n");
+    const subdirectory = path.join(copy.workspaceDirectory, "sub");
+    await mkdir(subdirectory);
+    const alias = await client.createWorkspace({
+      source: { kind: "directory", path: subdirectory },
+    });
+    if (!alias.workspace) throw new Error(alias.error ?? "Missing shared workspace");
+    aliasId = alias.workspace.id;
+    aliasProjectId = alias.workspace.projectId;
+    expect((await client.archiveWorkspace(copy.id)).error).toBeNull();
+    expect(await readFile(note, "utf8")).toBe("Uncommitted recovery contents\n");
+    expect((await client.archiveWorkspace(aliasId)).error).toBeNull();
+    await expect.poll(() => readFileIfPresent(note)).toBeNull();
+    await client.disablePlugin("checkpoint-vcs");
+    await client.enablePlugin("checkpoint-vcs");
+    await page.goto(buildHostWorkspaceRoute(getServerId(), copy.id));
+    const restore = page.getByTestId("workspace-recovery-action");
+    await expect(restore).toHaveText("Restore");
+    // A conflicting directory must produce a visible error and remain untouched.
+    await mkdir(copy.workspaceDirectory);
+    const foreign = path.join(copy.workspaceDirectory, "foreign.txt");
+    await writeFile(foreign, "Keep this file");
+    await restore.click();
+    await expect(page.getByTestId("workspace-recovery-error")).toBeVisible();
+    expect(await readFile(foreign, "utf8")).toBe("Keep this file");
+    await unlink(foreign);
+    await rmdir(copy.workspaceDirectory);
+    await restore.click();
+    await expect.poll(() => readFileIfPresent(note)).toBe("Uncommitted recovery contents\n");
+    await expect(page.getByTestId("workspace-recovery-action")).toHaveCount(0);
+    await page.getByTestId("workspace-header-menu-trigger").filter({ visible: true }).click();
+    await page.getByTestId("workspace-vcs-view-plugin:details").click();
+    await expect(panel.getByTestId("checkpoint-current")).toHaveText("Initial checkpoint");
+    await expect(panel.getByText("Changed files: 1", { exact: true })).toBeVisible();
+    await panel.getByTestId("vcs-view").click();
+    await page.getByRole("button", { name: "Changes", exact: true }).last().click();
+    await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("note.txt, +1, -1");
+    expect(await readFile(path.join(repo, "note.txt"), "utf8")).toBe(
+      "Edited while the form was open\n",
+    );
+    await writeFile(note, "New edits after recovery\n");
+    await page.goto(buildHostWorkspaceRoute(getServerId(), aliasId));
+    await expect(page.getByTestId("workspace-recovery-action")).toHaveText("Unarchive");
+    await page.getByTestId("workspace-recovery-action").click();
+    await expect(page.getByTestId("workspace-recovery-action")).toHaveCount(0);
+    await expect
+      .poll(async () =>
+        (await client.fetchWorkspaces()).entries.some((entry) => entry.id === aliasId),
+      )
+      .toBe(true);
+    expect(await readFile(note, "utf8")).toBe("New edits after recovery\n");
+    await page.getByTestId("workspace-header-menu-trigger").filter({ visible: true }).click();
+    await page.getByTestId("workspace-vcs-view-plugin:details").click();
+    await expect(panel.getByTestId("checkpoint-current")).toHaveText("Initial checkpoint");
+    await expect(panel.getByText("Changed files: 1", { exact: true })).toBeVisible();
+  });
+}
+
+for (const { history, diff } of [
+  { history: false, diff: true },
+  { history: false, diff: false },
+  { history: true, diff: false },
+]) {
+  test(`VCS optional reads support Changes, actions and working-copy creation history=${history} diff=${diff}`, async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const { connectDaemonClient } = await import("../support/helpers/daemon-client-loader");
+    const { createTempDirectory } = await import("../support/helpers/workspace");
+    const client = await connectDaemonClient<
+      import("@getpaseo/client/internal/daemon-client").DaemonClient
+    >({ clientIdPrefix: "no-history" });
+    const example = await copyPluginExample("checkpoint-vcs");
+    await writeFile(
+      path.join(example.directory, "index.server.ts"),
+      `
+import { createCheckpointProvider } from "./server/provider.js";
+export default function contribute(server) {
+  const { ${history ? "" : "history,"} ${diff ? "" : "diff,"} ...provider } = createCheckpointProvider();
+  server.registerVcsProvider({ ...provider, async snapshot(binding, context) {
+    const snapshot = await provider.snapshot(binding, context);
+    return { ...snapshot, files: ${!diff && !history ? 'snapshot.files.length ? [...snapshot.files, { path: "folder/a.txt", previousPath: "old-a.txt", status: "renamed", conflict: false }, { path: "folder/deep/b.txt", status: "modified", conflict: false }, { path: "folder-other/c.txt", status: "modified", conflict: false }] : []' : "snapshot.files"}, capabilities: snapshot.capabilities.filter((capability) => ${history ? "true" : 'capability !== "history"'} ${diff ? "" : '&& capability !== "diff"'}) };
+  }});
+  return () => {};
+}`,
+    );
+    const clientEntry = path.join(example.directory, "index.client.tsx");
+    await writeFile(
+      clientEntry,
+      (await readFile(clientEntry, "utf8")).replace(
+        'contexts: ["workspace"],',
+        'contexts: ["workspace"], fileContexts: ["file", "directory"],',
+      ),
+    );
+    const formFile = path.join(example.directory, "client/panels.tsx");
+    await writeFile(
+      formFile,
+      (await readFile(formFile, "utf8"))
+        .replace(
+          "CheckpointForm({ pending, submit, layout }",
+          "CheckpointForm({ pending, submit, layout, context }",
+        )
+        .replace(
+          "<Form>",
+          '<Form><Text testID="checkpoint-selected-files">{JSON.stringify(context.selectedFiles ?? [])}</Text>',
+        ),
+    );
+    const fixture = await createTempDirectory("no-history-ui-");
+    const repo = path.join(fixture.path, "repository");
+    execFileSync(process.execPath, [path.join(example.directory, "init.mjs"), repo]);
+    const previous = await client.getDaemonConfig();
+    let projectId: string | undefined;
+    let copyId: string | undefined;
+    cleanupTasks.push({
+      run: async () => {
+        if (copyId) await client.archiveWorkspace(copyId);
+        if (projectId) await client.removeProject(projectId);
+        await client.removePlugin("checkpoint-vcs").catch(() => undefined);
+        await client.patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled });
+        await client.close();
+        await example.cleanup();
+        await fixture.cleanup();
+      },
+    });
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await client.installDirectoryPlugin(example.directory);
+    const created = await client.createWorkspace({ source: { kind: "directory", path: repo } });
+    if (!created.workspace) throw new Error(created.error ?? "Missing workspace");
+    projectId = created.workspace.projectId;
+    await page.setViewportSize({ width: 390, height: 900 });
+    await page.goto(buildHostWorkspaceRoute(getServerId(), created.workspace.id));
+    await page.getByTestId("workspace-header-menu-trigger").filter({ visible: true }).click();
+    await page.getByTestId("workspace-vcs-view-plugin:details").click();
+    const panel = page.getByTestId("vcs-panel").filter({ visible: true });
+    await panel.getByTestId("vcs-view").click();
+    await expect(page.getByRole("button", { name: "History", exact: true })).toHaveCount(
+      history ? 1 : 0,
+    );
+    await page.getByRole("button", { name: "Changes", exact: true }).last().click();
+    if (diff) {
+      await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("note.txt, +1, -0");
+    } else {
+      await expect(panel.getByTestId("vcs-status-file-note.txt")).toBeVisible();
+      await expect(panel.getByTestId("vcs-status-file-note.txt")).toContainText("added");
+      await expect(
+        panel.getByText("This provider does not support diffs.", { exact: true }),
+      ).toBeVisible();
+      await expect(panel.getByTestId("vcs-diff-toolbar")).toHaveCount(0);
+      await panel.getByTestId("vcs-status-file-note.txt").click();
+      await expect(page.getByRole("dialog", { name: "note.txt", exact: true })).toBeVisible();
+      await page
+        .getByRole("button", { name: "Close", exact: true })
+        .filter({ visible: true })
+        .last()
+        .click();
+    }
+    if (diff) {
+      await page.getByTestId("workspace-header-menu-trigger").filter({ visible: true }).click();
+      await page.getByTestId("workspace-vcs-action-checkpoint.create").click();
+    } else {
+      if (!history) {
+        await expect(panel.getByTestId("vcs-status-file-folder/deep/b.txt")).toBeVisible();
+        await panel.getByTestId("vcs-status-folder-folder").click();
+        await expect(panel.getByTestId("vcs-status-file-folder/deep/b.txt")).toHaveCount(0);
+        await page.reload();
+        await expect(panel.getByTestId("vcs-status-folder-folder")).toHaveAttribute(
+          "aria-expanded",
+          "false",
+        );
+        await expect(panel.getByTestId("vcs-status-file-folder/deep/b.txt")).toHaveCount(0);
+        await panel.getByTestId("vcs-status-folder-folder").click({ button: "right" });
+      } else {
+        await panel.getByTestId("vcs-status-file-note.txt").click({ button: "right" });
+      }
+      await page.getByTestId("vcs-file-action-checkpoint.create").click();
+      await expect(page.getByTestId("checkpoint-selected-files")).toHaveText(
+        history ? '["note.txt"]' : '["folder/a.txt","old-a.txt","folder/deep/b.txt"]',
+      );
+    }
+    await page.getByTestId("checkpoint-description").fill("Without history");
+    await page.getByTestId("checkpoint-save").click();
+    await expect(panel.getByTestId("vcs-operation")).toContainText("Operation completed");
+    if (history) {
+      await writeFile(path.join(repo, "note.txt"), "New working contents\n");
+      await panel.getByTestId("vcs-view").click();
+      await page.getByRole("button", { name: "History", exact: true }).last().click();
+      await panel.getByTestId(/^vcs-revision-/).click();
+      await expect(
+        panel.getByText("This provider does not support diffs.", { exact: true }),
+      ).toBeVisible();
+      await expect(panel.getByTestId("vcs-status-file-note.txt")).toHaveCount(0);
+    }
+    await page.getByTestId("workspace-header-menu-trigger").filter({ visible: true }).click();
+    await page.getByTestId("workspace-vcs-view-working-copy").click();
+    await panel.getByTestId("vcs-copy-title").fill("Copy without history");
+    await panel.getByTestId("vcs-copy-create").click();
+    await expect(panel.getByTestId("vcs-copy-success")).toBeVisible({ timeout: 30_000 });
+    const copies = (await client.fetchWorkspaces()).entries.filter(
+      (entry) => entry.projectId === projectId && entry.id !== created.workspace!.id,
+    );
+    expect(copies).toHaveLength(1);
+    copyId = copies[0]!.id;
+  });
+}
+
+externalVcsTest(
+  "external VCS plugin uses shared Changes, history and its own action and panel",
+  async ({ page }) => {
+    test.setTimeout(120_000);
+    page.setDefaultTimeout(15_000);
+    const { connectDaemonClient } = await import("../support/helpers/daemon-client-loader");
+    const { createTempDirectory } = await import("../support/helpers/workspace");
+    const client = await connectDaemonClient<
+      import("@getpaseo/client/internal/daemon-client").DaemonClient
+    >({ clientIdPrefix: "external-vcs-ui" });
+    const fixture = await createTempDirectory("vcs-ui-plugin-");
+    const directory = path.join(fixture.path, "plugin");
+    const repo = path.join(fixture.path, "repository");
+    await mkdir(directory);
+    await mkdir(repo);
+    await writeFile(path.join(repo, ".external-vcs"), "External initial");
+    await writeFile(path.join(repo, "note.txt"), "External diff\n");
+    await writeFile(
+      path.join(directory, "paseo-plugin.json"),
+      JSON.stringify({ id: "vcs-ui-example", requirements: { paseo: ">=0.15.2" } }),
+    );
+    await writeFile(
+      path.join(directory, "index.server.ts"),
+      `
+import { readFile, writeFile, mkdir, rm } from "node:fs/promises";
+import path from "node:path";
+export default function contribute(server) {
+  const current = async (binding) => {
+    const description = await readFile(path.join(binding.root, ".external-vcs"), "utf8");
+    return { id: "revision:" + description, changeId: "stable-change", description, parents: ["base-revision"], author: { name: "External", email: "external@example.test" }, timestamp: "2026-11-06T00:00:00Z", conflict: false };
+  };
+  server.registerVcsProvider({ id: "external-vcs", label: "External VCS", detectionPriority: 100,
+    async detect(cwd) { try { await readFile(path.join(cwd, ".external-vcs")); } catch { return { status: "absent" }; } return { status: "available", binding: { providerId: "external-vcs", repositoryId: await readFile(path.join(cwd, ".external-repository"), "utf8").catch(() => cwd), workingCopyId: cwd, cwd, root: cwd } }; },
+    async snapshot(binding) { const revision = await current(binding); return { binding, version: revision.id, current: revision, files: [{ path: "note.txt", status: "modified", conflict: false }], refs: ["task", "existing"].map(name => ({ id: name, name, kind: "custom-reference", targets: [revision.id], publishable: true })), capabilities: ["diff", "history", "refs", "actions", "publication"], actions: [{ id: "change.describe", enabled: revision.description !== "Externally blocked", reason: revision.description === "Externally blocked" ? "External operation in progress" : undefined }], state: "ready" }; },
+    workingCopies: {
+      async create(binding, input) {
+        if (input.data?.version !== 1 || typeof input.data.data?.label !== "string") throw new Error("Missing external copy label");
+        await mkdir(input.root);
+        await writeFile(path.join(input.root, ".external-vcs"), input.data.data.label);
+        await writeFile(path.join(input.root, ".external-repository"), binding.repositoryId);
+        await writeFile(path.join(input.root, "note.txt"), input.data.data.label);
+        return { owned: true, binding: { ...binding, root: input.root, cwd: input.root, workingCopyId: input.root } };
+      },
+      async rollback(binding, record) { await rm(record.binding.root, { recursive: true }); },
+    },
+    publication: {
+      async remotes() { return [{ name: "origin", fetchUrl: "https://github.com/paseo/vcs-ui", pushUrls: ["https://github.com/paseo/vcs-ui"] }]; },
+      async resolve(binding, selection, snapshot) { return { ...selection, repositoryUrl: "https://github.com/paseo/vcs-ui", headRevision: snapshot.current.id }; },
+      async publish(binding, target) { const log = path.join(binding.root, ".external-pushes"); let count = 0; try { count = Number(await readFile(log, "utf8")); } catch {} await writeFile(log, String(count + 1)); await writeFile(path.join(binding.root, ".external-published"), target.headRevision); return target; },
+      async verify(binding, target) { if (await readFile(path.join(binding.root, ".external-published"), "utf8") !== target.headRevision) throw new Error("Publication changed"); },
+    },
+    async observation(binding) { return { fingerprint: (await current(binding)).id, roots: [{ path: binding.root, scope: "working-copy", kind: "files" }] }; },
+    async history(binding) { return { revisions: [await current(binding)] }; },
+    async diff(binding, comparison) { if (comparison.data?.version === 23) { const options = comparison.data.data; if (options.comparison.kind !== "range" || options.comparison.from !== "base-revision" || !options.comparison.to.startsWith("revision:")) throw new Error("Expected exact external revisions"); if (options.ignoreWhitespace) return ""; } return "diff --git a/note.txt b/note.txt\\n--- a/note.txt\\n+++ b/note.txt\\n@@ -1 +1 @@\\n-Original\\n+External diff\\n"; },
+    async execute(binding, action, input) { if (action !== "change.describe" || typeof input?.message !== "string") throw new Error("Missing description"); await writeFile(path.join(binding.root, ".external-vcs"), input.message); return {}; },
+  });
+  return () => {};
+}`,
+    );
+    await writeFile(
+      path.join(directory, "index.client.tsx"),
+      `
+import { useState } from "react";
+import { Text } from "react-native";
+import { Form, Field, FormTextInput, Button } from "@getpaseo/plugin/client/ui";
+function Describe({ context, pending, submit }) { const [message, setMessage] = useState(context.snapshot.current.description); return <Form><Text testID="external-selected-files">{context.selectedFiles?.join(",") ?? "workspace"}</Text><Field label="External description"><FormTextInput initialValue={message} onChangeText={setMessage} testID="external-vcs-message" /></Field><Button disabled={pending} onPress={() => submit({ message })} testID="external-vcs-submit">Save external description</Button></Form>; }
+function Details({ context, runAction }) { return <Form><Text>External panel: {context.snapshot.current.description}</Text><Button onPress={() => runAction("change.describe", { message: "Changed from custom panel" })} testID="external-vcs-custom-action">Run custom panel action</Button></Form>; }
+function CopyFields({ value, disabled, onChange }) { return <Field label="External copy label"><FormTextInput initialValue={value?.data?.label ?? ""} editable={!disabled} onChangeText={label => onChange({ version: 1, data: { label } })} testID="external-copy-label" /></Field>; }
+function ProjectSource({ context, disabled, onChange }) { return <Button testID="external-project-source" disabled={disabled} onPress={() => onChange({ kind: "working-copy", projectId: context.projectId, cwd: context.snapshot.binding.cwd, providerId: context.snapshot.binding.providerId, revision: context.snapshot.current.id, providerData: { version: 1, data: { label: "Created by external project source" } } })}>Select external source</Button>; }
+export default function contribute(client) { return client.addVcsContribution({ resolveRevisionComparison(input) { return { comparison: { kind: "working-copy", data: { version: 23, data: { comparison: input.comparison, ignoreWhitespace: input.ignoreWhitespace } } }, reviewScope: JSON.stringify([input.comparison, input.ignoreWhitespace]) }; }, ProjectSource, workingCopy: { Form: CopyFields }, providerId: "external-vcs", title: "External VCS", actions: [{ id: "change.describe", title: "External describe", contexts: ["workspace", "revision", "ref"], fileContexts: ["file", "directory"], Form: Describe }], panels: [{ id: "details", title: "Custom info", icon: "Info", entryPoints: ["workspace", "command-center"], Component: Details }] }); }
+`,
+    );
+    const previous = await client.getDaemonConfig();
+    let externalProjectId: string | undefined;
+    cleanupTasks.push({
+      run: async () => {
+        if (externalProjectId) await client.removeProject(externalProjectId);
+        await client.removePlugin("vcs-ui-example").catch(() => undefined);
+        await client.patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled });
+        await client.close();
+        await fixture.cleanup();
+      },
+    });
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await client.installDirectoryPlugin(directory);
+    const created = await client.createWorkspace({ source: { kind: "directory", path: repo } });
+    if (!created.workspace) throw new Error(created.error ?? "Missing external VCS workspace");
+    externalProjectId = created.workspace.projectId;
+    const frames = await loadSessionMessageReaders();
+    const snapshotRequests: string[] = [];
+    page.on("websocket", (socket) => {
+      socket.on("framesent", ({ payload }) => {
+        const message = frames.client(payload);
+        if (message?.type === "vcs.snapshot.get.request")
+          snapshotRequests.push(message.workspaceId);
+      });
+    });
+    await page.setViewportSize({ width: 1400, height: 900 });
+    await page.goto(buildHostWorkspaceRoute(getServerId(), created.workspace.id));
+    await expect(
+      page.getByRole("button", { name: "Open Explorer sidebar", exact: true }),
+    ).toBeVisible();
+    await page.keyboard.press(`${process.platform === "darwin" ? "Meta" : "Control"}+Shift+G`);
+    const panel = page.getByTestId("vcs-panel").filter({ visible: true });
+    await expect(panel).toBeVisible();
+    await expect(panel.getByText("External VCS · Working copy")).toBeVisible();
+    await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName(/note\.txt/);
+    await expect(panel.getByTestId("vcs-whitespace")).toHaveCount(0);
+    await panel.getByTestId("vcs-comparison").click();
+    await page.getByRole("button", { name: "Between revisions", exact: true }).click();
+    await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName(/note\.txt/);
+    await panel.getByTestId("vcs-whitespace").click();
+    await expect(panel.getByTestId("diff-file-0")).toHaveCount(0);
+    await panel.getByTestId("vcs-whitespace").click();
+    await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName(/note\.txt/);
+    await panel.getByTestId("vcs-comparison").click();
+    await page.getByRole("button", { name: "Working copy", exact: true }).click();
+    await expect(panel.getByTestId("vcs-whitespace")).toHaveCount(0);
+    const initialSnapshots = snapshotRequests.length;
+    expect(initialSnapshots).toBeGreaterThan(0);
+    await page.getByTestId("workspace-header-menu-trigger").filter({ visible: true }).click();
+    const describeMenuItem = page.getByTestId("workspace-vcs-action-change.describe");
+    await expect(describeMenuItem).toBeEnabled();
+    expect(snapshotRequests).toHaveLength(initialSnapshots);
+    await writeFile(path.join(repo, ".external-vcs"), "Externally blocked");
+    await expect(describeMenuItem).toBeDisabled();
+    await expect(
+      page.getByText("External operation in progress", { exact: true }).filter({ visible: true }),
+    ).toBeVisible();
+    await writeFile(path.join(repo, ".external-vcs"), "External initial");
+    await expect(describeMenuItem).toBeEnabled();
+    await page.keyboard.press("Escape");
+    await writeFile(path.join(repo, ".external-vcs"), "External observed");
+    await panel.getByTestId("vcs-view").click();
+    await page.getByRole("button", { name: "History", exact: true }).last().click();
+    await expect(panel.getByText("External observed", { exact: true })).toBeVisible({
+      timeout: 15000,
+    });
+    await panel.getByTestId("vcs-view").click();
+    await page.getByRole("button", { name: "Changes", exact: true }).last().click();
+    const commands = await openCommandCenter(page);
+    await commands.getByTestId("command-center-input").fill("External describe");
+    await expect(commands.getByText("External describe", { exact: true })).toBeVisible();
+    expect(snapshotRequests).toHaveLength(initialSnapshots);
+    await writeFile(path.join(repo, ".external-vcs"), "Externally blocked");
+    await expect(
+      commands.getByText("External operation in progress", { exact: true }),
+    ).toBeVisible();
+    await writeFile(path.join(repo, ".external-vcs"), "External observed");
+    await expect(commands.getByText("External operation in progress", { exact: true })).toHaveCount(
+      0,
+    );
+    await commands.getByText("External describe", { exact: true }).click();
+    await page.getByTestId("external-vcs-message").fill("Changed by extension");
+    await page.getByTestId("external-vcs-submit").click();
+    await expect(panel.getByTestId("vcs-operation")).toContainText("Operation completed");
+    expect(await readFile(path.join(repo, ".external-vcs"), "utf8")).toBe("Changed by extension");
+    await panel.getByTestId("diff-file-0").click({ button: "right" });
+    await page.getByTestId("vcs-file-action-change.describe").click();
+    await expect(page.getByTestId("external-selected-files")).toHaveText("note.txt");
+    await page.getByTestId("external-vcs-submit").click();
+    await expect(panel.getByTestId("vcs-operation")).toContainText("Operation completed");
+    await page.getByTestId("workspace-header-menu-trigger").filter({ visible: true }).click();
+    await page.getByTestId("workspace-vcs-view-plugin:details").click();
+    await expect(panel.getByText("External panel: Changed by extension")).toBeVisible();
+    await panel.getByTestId("external-vcs-custom-action").click();
+    await expect
+      .poll(() => readFile(path.join(repo, ".external-vcs"), "utf8"))
+      .toBe("Changed from custom panel");
+    await expect(panel.getByTestId("vcs-operation")).toContainText("Operation completed");
+    const publishCommands = await openCommandCenter(page);
+    await publishCommands.getByTestId("command-center-input").fill("Publish / PR/MR");
+    await publishCommands.getByText("Publish / PR/MR", { exact: true }).click();
+    await expect(panel.getByTestId("vcs-publish-remote")).toBeVisible();
+    expect(await readFileIfPresent(path.join(repo, ".external-pushes"))).toBeNull();
+    const panelCommands = await openCommandCenter(page);
+    await panelCommands.getByTestId("command-center-input").fill("Custom info");
+    await panelCommands.getByText("Custom info", { exact: true }).click();
+    await expect(panel.getByText("External panel: Changed from custom panel")).toBeVisible();
+    // Selecting another view survives reload instead of replaying the navigation request.
+    await panel.getByTestId("vcs-view").click();
+    await page.getByRole("button", { name: "History", exact: true }).last().click();
+    await page.reload();
+    await expect(panel.getByTestId("vcs-view")).toContainText("History");
+    await page.getByTestId("workspace-header-menu-trigger").filter({ visible: true }).click();
+    await page.getByTestId("workspace-vcs-view-publish").click();
+    await panel.getByTestId("vcs-publish-remote").click();
+    await page.getByRole("button", { name: /^origin/ }).click();
+    await panel.getByTestId("vcs-publish-head").click();
+    await page.getByRole("button", { name: "existing", exact: true }).click();
+    await panel.getByTestId("vcs-publish-base").fill("main");
+    await expect(panel.getByTestId("vcs-create-request")).toBeDisabled();
+    await panel.getByTestId("vcs-find-request").click();
+    await expect(panel.getByTestId("vcs-publication-status")).toContainText(
+      "Existing external request",
+    );
+    await expect(panel.getByTestId("vcs-publication-status")).toContainText("Example check");
+    expect(await readFileIfPresent(path.join(repo, ".external-pushes"))).toBeNull();
+    await page
+      .context()
+      .route("https://github.com/paseo/vcs-ui/pull/8", (route) =>
+        route.fulfill({ body: "Existing request" }),
+      );
+    const opened = page.waitForEvent("popup");
+    await panel.getByTestId("vcs-open-request").click();
+    const requestPage = await opened;
+    await expect(requestPage).toHaveURL("https://github.com/paseo/vcs-ui/pull/8");
+    await requestPage.close();
+    await page.reload();
+    await expect(panel.getByTestId("vcs-publish-head")).toContainText("existing", {
+      timeout: 30_000,
+    });
+    await expect(panel.getByTestId("vcs-publish-title")).toHaveValue("");
+    await expect(panel.getByTestId("vcs-publication-status")).toContainText(
+      "Existing external request",
+    );
+    await panel.getByTestId("vcs-publish-head").click();
+    await page.getByRole("button", { name: "task", exact: true }).click();
+    await expect(panel.getByTestId("vcs-publication-status")).toHaveCount(0);
+    await panel.getByTestId("vcs-find-request").click();
+    await expect(panel.getByTestId("vcs-no-request")).toBeVisible();
+    await expect(panel.getByTestId("vcs-open-request")).toHaveCount(0);
+    expect(await readFileIfPresent(path.join(repo, ".external-pushes"))).toBeNull();
+    await panel.getByTestId("vcs-publish-title").fill("External contribution");
+    page.once("dialog", (dialog) => dialog.accept());
+    await panel.getByTestId("vcs-create-request").click();
+    await expect(panel.getByTestId("vcs-published-retry")).toBeVisible();
+    await expect(panel.getByTestId("vcs-operation")).toContainText("Forge temporarily unavailable");
+    expect(await readFile(path.join(repo, ".external-pushes"), "utf8")).toBe("1");
+    await page.reload();
+    await expect(panel.getByTestId("vcs-published-retry")).toBeVisible();
+    await panel.getByTestId("vcs-retry-create").click();
+    await expect(panel.getByTestId("vcs-operation")).toContainText("Operation completed");
+    expect(await readFile(path.join(repo, ".external-pushes"), "utf8")).toBe("1");
+    await panel.getByTestId("vcs-view").click();
+    await page.getByRole("button", { name: "Create working copy", exact: true }).click();
+    await panel.getByTestId("external-copy-label").fill("Created by external fields");
+    await panel.getByTestId("vcs-copy-create").click();
+    await expect(panel.getByTestId("vcs-copy-success")).toBeVisible();
+    const copies = (await client.fetchWorkspaces()).entries.filter(
+      (item) => item.projectId === externalProjectId && item.id !== created.workspace!.id,
+    );
+    expect(copies).toHaveLength(1);
+    expect(await readFile(path.join(copies[0]!.workspaceDirectory, "note.txt"), "utf8")).toBe(
+      "Created by external fields",
+    );
+    const changesUrl = page.url();
+    await page.goto(
+      buildNewWorkspaceRoute({
+        serverId: getServerId(),
+        projectId: externalProjectId!,
+        sourceDirectory: repo,
+      }),
+    );
+    await selectWorkspaceIsolation(page, "worktree");
+    await expect(page.getByTestId("new-workspace-vcs-revision")).toHaveCount(0);
+    await page.getByTestId("external-project-source").click();
+    await page.getByTestId("workspace-create-submit").click();
+    await expect(page).toHaveURL(/\/workspace\/wks_/);
+    const projectCopies = (await client.fetchWorkspaces()).entries.filter(
+      (item) =>
+        item.projectId === externalProjectId &&
+        item.id !== created.workspace!.id &&
+        item.id !== copies[0]!.id,
+    );
+    expect(projectCopies).toHaveLength(1);
+    expect(
+      await readFile(path.join(projectCopies[0]!.workspaceDirectory, "note.txt"), "utf8"),
+    ).toBe("Created by external project source");
+    await page.goto(changesUrl);
+    await client.disablePlugin("vcs-ui-example");
+    await expect(panel.getByTestId("vcs-actions")).toHaveCount(0);
+    await panel.getByTestId("vcs-refresh").click();
+    await expect(panel.getByRole("alert")).toContainText("unavailable");
+  },
+);
+
+for (const width of [1400, 390]) {
+  test(`Git VCS stages files and commits the index at width ${width}`, async ({ page }) => {
+    test.setTimeout(120_000);
+    page.setDefaultTimeout(15_000);
+    const { connectDaemonClient } = await import("../support/helpers/daemon-client-loader");
+    const client = await connectDaemonClient<
+      import("@getpaseo/client/internal/daemon-client").DaemonClient
+    >({ clientIdPrefix: "git-vcs-ui" });
+    const repo = await createTempGitRepo("git-vcs-ui-", {
+      files: [{ path: "counter.ts", content: "export const count = 1;\n" }],
+    });
+    let projectId: string | undefined;
+    let root: string | undefined;
+    cleanupTasks.push({
+      run: async () => {
+        if (projectId) await client.removeProject(projectId);
+        await client.close();
+        if (root) {
+          const { rm } = await import("node:fs/promises");
+          await rm(root, { recursive: true, force: true });
+        }
+        await repo.cleanup();
+      },
+    });
+    const project = await client.addProject(repo.path);
+    if (!project.project) throw new Error(project.error ?? "Missing project");
+    projectId = project.project.projectId;
+    const created = await client.createWorkspace({ source: { kind: "working-copy", projectId } });
+    if (!created.workspace?.workspaceDirectory)
+      throw new Error(created.error ?? "Missing workspace");
+    root = created.workspace.workspaceDirectory;
+    execFileSync("git", ["config", "commit.gpgsign", "false"], { cwd: root });
+    await writeFile(path.join(root, "counter.ts"), "export const count = 2;\n");
+    await writeFile(path.join(root, "new.txt"), "untracked\n");
+    await page.setViewportSize({ width, height: 900 });
+    await configureDiffPresentation(page, {
+      layout: "unified",
+      wrapLines: false,
+      inlineDiff: true,
+    });
+    await page.goto(buildHostWorkspaceRoute(getServerId(), created.workspace.id));
+    await expect(
+      page.getByTestId("workspace-header-menu-trigger").filter({ visible: true }),
+    ).toBeVisible();
+    if (width === 390) await page.reload();
+    await page.getByTestId("workspace-header-menu-trigger").filter({ visible: true }).click();
+    await page.getByTestId("workspace-vcs-action-stage").click();
+    await expect(page.getByTestId("git-file-new.txt")).toBeVisible();
+    await page.getByTestId("git-file-new.txt").getByRole("switch").click();
+    await page.getByTestId("vcs-action-submit").click();
+    const panel = page.getByTestId("vcs-panel").filter({ visible: true });
+    await expect(panel.getByTestId("vcs-operation")).toContainText("Operation completed");
+    expect(execFileSync("git", ["show", ":counter.ts"], { cwd: root, encoding: "utf8" })).toBe(
+      "export const count = 2;\n",
+    );
+    expect(
+      execFileSync("git", ["diff", "--cached", "--name-only"], {
+        cwd: root,
+        encoding: "utf8",
+      }).trim(),
+    ).toBe("counter.ts");
+    await panel.getByTestId("vcs-comparison").click();
+    await page.getByRole("button", { name: "Uncommitted", exact: true }).last().click();
+    await saveVcsReview(page, panel, "Review from Git Changes");
+    await writeFile(
+      path.join(root, "counter.ts"),
+      "export const count = 3;\nexport const extra = true;\n",
+    );
+    await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("counter.ts, +2, -1");
+    await expect(panel.getByText("Review from Git Changes", { exact: true })).toBeVisible();
+    await panel.getByTestId("vcs-comparison").click();
+    await page.getByRole("button", { name: "Staged", exact: true }).click();
+    await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("counter.ts, +1, -1");
+    await panel.getByTestId("vcs-actions").first().click();
+    await page.getByTestId("vcs-action-commit").click();
+    await page.getByTestId("git-message").fill("Commit the index");
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByTestId("vcs-action-submit").click();
+    await expect(panel.getByTestId("vcs-operation")).toContainText("Operation completed");
+    expect(execFileSync("git", ["show", "HEAD:counter.ts"], { cwd: root, encoding: "utf8" })).toBe(
+      "export const count = 2;\n",
+    );
+    expect(await readFile(path.join(root, "counter.ts"), "utf8")).toBe(
+      "export const count = 3;\nexport const extra = true;\n",
+    );
+    await panel.getByTestId("vcs-comparison").click();
+    await page.getByRole("button", { name: "Uncommitted", exact: true }).click();
+    await panel.getByTestId("diff-file-0").click({ button: "right" });
+    await expect(page.getByTestId("diff-file-0-copy-path")).toBeVisible();
+    await expect(page.getByTestId("diff-file-0-download")).toBeVisible();
+    await page.getByTestId("diff-file-0-duplicate").click();
+    await expect
+      .poll(() => readFileIfPresent(path.join(root!, "counter copy.ts")))
+      .toBe("export const count = 3;\nexport const extra = true;\n");
+    await expect(diffHeaderForPath(panel, "counter copy.ts")).toBeVisible();
+    await diffHeaderForPath(panel, "counter.ts").click({ button: "right" });
+    await page.getByTestId("vcs-file-action-discard").click();
+    await expect(page.getByTestId("git-file-new.txt")).toHaveCount(0);
+    await expect(page.getByTestId("git-file-counter.ts")).toBeVisible();
+    await writeFile(path.join(root, "counter.ts"), "external edit\n");
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByTestId("vcs-action-submit").click();
+    await expect(panel.getByTestId("vcs-operation")).toContainText("Repository changed");
+    expect(await readFile(path.join(root, "counter.ts"), "utf8")).toBe("external edit\n");
+    await expect(
+      page.getByRole("alert").filter({ hasText: "Repository changed" }).last(),
+    ).toBeVisible();
+    await expect(page.getByTestId("git-file-counter.ts")).toBeVisible();
+    await expect(page.getByTestId("vcs-action-submit")).toBeEnabled();
+    await page
+      .getByTestId("vcs-action-sheet")
+      .getByRole("button", { name: "Close", exact: true })
+      .click();
+    await panel.getByTestId("vcs-view").click();
+    await page.getByRole("button", { name: "History", exact: true }).last().click();
+    await expect(panel.getByText("Commit the index", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("git-legacy-review")).toHaveCount(0);
+    await expect(page.getByTestId("git-modern-vcs")).toHaveCount(0);
+    await page.screenshot({ path: test.info().outputPath(`git-vcs-${width}.png`) });
+  });
+}
+
+test("Git working-copy fields validate and create the requested branch", async ({ page }) => {
+  const { connectDaemonClient } = await import("../support/helpers/daemon-client-loader");
+  const client = await connectDaemonClient<
+    import("@getpaseo/client/internal/daemon-client").DaemonClient
+  >({ clientIdPrefix: "git-copy-fields" });
+  const repo = await createTempGitRepo("git-copy-fields-");
+  let projectId: string | undefined;
+  cleanupTasks.push({
+    run: async () => {
+      if (projectId) await client.removeProject(projectId);
+      await client.close();
+      await repo.cleanup();
+    },
+  });
+  const source = await client.createWorkspace({ source: { kind: "directory", path: repo.path } });
+  if (!source.workspace) throw new Error(source.error ?? "Missing Git workspace");
+  projectId = source.workspace.projectId;
+  await page.goto(buildHostWorkspaceRoute(getServerId(), source.workspace.id));
+  await page.getByTestId("workspace-header-menu-trigger").filter({ visible: true }).click();
+  await page.getByTestId("workspace-vcs-view-working-copy").click();
+  const panel = page.getByTestId("vcs-panel").filter({ visible: true });
+  await panel.getByTestId("git-working-copy-branch").fill("../invalid");
+  await panel.getByTestId("vcs-copy-create").click();
+  await expect(panel.getByRole("alert")).toContainText("Enter a valid branch name.");
+  expect(
+    (await client.fetchWorkspaces()).entries.filter((item) => item.projectId === projectId),
+  ).toHaveLength(1);
+  await panel.getByTestId("git-working-copy-branch").fill("feature/from-plugin-fields");
+  await panel.getByTestId("vcs-copy-create").click();
+  await expect(panel.getByTestId("vcs-copy-success")).toBeVisible();
+  const copies = (await client.fetchWorkspaces()).entries.filter(
+    (item) => item.projectId === projectId && item.id !== source.workspace!.id,
+  );
+  expect(copies).toHaveLength(1);
+  expect(
+    execFileSync("git", ["branch", "--show-current"], {
+      cwd: copies[0]!.workspaceDirectory,
+      encoding: "utf8",
+    }).trim(),
+  ).toBe("feature/from-plugin-fields");
+});
+
+test("Git comparison settings persist project defaults and workspace overrides", async ({
+  page,
+}) => {
+  const workspace = await createWorkspaceWithCommittedDiff();
+  await openWorkspaceChangesSurface(page, workspace, 30_000);
+  const toggle = page.getByTestId("working-diff-panel").getByTestId("vcs-comparison-settings");
+  await toggle.click();
+  await page.getByTestId("vcs-comparison-settings-scope").click();
+  await page.getByRole("button", { name: "Project", exact: true }).click();
+  await page.getByTestId("git-comparison-settings-mode").click();
+  await page.getByRole("button", { name: "Uncommitted", exact: true }).click();
+  await page.getByTestId("vcs-comparison-settings-save").click();
+  await expect(page.getByText("Settings saved", { exact: true })).toBeVisible();
+  await page.getByTestId("vcs-comparison-settings-scope").click();
+  await page.getByRole("button", { name: "Workspace", exact: true }).click();
+  await expect(page.getByTestId("git-comparison-settings-mode")).toContainText("Uncommitted");
+  await page.getByTestId("git-comparison-settings-mode").click();
+  await page.getByRole("button", { name: "All changes", exact: true }).click();
+  await page.getByTestId("vcs-comparison-settings-save").click();
+  await expect(page.getByText("Settings saved", { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(toggle).toBeVisible();
+  await toggle.click();
+  await expect(page.getByTestId("git-comparison-settings-mode")).toContainText("All changes");
+  await page.getByTestId("vcs-comparison-settings-reset").click();
+  await expect(page.getByTestId("git-comparison-settings-mode")).toContainText("Uncommitted");
+});
+
+for (const width of [1400, 390]) {
+  for (const scenario of ["split", "squash", ...(width === 390 ? ["split-reconnect"] : [])]) {
+    const action = scenario === "split-reconnect" ? "split" : scenario;
+    test(`jj ${scenario} file selection and bookmark forms at width ${width}`, async ({ page }) => {
+      test.setTimeout(120_000);
+      const { connectDaemonClient } = await import("../support/helpers/daemon-client-loader");
+      const client = await connectDaemonClient<
+        import("@getpaseo/client/internal/daemon-client").DaemonClient
+      >({ clientIdPrefix: "jj-file-actions-ui" });
+      const repo = await createTempGitRepo("jj-file-actions-ui-", {
+        files: [{ path: "base.txt", content: "base\n" }],
+      });
+      execFileSync("jj", ["git", "init", "--colocate", repo.path], { stdio: "pipe" });
+      let root: string | undefined;
+      let projectId: string | undefined;
+      cleanupTasks.push({
+        run: async () => {
+          if (projectId) await client.removeProject(projectId);
+          await client.close();
+          if (root) {
+            const { rm } = await import("node:fs/promises");
+            await rm(root, { recursive: true, force: true });
+          }
+          await repo.cleanup();
+        },
+      });
+      const project = await client.addProject(repo.path);
+      if (!project.project) throw new Error(project.error ?? "Missing project");
+      projectId = project.project.projectId;
+      const created = await client.createWorkspace({ source: { kind: "working-copy", projectId } });
+      if (!created.workspace?.workspaceDirectory)
+        throw new Error(created.error ?? "Missing workspace");
+      root = created.workspace.workspaceDirectory;
+      const jj = (...args: string[]) =>
+        execFileSync("jj", args, { cwd: root, encoding: "utf8" }).trim();
+      jj("describe", "-r", "@-", "-m", "Destination for files");
+      await writeFile(path.join(root, "selected (file).txt"), "selected\n");
+      await writeFile(path.join(root, "remaining.txt"), "remaining\n");
+      jj("describe", "-m", "Source for files");
+      const original = jj("log", "--no-graph", "-r", "@", "-T", "commit_id");
+      const destination = jj("log", "--no-graph", "-r", "@-", "-T", "commit_id");
+      let disconnectReply: (() => void) | null = null;
+      let intercepted = false;
+      let executions = 0;
+      if (scenario === "split-reconnect") {
+        const frames = await loadSessionMessageReaders();
+        await page.routeWebSocket(daemonWsRoutePattern(), (browser) => {
+          const server = browser.connectToServer();
+          browser.onMessage((frame) => {
+            const message = frames.client(frame);
+            if (message?.type === "vcs.actions.execute.request" && message.action === action)
+              executions++;
+            server.send(frame);
+          });
+          server.onMessage((frame) => {
+            if (!intercepted && frames.server(frame)?.type === "vcs.actions.execute.response") {
+              intercepted = true;
+              disconnectReply = () => {
+                browser.close({ code: 1012, reason: "Test lost acknowledgement" });
+                server.close();
+              };
+              return;
+            }
+            browser.send(frame);
+          });
+        });
+      }
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto(buildHostWorkspaceRoute(getServerId(), created.workspace.id));
+      await expect(
+        page.getByRole("button", { name: "Open Explorer sidebar", exact: true }),
+      ).toBeVisible();
+      if (width === 390) {
+        await page.reload();
+        await page.getByTestId("workspace-explorer-toggle").first().click();
+        await page.getByTestId("workspace-tab-changes_tree").filter({ visible: true }).click();
+      } else {
+        await page.keyboard.press(`${process.platform === "darwin" ? "Meta" : "Control"}+Shift+G`);
+      }
+      const panel = page.getByTestId("vcs-panel").filter({ visible: true });
+      await expect(panel).toBeVisible({ timeout: 30_000 });
+      if (width === 390)
+        await page
+          .getByRole("button", { name: "Close Explorer sidebar", exact: true })
+          .last()
+          .click();
+      const openAction = async (id: string) => {
+        await page.getByTestId("workspace-header-menu-trigger").filter({ visible: true }).click();
+        await page.getByTestId(`workspace-vcs-action-${id}`).click();
+        await expect(page.getByTestId("vcs-action-submit")).toBeVisible();
+      };
+      const closeAction = () =>
+        page
+          .getByTestId("vcs-action-sheet")
+          .getByRole("button", { name: "Close", exact: true })
+          .click();
+      await openAction(action);
+      await page.getByRole("switch", { name: "remaining.txt", exact: true }).click();
+      await page.getByRole("switch", { name: "selected (file).txt", exact: true }).click();
+      await expect(page.getByTestId("vcs-action-submit")).toBeDisabled();
+      await page.getByRole("switch", { name: "selected (file).txt", exact: true }).click();
+      if (action === "squash") {
+        await page.getByTestId("jj-destination").click();
+        await page.getByRole("button", { name: /Destination for files/ }).click();
+      } else await page.getByTestId("jj-message").fill("Extracted file");
+      let preview = "";
+      page.once("dialog", async (dialog) => {
+        preview = dialog.message();
+        await dialog.dismiss();
+      });
+      await page.getByTestId("vcs-action-submit").click();
+      await expect(page.getByTestId("vcs-action-submit")).toBeEnabled();
+      expect(preview).toContain("selected (file).txt");
+      expect(preview).not.toContain("remaining.txt");
+      expect(jj("log", "--no-graph", "-r", "@", "-T", "commit_id")).toBe(original);
+      page.once("dialog", (dialog) => dialog.accept());
+      await page.getByTestId("vcs-action-submit").click();
+      if (scenario === "split-reconnect") {
+        await expect.poll(() => intercepted).toBe(true);
+        await expect(page.getByTestId("vcs-action-submit")).toBeDisabled();
+        await expect(page.getByTestId("jj-message")).not.toBeEditable();
+        disconnectReply!();
+      }
+      await expect(page.getByTestId("vcs-action-sheet")).toBeHidden({ timeout: 30_000 });
+      if (scenario === "split-reconnect") expect(executions).toBe(1);
+      await expect.poll(() => jj("diff", "--name-only", "-r", "@")).toBe("remaining.txt");
+      expect(jj("file", "show", "-r", "@-", 'root-file:"selected (file).txt"')).toBe("selected");
+
+      await openAction("bookmark-create");
+      await page.getByTestId("jj-name").fill("topic@review");
+      await page.getByTestId("vcs-action-submit").click();
+      await expect(page.getByTestId("vcs-action-sheet")).toBeHidden();
+      const current = jj("log", "--no-graph", "-r", "@", "-T", "commit_id");
+      await expect
+        .poll(() => jj("log", "--no-graph", "-r", '"topic@review"', "-T", "commit_id"))
+        .toBe(current);
+      await openAction("bookmark-create");
+      await page.getByTestId("jj-name").fill("topic@review");
+      await page.getByTestId("vcs-action-submit").click();
+      await expect(
+        page
+          .getByRole("alert")
+          .filter({ hasText: /already exists/i })
+          .last(),
+      ).toBeVisible();
+      await expect(page.getByTestId("jj-name")).toHaveValue("topic@review");
+      await expect(page.getByTestId("vcs-action-submit")).toBeEnabled();
+      await page.screenshot({
+        path: test.info().outputPath(`jj-${action}-bookmark-error-${width}.png`),
+      });
+      await closeAction();
+      jj("bookmark", "set", "--allow-backwards", '"topic@review"', "-r", destination);
+      // Wait for observation before opening the form, which pins its snapshot.
+      await page.reload();
+      await expect(panel).toBeVisible({ timeout: 30_000 });
+      await openAction("bookmark-set");
+      await page.getByTestId("jj-name").click();
+      await page.getByRole("button", { name: "topic@review", exact: true }).click();
+      page.once("dialog", async (dialog) => {
+        preview = dialog.message();
+        await dialog.accept();
+      });
+      await page.getByTestId("vcs-action-submit").click();
+      await expect(page.getByTestId("vcs-action-sheet")).toBeHidden();
+      expect(preview).toContain(destination);
+      expect(preview).toContain(current);
+      await expect
+        .poll(() => jj("log", "--no-graph", "-r", '"topic@review"', "-T", "commit_id"))
+        .toBe(current);
+    });
+  }
+}
+
+for (const width of [1400, 390]) {
+  test(`jj remote bookmark lifecycle and push reconnect at width ${width}`, async ({ page }) => {
+    test.setTimeout(180_000);
+    page.setDefaultTimeout(15_000);
+    const { connectDaemonClient } = await import("../support/helpers/daemon-client-loader");
+    const client = await connectDaemonClient<
+      import("@getpaseo/client/internal/daemon-client").DaemonClient
+    >({ clientIdPrefix: "jj-remote-ui" });
+    const repo = await createTempGitRepo("jj-remote-ui-", {
+      files: [{ path: "base.txt", content: "base\n" }],
+    });
+    const jj = (...args: string[]) =>
+      execFileSync("jj", args, {
+        cwd: repo.path,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      }).trim();
+    execFileSync("jj", ["git", "init", "--colocate", repo.path]);
+    jj("config", "set", "--repo", "user.name", "UI Test");
+    jj("config", "set", "--repo", "user.email", "ui@example.test");
+    jj("config", "set", "--repo", "git.auto-local-bookmark", "false");
+    const remote = path.join(repo.path, ".jj", "remote.git");
+    execFileSync("git", ["init", "--bare", remote], { stdio: "pipe" });
+    const base = jj("log", "--no-graph", "-r", "@-", "-T", "commit_id");
+    execFileSync("git", ["-C", repo.path, "push", remote, `${base}:refs/heads/topic@review`], {
+      stdio: "pipe",
+    });
+    jj("git", "remote", "add", "origin", remote);
+    jj("git", "remote", "add", "offline", path.join(repo.path, ".jj", "missing.git"));
+    await writeFile(path.join(repo.path, "publish.txt"), "published\n");
+    jj("describe", "-m", "Publish selected bookmark");
+    const revision = jj("log", "--no-graph", "-r", "@", "-T", "commit_id");
+    let projectId: string | undefined;
+    cleanupTasks.push({
+      run: async () => {
+        if (projectId) await client.removeProject(projectId);
+        await client.close();
+        await repo.cleanup();
+      },
+    });
+    const created = await client.createWorkspace({
+      source: { kind: "directory", path: repo.path },
+    });
+    if (!created.workspace) throw new Error(created.error ?? "Missing workspace");
+    projectId = created.workspace.projectId;
+    let dropPushReply = false;
+    let disconnectReply: (() => void) | null = null;
+    let pushRequests = 0;
+    const frames = await loadSessionMessageReaders();
+    await page.routeWebSocket(daemonWsRoutePattern(), (browser) => {
+      const server = browser.connectToServer();
+      browser.onMessage((frame) => {
+        const message = frames.client(frame);
+        if (message?.type === "vcs.actions.execute.request" && message.action === "push")
+          pushRequests++;
+        server.send(frame);
+      });
+      server.onMessage((frame) => {
+        if (dropPushReply && frames.server(frame)?.type === "vcs.actions.execute.response") {
+          dropPushReply = false;
+          disconnectReply = () => {
+            browser.close({ code: 1012, reason: "Lost push reply" });
+            server.close();
+          };
+          return;
+        }
+        browser.send(frame);
+      });
+    });
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(buildHostWorkspaceRoute(getServerId(), created.workspace.id));
+    const panel = page.getByTestId("vcs-panel").filter({ visible: true });
+    const menu = async () =>
+      page.getByTestId("workspace-header-menu-trigger").filter({ visible: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Open Explorer sidebar", exact: true }),
+    ).toBeVisible();
+    if (width === 390) {
+      await page.reload();
+      await page.getByTestId("workspace-explorer-toggle").first().click();
+      await page.getByTestId("workspace-tab-changes_tree").filter({ visible: true }).click();
+    } else {
+      await page.keyboard.press(`${process.platform === "darwin" ? "Meta" : "Control"}+Shift+G`);
+    }
+    await expect(panel).toBeVisible();
+    if (width === 390)
+      await page
+        .getByRole("button", { name: "Close Explorer sidebar", exact: true })
+        .last()
+        .click();
+    const openAction = async (id: string) => {
+      await menu();
+      await page.getByTestId(`workspace-vcs-action-${id}`).click();
+      await expect(page.getByTestId("vcs-action-submit")).toBeVisible();
+    };
+    const select = async (field: string, label: string) => {
+      await page.getByTestId(`jj-${field}`).click();
+      await page.getByRole("button", { name: label, exact: true }).click();
+    };
+    const apply = async () => {
+      await page.getByTestId("vcs-action-submit").click();
+      await expect(page.getByTestId("vcs-action-sheet")).toBeHidden();
+    };
+    const close = () =>
+      page
+        .getByTestId("vcs-action-sheet")
+        .getByRole("button", { name: "Close", exact: true })
+        .click();
+    const refAction = async (label: string, action: string) => {
+      await panel
+        .getByText(label, { exact: true })
+        .locator("..")
+        .locator("..")
+        .getByTestId("vcs-actions")
+        .click();
+      await page.getByTestId(`vcs-action-${action}`).click();
+    };
+    await openAction("fetch");
+    await expect(page.getByTestId("vcs-action-submit")).toBeDisabled();
+    await select("remote", "offline");
+    await page.getByTestId("vcs-action-submit").click();
+    await expect(
+      page
+        .getByRole("alert")
+        .filter({ hasText: /missing.git/ })
+        .last(),
+    ).toBeVisible();
+    await expect(page.getByTestId("jj-remote")).toContainText("offline");
+    await select("remote", "origin");
+    await apply();
+    await panel.getByTestId("vcs-view").click();
+    await page.getByRole("button", { name: "References", exact: true }).click();
+    await expect(panel.getByText("topic@review@origin", { exact: true })).toBeVisible();
+    await expect(panel.getByText("topic@review", { exact: true })).toHaveCount(0);
+    await refAction("topic@review@origin", "bookmark-track");
+    await expect(page.getByTestId("jj-remote")).toContainText("origin");
+    await select("name", "topic@review");
+    await select("remote", "offline");
+    await page.getByTestId("vcs-action-submit").click();
+    await expect(
+      page.getByRole("alert").filter({ hasText: "Remote bookmark no longer exists" }).last(),
+    ).toBeVisible();
+    await expect(page.getByTestId("jj-name")).toContainText("topic@review");
+    await select("remote", "origin");
+    await apply();
+    await expect(panel.getByText("topic@review", { exact: true })).toBeVisible();
+
+    await refAction("topic@review", "bookmark-delete");
+    let preview = "";
+    page.once("dialog", async (dialog) => {
+      preview = dialog.message();
+      await dialog.dismiss();
+    });
+    await page.getByTestId("vcs-action-submit").click();
+    await expect(page.getByTestId("vcs-action-submit")).toBeEnabled();
+    expect(preview).toContain("topic@review");
+    expect(preview).toContain(base);
+    expect(
+      jj("log", "--ignore-working-copy", "--no-graph", "-r", '"topic@review"', "-T", "commit_id"),
+    ).toBe(base);
+    jj("bookmark", "create", "concurrent", "-r", revision);
+    jj("bookmark", "delete", "concurrent");
+    await page.getByTestId("vcs-action-submit").click();
+    await expect(
+      page.getByRole("alert").filter({ hasText: "Repository changed" }).last(),
+    ).toBeVisible();
+    await close();
+    await refAction("topic@review", "bookmark-delete");
+    page.once("dialog", (dialog) => dialog.accept());
+    await apply();
+    await expect(panel.getByText("topic@review", { exact: true })).toHaveCount(0);
+    // Deletion is local until an explicit push.
+    expect(
+      execFileSync("git", ["--git-dir", remote, "rev-parse", "refs/heads/topic@review"], {
+        encoding: "utf8",
+      }).trim(),
+    ).toBe(base);
+    jj("bookmark", "set", '"topic@review"', "-r", revision);
+    jj("bookmark", "create", "keep-local", "-r", revision);
+    await page.reload();
+    await expect(panel.getByText("keep-local", { exact: true })).toBeVisible();
+    await openAction("push");
+    await select("name", "topic@review");
+    await select("remote", "origin");
+    await rename(remote, `${remote}.away`);
+    await page.getByTestId("vcs-action-submit").click();
+    await expect(
+      page
+        .getByRole("alert")
+        .filter({ hasText: /remote.git/ })
+        .last(),
+    ).toBeVisible();
+    await expect(page.getByTestId("jj-name")).toContainText("topic@review");
+    await rename(`${remote}.away`, remote);
+    dropPushReply = true;
+    await page.getByTestId("vcs-action-submit").click();
+    await expect.poll(() => disconnectReply !== null).toBe(true);
+    await expect(page.getByTestId("vcs-action-submit")).toBeDisabled();
+    disconnectReply!();
+    await expect(page.getByTestId("vcs-action-sheet")).toBeHidden({ timeout: 30_000 });
+    expect(pushRequests).toBe(2);
+    await expect(panel.getByTestId("vcs-operation")).toContainText("Operation completed");
+    await expect(panel.getByText("Lost push reply", { exact: true })).toHaveCount(0);
+    expect(
+      execFileSync("git", ["--git-dir", remote, "rev-parse", "refs/heads/topic@review"], {
+        encoding: "utf8",
+      }).trim(),
+    ).toBe(revision);
+    expect(
+      execFileSync(
+        "git",
+        ["--git-dir", remote, "for-each-ref", "--format=%(refname)", "refs/heads"],
+        { encoding: "utf8" },
+      ).trim(),
+    ).toBe("refs/heads/topic@review");
+    await page.screenshot({ path: test.info().outputPath(`jj-remote-bookmarks-${width}.png`) });
+  });
+}
+
+const jjPublicationTest = test.extend({
+  e2eDaemonEnvironment: [
+    async ({ e2eDaemonConfig }, provide) => {
+      void e2eDaemonConfig;
+      const { mkdtemp, rm } = await import("node:fs/promises");
+      const { tmpdir } = await import("node:os");
+      const directory = await mkdtemp(path.join(tmpdir(), "jj-forge-ui-"));
+      const script = `#!${process.execPath}
+const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+const gitlab = path.basename(process.argv[1]) === "glab";
+const statePath = path.join(process.cwd(), ".jj", "forge-state.json");
+if (fs.existsSync(statePath)) {
+  const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  const save = () => fs.writeFileSync(statePath, JSON.stringify(state));
+  const respond = value => { process.stdout.write(JSON.stringify(value)); process.exit(0); };
+  const fail = text => { process.stderr.write(text); process.exit(1); };
+  fs.appendFileSync(path.join(process.cwd(), ".jj", "forge-reads"), JSON.stringify(args) + "\\n");
+  const action = gitlab
+    ? args.includes("cancel_merge_when_pipeline_succeeds") || args.some(arg => arg.endsWith("/cancel_merge_when_pipeline_succeeds")) ? "disable" : args[0] === "mr" && args[1] === "merge" ? args.includes("--auto-merge") ? "enable" : "merge" : null
+    : args[0] === "pr" && args[1] === "merge" ? args.includes("--disable-auto") ? "disable" : args.includes("--auto") ? "enable" : "merge" : null;
+  if (action) {
+    fs.appendFileSync(path.join(process.cwd(), ".jj", "forge-actions"), JSON.stringify({ action, args }) + "\\n");
+    if (state.failAction) fail("Forge action temporarily unavailable");
+    if (action === "merge") state.merged = true;
+    else state.auto = action === "enable";
+    save();
+    if (state.holdAction) {
+      const timer = setInterval(() => {
+        if (!fs.existsSync(path.join(process.cwd(), ".jj", "release-action"))) return;
+        clearInterval(timer); respond({});
+      }, 25);
+    } else respond({});
+  } else {
+    const statusRead = gitlab ? args[0] === "mr" && ["list", "view"].includes(args[1]) : args[0] === "pr" && ["list", "view"].includes(args[1]);
+    if (statusRead && state.failStatus) fail("Forge status temporarily unavailable");
+    const url = gitlab ? "https://gitlab.com/paseo/vcs-ui/-/merge_requests/7" : "https://github.com/paseo/vcs-ui/pull/7";
+    const branch = args[args.indexOf(gitlab ? "--source-branch" : "--head") + 1];
+    if (gitlab) {
+      const mr = { iid: state.number || 7, title: "Existing jj review", web_url: url, state: state.merged ? "merged" : "opened", source_branch: "topic", target_branch: "main", sha: state.revision, source_project_id: 1, target_project_id: 1, draft: false, work_in_progress: false, has_conflicts: false, merged_at: state.merged ? "2026-11-09T00:00:00Z" : null, detailed_merge_status: "mergeable", merge_status: "can_be_merged", merge_when_pipeline_succeeds: !!state.auto, references: { full: "paseo/vcs-ui!7" }, head_pipeline: { id: 10, status: state.check === "pending" ? "running" : state.check === "failure" ? "failed" : "success" } };
+      if (args[0] === "mr" && args[1] === "list") respond(branch === "topic" ? [mr] : []);
+      if (args[0] === "mr" && args[1] === "view") respond(mr);
+      if (args[0] === "ci" && args[1] === "get") respond({ id: 10, status: mr.head_pipeline.status, jobs: [{ id: 11, name: "Review checks", stage: "test", status: mr.head_pipeline.status, web_url: url + "/checks" }] });
+      if (args.some(arg => arg.endsWith("/approvals"))) respond({ approvals_required: 0, approvals_left: 0, approved_by: [] });
+    } else {
+      const pr = { number: state.number || 7, url, title: "Existing jj review", state: state.merged ? "MERGED" : "OPEN", baseRefName: "main", headRefName: "topic", headRefOid: state.revision, headRepositoryOwner: { login: "paseo" }, mergeable: "MERGEABLE", isDraft: false, mergedAt: state.merged ? "2026-11-09T00:00:00Z" : null, statusCheckRollup: [{ __typename: "StatusContext", context: "Review checks", state: state.check === "pending" ? "PENDING" : state.check === "failure" ? "FAILURE" : "SUCCESS" }] };
+      if (args[0] === "pr" && args[1] === "view") fail("no pull requests found");
+      if (args[0] === "pr" && args[1] === "list") respond(branch === "topic" ? [pr] : []);
+      if (args[0] === "api" && args[1] === "graphql") respond({ data: { repository: { autoMergeAllowed: true, mergeCommitAllowed: true, squashMergeAllowed: true, rebaseMergeAllowed: true, viewerDefaultMergeMethod: "SQUASH", pullRequest: { mergeStateStatus: state.check === "pending" ? "BLOCKED" : "CLEAN", autoMergeRequest: state.auto ? { enabledAt: "2026-11-09T00:00:00Z", mergeMethod: "SQUASH", enabledBy: { login: "paseo" } } : null, viewerCanEnableAutoMerge: true, viewerCanDisableAutoMerge: true, viewerCanMergeAsAdmin: false, viewerCanUpdateBranch: true, isMergeQueueEnabled: false, isInMergeQueue: false } } } });
+    }
+    if (args[0] === "repo" && args[1] === "view") respond({ name: "vcs-ui", owner: { login: "paseo" } });
+    respond([]);
+  }
+  return;
+}
+const creating = gitlab ? args[0] === "mr" && args[1] === "create" : args.includes("POST") && args.some(arg => arg.endsWith("/pulls"));
+if (creating) {
+  const log = path.join(process.cwd(), ".jj", "forge-creates");
+  const previous = fs.existsSync(log) ? fs.readFileSync(log, "utf8") : "";
+  fs.appendFileSync(log, JSON.stringify(args) + "\\n");
+  if (!previous) { process.stderr.write("Forge temporarily unavailable"); process.exit(1); }
+  if (gitlab) process.stdout.write("https://gitlab.com/paseo/vcs-ui/-/merge_requests/7");
+  else process.stdout.write(JSON.stringify({ url: "https://api.github.com/repos/paseo/vcs-ui/pulls/7", html_url: "https://github.com/paseo/vcs-ui/pull/7", number: 7 }));
+} else if (args[0] === "pr" && args[1] === "view") { process.stderr.write("no pull requests found"); process.exit(1); }
+else if (args[0] === "repo" && args[1] === "view") process.stdout.write(JSON.stringify({ name: "vcs-ui", owner: { login: "paseo" } }));
+else if (args[0] === "api" && args[1] === "graphql") { process.stderr.write("Optional facts unavailable"); process.exit(1); }
+else process.stdout.write("[]");
+`;
+      await writeFile(path.join(directory, "gh"), script, { mode: 0o755 });
+      await writeFile(path.join(directory, "glab"), script, { mode: 0o755 });
+      try {
+        await provide({ PATH: directory + path.delimiter + process.env.PATH });
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+    { scope: "worker" },
+  ],
+});
+
+async function createJjPublicationWorkspace(forge: string) {
+  const { connectDaemonClient } = await import("../support/helpers/daemon-client-loader");
+  const client = await connectDaemonClient<
+    import("@getpaseo/client/internal/daemon-client").DaemonClient
+  >({ clientIdPrefix: "jj-publication-ui" });
+  const repo = await createTempGitRepo("jj-publication-ui-", {
+    files: [{ path: "base.txt", content: "base\n" }],
+  });
+  const git = (...args: string[]) =>
+    execFileSync("git", args, {
+      cwd: repo.path,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  const jj = (...args: string[]) =>
+    execFileSync("jj", args, {
+      cwd: repo.path,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  jj("git", "init", "--colocate");
+  jj("config", "set", "--repo", "user.name", "UI Test");
+  jj("config", "set", "--repo", "user.email", "ui@example.test");
+  const remote = path.join(repo.path, ".jj", "remote.git");
+  git("init", "--bare", remote);
+  git("push", remote, "HEAD:refs/heads/main", "HEAD:refs/heads/topic");
+  const pushes = path.join(repo.path, ".jj", "pushes");
+  const transport = path.join(repo.path, ".jj", "local-ssh");
+  // Real pack transfer over local pipes; no hosted Git service or credentials.
+  await writeFile(
+    transport,
+    `#!${process.execPath}
+const fs = require("node:fs");
+const { spawnSync } = require("node:child_process");
+const args = process.argv.slice(2);
+if (args.includes("-G")) process.exit(0);
+const command = args[args.length - 1] || "";
+const receiving = command.startsWith("git-receive-pack");
+if (!receiving && !command.startsWith("git-upload-pack")) process.exit(1);
+if (receiving) fs.appendFileSync(${JSON.stringify(pushes)}, "push\\n");
+const child = spawnSync(receiving ? "git-receive-pack" : "git-upload-pack", [${JSON.stringify(remote)}], { stdio: "inherit" });
+process.exit(child.status ?? 1);
+`,
+    { mode: 0o755 },
+  );
+  git("config", "core.sshCommand", transport);
+  git("remote", "add", "origin", `git@${forge}.com:paseo/vcs-ui.git`);
+  jj("git", "fetch", "--remote", "origin");
+  jj("bookmark", "track", "topic@origin");
+  await writeFile(path.join(repo.path, "published.txt"), "selected revision\n");
+  jj("describe", "-m", "Ready for review");
+  jj("bookmark", "set", "topic", "-r", "@");
+  jj("bookmark", "create", "keep-local", "-r", "@");
+  const revision = jj("log", "--no-graph", "-r", "@", "-T", "commit_id");
+  let projectId: string | undefined;
+  cleanupTasks.push({
+    run: async () => {
+      if (projectId) await client.removeProject(projectId);
+      await client.close();
+      await repo.cleanup();
+    },
+  });
+  const created = await client.createWorkspace({
+    source: { kind: "directory", path: repo.path },
+  });
+  if (!created.workspace) throw new Error(created.error ?? "Missing workspace");
+  projectId = created.workspace.projectId;
+  return {
+    client,
+    repo,
+    git,
+    jj,
+    remote,
+    pushes,
+    revision,
+    created: { ...created, workspace: created.workspace },
+  };
+}
+
+for (const forge of ["github", "gitlab"]) {
+  for (const width of [1400, 390]) {
+    jjPublicationTest(
+      `jj ${forge} retries request creation without republishing at width ${width}`,
+      async ({ page }) => {
+        test.setTimeout(150_000);
+        page.setDefaultTimeout(15_000);
+        const { repo, git, remote, pushes, revision, created } =
+          await createJjPublicationWorkspace(forge);
+        await page.setViewportSize({ width, height: 900 });
+        await page.goto(buildHostWorkspaceRoute(getServerId(), created.workspace.id));
+        await page.getByTestId("workspace-header-menu-trigger").filter({ visible: true }).click();
+        await page.getByTestId("workspace-vcs-view-publish").click();
+        const panel = page.getByTestId("vcs-panel").filter({ visible: true });
+        await panel.getByTestId("vcs-publish-remote").getByRole("button").click();
+        await page.getByRole("button", { name: "origin", exact: true }).click();
+        await panel.getByTestId("vcs-publish-head").getByRole("button").click();
+        await page.getByRole("button", { name: "topic", exact: true }).click();
+        await panel.getByTestId("vcs-publish-base").fill("main");
+        await panel.getByTestId("vcs-publish-title").fill("Review selected jj bookmark");
+        await panel.getByTestId("vcs-publish-body").fill("Preserve this description after retry");
+        page.once("dialog", (dialog) => dialog.accept());
+        await panel.getByTestId("vcs-create-request").click();
+        await expect(panel.getByTestId("vcs-published-retry")).toBeVisible();
+        await expect(panel.getByTestId("vcs-operation")).toContainText(
+          "Forge temporarily unavailable",
+        );
+        expect(git("--git-dir", remote, "rev-parse", "refs/heads/topic")).toBe(revision);
+        expect(git("--git-dir", remote, "for-each-ref", "--format=%(refname)", "refs/heads")).toBe(
+          "refs/heads/main\nrefs/heads/topic",
+        );
+        expect(await readFile(pushes, "utf8")).toBe("push\n");
+        const log = path.join(repo.path, ".jj", "forge-creates");
+        const attempts = async () =>
+          (await readFile(log, "utf8"))
+            .trim()
+            .split("\n")
+            .map((line) => JSON.parse(line) as string[]);
+        expect(await attempts()).toHaveLength(1);
+        await page.screenshot({
+          path: test.info().outputPath(`jj-${forge}-published-retry-${width}.png`),
+        });
+        await page.reload();
+        await expect(panel.getByTestId("vcs-published-retry")).toBeVisible();
+        await expect(panel.getByTestId("vcs-publish-title")).toHaveValue(
+          "Review selected jj bookmark",
+        );
+        await expect(panel.getByTestId("vcs-publish-body")).toHaveValue(
+          "Preserve this description after retry",
+        );
+        await panel.getByTestId("vcs-retry-create").click();
+        await expect(panel.getByTestId("vcs-operation")).toContainText("Operation completed");
+        await expect(panel.getByTestId("vcs-published-retry")).toHaveCount(0);
+        expect(await readFile(pushes, "utf8")).toBe("push\n");
+        expect(git("--git-dir", remote, "rev-parse", "refs/heads/topic")).toBe(revision);
+        const calls = await attempts();
+        expect(calls).toHaveLength(2);
+        expect(calls[1]).toEqual(calls[0]);
+      },
+    );
+  }
+}
+
+for (const forge of ["github", "gitlab"]) {
+  for (const width of [1400, 390]) {
+    jjPublicationTest(
+      `jj ${forge} review status, forge actions and reconnect at width ${width}`,
+      async ({ page }) => {
+        test.setTimeout(240_000);
+        page.setDefaultTimeout(15_000);
+        const { repo, jj, git, pushes, revision, created } =
+          await createJjPublicationWorkspace(forge);
+        jj("git", "push", "--remote", "origin", "--bookmark", "topic");
+        await unlink(pushes);
+        git("remote", "add", "review", git("remote", "get-url", "origin"));
+        const statePath = path.join(repo.path, ".jj", "forge-state.json");
+        const patch = async (value: Record<string, unknown>) => {
+          const previous = JSON.parse((await readFileIfPresent(statePath)) ?? "{}");
+          await writeFile(statePath, JSON.stringify({ ...previous, ...value }));
+        };
+        await patch({ revision, check: "pending" });
+        const actions = async () =>
+          ((await readFileIfPresent(path.join(repo.path, ".jj", "forge-actions"))) ?? "")
+            .trim()
+            .split("\n")
+            .filter(Boolean)
+            .map((line) => JSON.parse(line) as { action: string; args: string[] });
+        const frames = await loadSessionMessageReaders();
+        let disconnect: (() => void) | undefined;
+        let dropReply = false;
+        let holdStatusReply = false;
+        let releaseStatusReply: (() => void) | undefined;
+        let executeRequests = 0;
+        await page.routeWebSocket(daemonWsRoutePattern(), (browser) => {
+          const server = browser.connectToServer();
+          disconnect = () => {
+            browser.close({ code: 1012, reason: "Review reconnect" });
+            server.close();
+          };
+          browser.onMessage((frame) => {
+            if (frames.client(frame)?.type === "vcs.change-request.execute.request")
+              executeRequests++;
+            server.send(frame);
+          });
+          server.onMessage((frame) => {
+            if (
+              holdStatusReply &&
+              frames.server(frame)?.type === "vcs.change-request.get.response"
+            ) {
+              holdStatusReply = false;
+              releaseStatusReply = () => browser.send(frame);
+              return;
+            }
+            if (dropReply && frames.server(frame)?.type === "vcs.change-request.execute.response") {
+              dropReply = false;
+              return;
+            }
+            browser.send(frame);
+          });
+        });
+        await page.setViewportSize({ width, height: 900 });
+        await page.goto(buildHostWorkspaceRoute(getServerId(), created.workspace.id));
+        await page.getByTestId("workspace-header-menu-trigger").filter({ visible: true }).click();
+        await page.getByTestId("workspace-vcs-view-publish").click();
+        const panel = page.getByTestId("vcs-panel").filter({ visible: true });
+        const selectHead = async (name: string) => {
+          await panel.getByTestId("vcs-publish-head").getByRole("button").click();
+          await page.getByRole("button", { name, exact: true }).click();
+        };
+        await panel.getByTestId("vcs-publish-remote").getByRole("button").click();
+        await page.getByRole("button", { name: "origin", exact: true }).click();
+        await selectHead("topic");
+        await panel.getByTestId("vcs-publish-base").fill("main");
+        await panel.getByTestId("vcs-find-request").click();
+        const status = panel.getByTestId("vcs-publication-status");
+        const refresh = () => status.getByRole("button", { name: "Refresh", exact: true }).click();
+        const operation = panel.getByTestId("vcs-operation");
+        const action = async (name: string, accept = true) => {
+          page.once("dialog", (dialog) => (accept ? dialog.accept() : dialog.dismiss()));
+          await status.getByRole("button", { name, exact: true }).click();
+        };
+        await expect(status).toContainText("Existing jj review");
+        await expect(status).toContainText("Review checks · pending");
+        const url =
+          forge === "github"
+            ? "https://github.com/paseo/vcs-ui/pull/7"
+            : "https://gitlab.com/paseo/vcs-ui/-/merge_requests/7";
+        await page.context().route(url, (route) => route.fulfill({ body: "Existing jj request" }));
+        const opened = page.waitForEvent("popup");
+        await panel.getByTestId("vcs-open-request").click();
+        const popup = await opened;
+        await expect(popup).toHaveURL(url);
+        await popup.close();
+        expect(await readFileIfPresent(pushes)).toBeNull();
+        expect(await readFileIfPresent(path.join(repo.path, ".jj", "forge-creates"))).toBeNull();
+        await selectHead("keep-local");
+        await expect(status).toHaveCount(0);
+        await selectHead("topic");
+        await panel.getByTestId("vcs-find-request").click();
+        await expect(status).toContainText("Review checks · pending");
+        holdStatusReply = true;
+        await refresh();
+        await expect.poll(() => releaseStatusReply !== undefined).toBe(true);
+        await selectHead("keep-local");
+        releaseStatusReply!();
+        await expect(status).toHaveCount(0);
+        await expect(panel.getByTestId("vcs-open-request")).toHaveCount(0);
+        await selectHead("topic");
+        await panel.getByTestId("vcs-find-request").click();
+        await expect(status).toContainText("Review checks · pending");
+        await panel.getByTestId("vcs-publish-remote").getByRole("button").click();
+        await page.getByRole("button", { name: "review", exact: true }).click();
+        await expect(status).toHaveCount(0);
+        await panel.getByTestId("vcs-publish-remote").getByRole("button").click();
+        await page.getByRole("button", { name: "origin", exact: true }).click();
+        await panel.getByTestId("vcs-find-request").click();
+        await expect(status).toContainText("Review checks · pending");
+        await patch({ failStatus: true });
+        await refresh();
+        await expect(status.getByRole("alert")).toContainText(
+          "Forge status temporarily unavailable",
+        );
+        await expect(panel.getByTestId("vcs-open-request")).toHaveCount(0);
+        await patch({ failStatus: false });
+        await refresh();
+        await expect(status).toContainText("Review checks · pending");
+        // The cache is still fresh when transport returns; reconnect must invalidate it.
+        await patch({ check: "failure" });
+        disconnect!();
+        await expect(status).toContainText("Review checks · failure", { timeout: 20_000 });
+        await patch({ check: "pending", failAction: true });
+        await refresh();
+        await action("Enable auto-merge");
+        await expect(operation).toContainText("Forge action temporarily unavailable");
+        await patch({ failAction: false });
+        await action("Enable auto-merge");
+        await expect(operation).toContainText("Operation completed");
+        await expect
+          .poll(
+            async () => (JSON.parse(await readFile(statePath, "utf8")) as { auto: boolean }).auto,
+          )
+          .toBe(true);
+        await patch({ failAction: true });
+        await action("Disable auto-merge");
+        await expect(operation).toContainText("Forge action temporarily unavailable");
+        await patch({ failAction: false });
+        await action("Disable auto-merge");
+        await expect(operation).toContainText("Operation completed");
+        await expect
+          .poll(
+            async () => (JSON.parse(await readFile(statePath, "utf8")) as { auto: boolean }).auto,
+          )
+          .toBe(false);
+        await patch({ check: "success" });
+        await refresh();
+        await expect(status).toContainText("Review checks · success");
+        await status.getByRole("button", { name: "Merge method (squash)", exact: true }).click();
+        await page.getByRole("button", { name: "rebase", exact: true }).click();
+        const beforeCancel = await actions();
+        await action("Merge", false);
+        expect(await actions()).toEqual(beforeCancel);
+        await patch({ number: 8 });
+        await action("Merge");
+        await expect(operation).toContainText("The selected change request changed");
+        expect(await actions()).toEqual(beforeCancel);
+        await patch({ number: 7, failAction: true });
+        await refresh();
+        await action("Merge");
+        await expect(operation).toContainText("Forge action temporarily unavailable");
+        await operation.scrollIntoViewIfNeeded();
+        await page.screenshot({
+          path: test.info().outputPath(`jj-${forge}-merge-error-${width}.png`),
+        });
+        await patch({ failAction: false, holdAction: true });
+        dropReply = true;
+        await action("Merge");
+        await expect
+          .poll(async () => (await actions()).filter((entry) => entry.action === "merge").length)
+          .toBe(2);
+        await expect(status.getByRole("button", { name: "Merge", exact: true })).toHaveCount(0);
+        await expect(panel.getByTestId("vcs-find-request")).toBeDisabled();
+        const requestsBeforeReconnect = executeRequests;
+        disconnect!();
+        await page.reload();
+        await expect(operation).toContainText("Operation in progress", { timeout: 30_000 });
+        await writeFile(path.join(repo.path, ".jj", "release-action"), "release\n");
+        await expect(operation).toContainText("Operation completed", { timeout: 30_000 });
+        await expect(status).toContainText("merged");
+        await expect(status.getByRole("button", { name: "Merge", exact: true })).toHaveCount(0);
+        expect(executeRequests).toBe(requestsBeforeReconnect);
+        const calls = await actions();
+        expect(calls.map((entry) => entry.action)).toEqual([
+          "enable",
+          "enable",
+          "disable",
+          "disable",
+          "merge",
+          "merge",
+        ]);
+        expect(calls.at(-1)?.args).toContain("--rebase");
+        expect(await readFileIfPresent(pushes)).toBeNull();
+        await status.scrollIntoViewIfNeeded();
+        await page.screenshot({
+          path: test.info().outputPath(`jj-${forge}-merged-reconnect-${width}.png`),
+        });
+        const actionLog = test.info().outputPath(`jj-${forge}-forge-actions-${width}.json`);
+        await writeFile(actionLog, JSON.stringify(calls, null, 2));
+        await test
+          .info()
+          .attach("forge-actions", { path: actionLog, contentType: "application/json" });
+      },
+    );
+  }
+}
+
+for (const forge of ["github", "gitlab"]) {
+  for (const width of [1400, 390]) {
+    jjPublicationTest(
+      `jj ${forge} auto-archives and restores a published owned copy at width ${width}`,
+      async ({ page }) => {
+        test.setTimeout(150_000);
+        const { client, repo, remote, git, revision, created } =
+          await createJjPublicationWorkspace(forge);
+        const copy = await client.createWorkspace({
+          source: { kind: "working-copy", projectId: created.workspace.projectId },
+        });
+        if (!copy.workspace) throw new Error(copy.error ?? "Missing owned workspace");
+        const workspace = copy.workspace;
+        const target = await client.requestVcs({
+          type: "vcs.publication.resolve.request",
+          workspaceId: workspace.id,
+          providerId: "jj",
+          selection: { remote: "origin", headRef: "topic", baseRef: "main" },
+        });
+        expect(target.headRevision).toBe(revision);
+        await client.requestVcs({
+          type: "vcs.publication.publish.request",
+          workspaceId: workspace.id,
+          providerId: "jj",
+          target,
+          operationId: "publish-owned-copy",
+        });
+        await expect
+          .poll(() =>
+            client.requestVcs({
+              type: "vcs.operations.get.request",
+              workspaceId: workspace.id,
+              providerId: "jj",
+              operationId: "publish-owned-copy",
+            }),
+          )
+          .toMatchObject({ status: "succeeded" });
+        expect(git("--git-dir", remote, "rev-parse", "refs/heads/topic")).toBe(revision);
+        const statePath = path.join(workspace.workspaceDirectory, ".jj", "forge-state.json");
+        await writeFile(statePath, JSON.stringify({ revision, check: "success" }));
+        const previousConfig = await client.getDaemonConfig();
+        await client.patchDaemonConfig({ autoArchiveAfterMerge: true });
+        try {
+          await page.setViewportSize({ width, height: 900 });
+          await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.id));
+          await page.getByTestId("workspace-header-menu-trigger").filter({ visible: true }).click();
+          await page.getByTestId("workspace-vcs-view-publish").click();
+          const panel = page.getByTestId("vcs-panel").filter({ visible: true });
+          await panel.getByTestId("vcs-publish-remote").getByRole("button").click();
+          await page.getByRole("button", { name: "origin", exact: true }).click();
+          await panel.getByTestId("vcs-publish-head").getByRole("button").click();
+          await page.getByRole("button", { name: "topic", exact: true }).click();
+          await panel.getByTestId("vcs-publish-base").fill("main");
+          await panel.getByTestId("vcs-find-request").click();
+          const status = panel.getByTestId("vcs-publication-status");
+          await expect(status).toContainText("Existing jj review");
+          await writeFile(statePath, JSON.stringify({ revision, check: "success", merged: true }));
+          await status.getByRole("button", { name: "Refresh", exact: true }).click();
+          await expect
+            .poll(() => readFileIfPresent(path.join(workspace.workspaceDirectory, "published.txt")))
+            .toBeNull();
+          const recovery = page.getByTestId("workspace-recovery-action");
+          await expect(recovery).toHaveText("Unarchive", { timeout: 30_000 });
+          // The durable anchor exists before restoring through the normal workspace UI.
+          const backend = execFileSync("jj", ["--ignore-working-copy", "git", "root"], {
+            cwd: repo.path,
+            encoding: "utf8",
+          }).trim();
+          expect(
+            git("--git-dir", backend, "for-each-ref", "--format=%(refname)", "refs/paseo/recovery"),
+          ).toMatch(/^refs\/paseo\/recovery\/[a-f0-9]{64}$/);
+          await recovery.click();
+          await expect(recovery).toHaveCount(0);
+          expect(
+            await readFile(path.join(workspace.workspaceDirectory, "published.txt"), "utf8"),
+          ).toBe("selected revision\n");
+          expect(
+            git("--git-dir", backend, "for-each-ref", "--format=%(refname)", "refs/paseo/recovery"),
+          ).toBe("");
+          await page.screenshot({
+            path: test.info().outputPath(`jj-${forge}-restored-copy-${width}.png`),
+          });
+        } finally {
+          await client.patchDaemonConfig({
+            autoArchiveAfterMerge: previousConfig.config.autoArchiveAfterMerge,
+          });
+        }
+      },
+    );
+  }
 }

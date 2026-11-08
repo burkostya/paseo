@@ -2,6 +2,7 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const es: TranslationResources = {
+  vcs: { ...en.vcs, diffUnavailable: "Este proveedor no admite diffs." },
   worktreeImport: {
     title: "Añadir worktrees existentes…",
     chooseHost: "Selecciona un host",
@@ -1434,6 +1435,7 @@ export const es: TranslationResources = {
     title: "Nuevo espacio de trabajo",
     create: "Crear",
     isolation: {
+      workingCopy: "Nueva copia de trabajo",
       local: "Local",
       worktree: "Nuevo worktree",
       label: "Aislamiento",
@@ -3141,6 +3143,16 @@ export const es: TranslationResources = {
       },
     },
     project: {
+      vcs: {
+        title: "Control de versiones",
+        provider: "Proveedor",
+        none: "Ninguno",
+        unavailable: "{{provider}} (no disponible)",
+        loading: "Cargando…",
+        saving: "Cambiando…",
+        retry: "Reintentar",
+        offline: "Host desconectado",
+      },
       noEditableTarget: "Este proyecto no se puede editar en este host.",
       backToProjects: "Volver a proyectos",
       edit: {

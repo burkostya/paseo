@@ -1,3 +1,4 @@
+import { ProjectVcsSection } from "./settings/project-vcs-section";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
@@ -299,6 +300,12 @@ function ProjectSettingsBody({
         client={client}
         supportsCustomIcon={supportsCustomIcon}
         snapshot={editSnapshot}
+      />
+
+      <ProjectVcsSection
+        client={client}
+        serverId={selectedHost.serverId}
+        projectId={selectedHost.projectId}
       />
 
       {renderContent({

@@ -1,3 +1,4 @@
+import { VcsBindingSchema, VcsWorkingCopyCreateSchema } from "@getpaseo/protocol/vcs";
 import { validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 import {
   createLifecycleRegistration,
@@ -87,6 +88,9 @@ const worktreeRequestSchema = z.discriminatedUnion("kind", [
 ]);
 
 const beforeSchemas = {
+  "working-copy.create.before": z
+    .object({ binding: VcsBindingSchema, input: VcsWorkingCopyCreateSchema })
+    .strict(),
   "worktree.create.before": worktreeRequestSchema,
   "agent.create.before": CreateAgentRequestMessageSchema.pick({
     config: true,
@@ -127,9 +131,9 @@ const sessionOpenLocalResultSchema = beforeSchemas["agent.open.before"].extend({
 });
 
 export interface PluginLifecycle {
-  wait(
-    name: "worktree.create.after",
-    payload: PluginHookPayload<"worktree.create.after">,
+  wait<Name extends "worktree.create.after" | "working-copy.create.after">(
+    name: Name,
+    payload: PluginHookPayload<Name>,
   ): Promise<void>;
   emit<Name extends keyof PluginHookEvents>(name: Name, event: PluginHookEvents[Name]): void;
   before<Name extends keyof PluginWireBeforeRequests>(
@@ -240,6 +244,15 @@ export async function validateBeforeResult<Name extends keyof PluginWireBeforeRe
     if (previous.config.cwd !== next.config.cwd) {
       throw new Error("agent.create.before hooks cannot change the workspace directory");
     }
+  }
+  if (name === "working-copy.create.before") {
+    const previous = beforeSchemas["working-copy.create.before"].parse(input);
+    const next = beforeSchemas["working-copy.create.before"].parse(result);
+    if (
+      !isDeepStrictEqual(previous.binding, next.binding) ||
+      previous.input.root !== next.input.root
+    )
+      throw new Error("working-copy.create.before hooks cannot change the source or destination");
   }
   if (name === "worktree.create.before") {
     const previous = beforeSchemas["worktree.create.before"].parse(input);

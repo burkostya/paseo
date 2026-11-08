@@ -1,3 +1,6 @@
+import { VcsError } from "@getpaseo/plugin/server/vcs";
+import { vcsRpc, VcsResponseSchema, type VcsRequest, type VcsResponse } from "@getpaseo/plugin";
+import type { VcsProvider } from "@getpaseo/protocol/vcs-rpc";
 import type { PluginAgentToolsRuntime } from "./agent-tools.js";
 import type { PluginLifecycle } from "./lifecycle/index.js";
 import path from "node:path";
@@ -51,6 +54,7 @@ interface PluginRuntimePort {
   getLogs(pluginId: string): PluginLogEntry[];
   clearLogs(pluginId: string): void;
   getProviderRegistrations?(pluginId: string): readonly PluginProviderMetadata[];
+  getVcsProviderRegistrations: PluginRuntime["getVcsProviderRegistrations"];
   getUsageSourceRegistrations(pluginId: string): readonly PluginUsageSourceMetadata[];
   fetchUsage: PluginRuntime["fetchUsage"];
   discoverUsage: PluginRuntime["discoverUsage"];
@@ -526,6 +530,63 @@ export class PluginService {
           force: true,
         });
     });
+  }
+
+  listVcsProviders(): VcsProvider[] {
+    return this.runtime
+      .catalog()
+      .flatMap(({ id: pluginId }) =>
+        this.runtime.getVcsProviderRegistrations(pluginId).map((provider) => {
+          const entry: VcsProvider = { id: provider.id, label: provider.label, pluginId };
+          if (provider.detectionPriority !== undefined)
+            entry.detectionPriority = provider.detectionPriority;
+          return entry;
+        }),
+      )
+      .sort((a, b) => a.id.localeCompare(b.id) || a.pluginId.localeCompare(b.pluginId));
+  }
+
+  async invokeVcs(providerId: string, request: VcsRequest): Promise<VcsResponse> {
+    const registrations = this.listVcsProviders().filter((entry) => entry.id === providerId);
+    if (registrations.length !== 1)
+      throw new VcsError({
+        code: "unavailable",
+        message: registrations.length
+          ? `VCS provider ${providerId} is registered by multiple plugins`
+          : `VCS provider ${providerId} is unavailable`,
+      });
+    const contract = vcsRpc(providerId);
+    const response = VcsResponseSchema.parse(
+      await this.runtime.invoke(
+        registrations[0]!.pluginId,
+        contract.name,
+        contract.input.parse(request),
+      ),
+    );
+    if (response.kind === "error") throw new VcsError(response.error);
+    let kind: VcsResponse["kind"];
+    switch (request.kind) {
+      case "comparison-settings.validate":
+        kind = "comparison-settings";
+        break;
+      case "execute":
+      case "cancel":
+      case "working-copy.recovery":
+      case "publication.publish":
+        kind = "operation";
+        break;
+      case "working-copy.resolve-source":
+        kind = "working-copy.source";
+        break;
+      case "publication.resolve":
+        kind = "publication";
+        break;
+      default:
+        kind = request.kind;
+    }
+    if (response.kind !== kind)
+      throw new Error(`Invalid ${kind} response from VCS provider ${providerId}`);
+    return response;
   }
 
   invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown> {

@@ -61,3 +61,17 @@ it("does not restore a locally archiving workspace from a buffered upsert", () =
     clearWorkspaceArchivePending({ serverId: SERVER_ID, workspaceId: "archiving" });
   }
 });
+
+it("retains saved VCS ownership through workspace normalization", () => {
+  const descriptor = {
+    ...workspace("provider-workspace", "Task"),
+    vcsProviderId: "external-vcs",
+    projectKind: "non_git" as const,
+    workspaceKind: "directory" as const,
+  };
+  expect(normalizeWorkspaceDescriptor(descriptor)).toMatchObject({
+    vcsProviderId: "external-vcs",
+    projectKind: "non_git",
+    workspaceKind: "directory",
+  });
+});

@@ -54,6 +54,7 @@ export interface EvaluatedPlugin {
   legacySidebarItems: PluginSidebarContribution[];
   filePanels: PluginFilePanelContribution[];
   workspacePanels: EvaluatedPluginWorkspacePanelContribution[];
+  vcsContributions: import("@getpaseo/plugin/client").PluginVcsContribution<PluginText>[];
   commandCenterItems: PluginCommandCenterItemContribution[];
   clientSlashCommands: PluginClientSlashCommandContribution[];
   attachmentSources: PluginAttachmentSourceContribution[];

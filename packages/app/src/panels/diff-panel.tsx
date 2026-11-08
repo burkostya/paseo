@@ -1,3 +1,8 @@
+import { ComparisonSettings } from "@/vcs/comparison-settings";
+import { useHostFeature } from "@/runtime/host-features";
+import { usesProviderVcsUi } from "@/vcs/selection";
+import { VcsPanel } from "@/vcs/panel";
+import { useWorkspace } from "@/stores/session-store-hooks";
 import { resolveChangesPresentation } from "./changes/presentation";
 import { useCallback, useMemo, type ReactNode } from "react";
 import { Text, View } from "react-native";
@@ -78,6 +83,42 @@ function PanelState({
 }
 
 function ChangesPanel() {
+  const { serverId, workspaceId, target, openPreferredTarget } = usePaneContext();
+  const workspace = useWorkspace(serverId, workspaceId);
+  const comparisonViews = useHostFeature(serverId, "vcsBaseComparisons");
+  const [state, setState] = usePanelState(changesStateSchema, defaultChangesState);
+  const openVcsFile = useCallback(
+    (path: string) => openPreferredTarget({ kind: "file", path }, "diffFiles"),
+    [openPreferredTarget],
+  );
+  const modern = usesProviderVcsUi(workspace?.vcsProviderId, comparisonViews);
+  // COMPAT(vcsGitUi): v0.15.2; remove after 2027-06-06 when pre-comparison hosts expire.
+  if (modern)
+    return (
+      <View
+        style={styles.container}
+        testID={target.kind === "changes_tree" ? "changes-tree-panel" : "working-diff-panel"}
+      >
+        <ComparisonSettings serverId={serverId} workspaceId={workspaceId} />
+        <VcsPanel
+          key={workspace?.vcsProviderId}
+          serverId={serverId}
+          workspaceId={workspaceId}
+          state={state}
+          setState={setState}
+          openFile={openVcsFile}
+          focusPath={target.kind === "working_diff" ? target.focusPath : undefined}
+          focusRequestId={target.kind === "working_diff" ? target.focusRequestId : undefined}
+          actionRequest={target.kind === "working_diff" ? target.vcsAction : undefined}
+          comparisonRequest={target.kind === "working_diff" ? target.vcsComparison : undefined}
+          viewRequest={target.kind === "working_diff" ? target.vcsView : undefined}
+        />
+      </View>
+    );
+  return <GitChangesPanel />;
+}
+
+function GitChangesPanel() {
   const { t } = useTranslation();
   const { serverId, workspaceId, tabId, target, openPreferredTarget, openTargetToSide } =
     usePaneContext();

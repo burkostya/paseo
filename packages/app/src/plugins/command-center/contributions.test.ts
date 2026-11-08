@@ -8,10 +8,13 @@ import {
   type PluginWorkspaceSnapshot,
 } from "@getpaseo/plugin";
 import { type PluginCommandCenterItemContribution } from "@getpaseo/plugin/client";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import type { InstalledPlugin } from "../types";
-import { buildPluginCommandCenterContributions } from "./contributions";
+import {
+  buildPluginCommandCenterContributions,
+  buildVcsCommandCenterContributions,
+} from "./contributions";
 
 const workspace: PluginWorkspaceSnapshot = {
   id: "workspace-1",
@@ -82,6 +85,7 @@ function plugin(onAgentSelect: AgentCommandItem["onSelect"]): InstalledPlugin {
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
     filePanels: [],
+    vcsContributions: [],
     workspacePanels: [
       {
         id: "details",
@@ -233,5 +237,83 @@ describe("plugin Command Center contributions", () => {
         reportError() {},
       }),
     ).toEqual([]);
+  });
+});
+
+describe("VCS workspace commands", () => {
+  it("uses provider action IDs and reports blocked actions without launching them", () => {
+    const open = vi.fn();
+    const reportUnavailable = vi.fn();
+    const contributions = buildVcsCommandCenterContributions({
+      open,
+      openView: vi.fn(),
+      views: [],
+      reportUnavailable,
+      items: [
+        {
+          id: "change.describe",
+          providerId: "external",
+          title: "Describe",
+          section: "External VCS",
+          enabled: true,
+          reason: undefined,
+          icon: undefined,
+        },
+        {
+          id: "edit",
+          providerId: "external",
+          title: "Edit",
+          section: "External VCS",
+          enabled: false,
+          reason: "Workspace is stale",
+          icon: undefined,
+        },
+      ],
+    });
+    expect(contributions.map((item) => item.id)).toEqual([
+      "vcs:external:change.describe",
+      "vcs:external:edit",
+    ]);
+    expect(contributions[1].presentation).toMatchObject({ subtitle: "Workspace is stale" });
+    contributions[0].run();
+    contributions[1].run();
+    expect(open.mock.calls).toEqual([["external", "change.describe"]]);
+    expect(reportUnavailable.mock.calls).toEqual([["Workspace is stale"]]);
+    expect(
+      buildVcsCommandCenterContributions({
+        open,
+        reportUnavailable,
+        items: [],
+        views: [],
+        openView: vi.fn(),
+      }),
+    ).toEqual([]);
+  });
+  it("opens VCS views without invoking actions with the same ID", () => {
+    const open = vi.fn();
+    const openView = vi.fn();
+    const item = {
+      id: "publish",
+      providerId: "external",
+      title: "Publish",
+      section: "External",
+      icon: undefined,
+      enabled: true,
+      reason: undefined,
+    };
+    const contributions = buildVcsCommandCenterContributions({
+      items: [item],
+      views: [item],
+      open,
+      openView,
+      reportUnavailable: vi.fn(),
+    });
+    expect(contributions.map((entry) => entry.id)).toEqual([
+      "vcs:external:publish",
+      "vcs-view:external:publish",
+    ]);
+    contributions[1].run();
+    expect(openView).toHaveBeenCalledWith("external", "publish");
+    expect(open).not.toHaveBeenCalled();
   });
 });

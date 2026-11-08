@@ -107,6 +107,7 @@ export class PluginRegistry {
           legacySidebarItems: [],
           filePanels: [],
           workspacePanels: [],
+          vcsContributions: [],
           commandCenterItems: [],
           clientSlashCommands: [],
           attachmentSources: [],

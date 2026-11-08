@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { View, Text, type LayoutChangeEvent, type PressableStateCallbackType } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { DiffStat } from "@/components/diff-stat";
@@ -17,6 +17,7 @@ import { isWeb } from "@/constants/platform";
 
 interface DiffFolderRowProps {
   /** full uncompressed directory path — the collapse identity */
+  renderFileActions?: (path: string, kind: "file" | "directory") => ReactNode;
   dirPath: string;
   displayName: string;
   depth: number;
@@ -48,6 +49,7 @@ function folderRowPressableStyle(
 }
 
 export function DiffFolderRow({
+  renderFileActions,
   dirPath,
   displayName,
   depth,
@@ -175,6 +177,7 @@ export function DiffFolderRow({
           </View>
         </ContextMenuTrigger>
         <FileActionsContextMenuContent
+          extraActions={renderFileActions?.(dirPath, "directory")}
           fileKind="directory"
           onCollapseFolder={!collapsed ? handleCollapse : undefined}
           onCopyPath={onCopyPath ? handleCopyPath : undefined}

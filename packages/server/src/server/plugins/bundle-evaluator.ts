@@ -1,3 +1,4 @@
+import * as pluginVcsRuntime from "@getpaseo/plugin/server/vcs";
 import { createRequire } from "node:module";
 import * as pluginSharedRuntime from "@getpaseo/plugin";
 import * as pluginProviderRuntime from "@getpaseo/plugin/server/provider";
@@ -19,6 +20,7 @@ function runtimeRequire(name: string): unknown {
   if (name === "@getpaseo/plugin/server/provider") return pluginProviderRuntime;
   if (name === "@getpaseo/plugin/server/acp") return pluginAcpRuntime;
   if (name === "@getpaseo/plugin/server/usage") return pluginUsageRuntime;
+  if (name === "@getpaseo/plugin/server/vcs") return pluginVcsRuntime;
   if (name === "zod") return zod;
   if (name === "@getpaseo/plugin/client/host")
     throw new Error(`${name} is private to the app host`);

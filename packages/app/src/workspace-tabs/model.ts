@@ -1,6 +1,7 @@
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceFileTabTarget } from "@/workspace/file-open";
+import type { VcsComparisonRequest, VcsViewRequest } from "@/vcs/state";
 
 export interface WorkspaceDraftTabSetup {
   provider: AgentProvider;
@@ -16,6 +17,9 @@ export interface WorkspaceWorkingDiffTabTarget {
   kind: "working_diff";
   focusPath?: string;
   focusRequestId?: number;
+  vcsAction?: { providerId: string; actionId: string; requestId: string };
+  vcsComparison?: VcsComparisonRequest;
+  vcsView?: VcsViewRequest;
 }
 
 export type PluginWorkspaceTabTarget =

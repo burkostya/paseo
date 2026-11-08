@@ -108,6 +108,7 @@ export type GlabCommandRunner = (
 ) => Promise<GlabCommandResult>;
 
 export interface CreateGitLabServiceOptions {
+  repositoryUrl?: string;
   runner?: GlabCommandRunner;
   resolveGlabPath?: () => Promise<string | null>;
   resolveRemoteUrl?: (cwd: string) => Promise<string | null>;
@@ -908,9 +909,16 @@ function gitLabNumberQuery(query: string | undefined): string | null {
 }
 
 export function createGitLabService(options: CreateGitLabServiceOptions = {}): ForgeService {
+  const publicationRepository = options.repositoryUrl
+    ? parseGitRemoteLocation(options.repositoryUrl)
+    : null;
+  if (options.repositoryUrl && !publicationRepository)
+    throw new Error("Invalid GitLab repository URL");
   const runner = options.runner ?? runGlabCommand;
   const resolveGlab = createCachedCliPathResolver(options.resolveGlabPath ?? resolveGlabPath);
-  const resolveRemoteUrl = options.resolveRemoteUrl ?? defaultResolveRemoteUrl;
+  const resolveRemoteUrl = options.repositoryUrl
+    ? async () => options.repositoryUrl!
+    : (options.resolveRemoteUrl ?? defaultResolveRemoteUrl);
 
   async function run(args: string[], runOptions: GlabCommandRunnerOptions): Promise<string> {
     const glabPath = await resolveGlab();
@@ -918,7 +926,39 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
       throw new GlabCliMissingError();
     }
     try {
-      const result = await runner(args, runOptions);
+      // `glab api` has no --repo support; bind its host and built-in endpoint placeholders explicitly.
+      const host = publicationRepository
+        ? `${publicationRepository.host}${publicationRepository.port ? `:${publicationRepository.port}` : ""}`
+        : null;
+      const scopedArgs =
+        publicationRepository && args[0] === "api"
+          ? [
+              ...args.map((arg) =>
+                arg.startsWith("projects/")
+                  ? arg.replace(
+                      /:(?:fullpath|id)\b/g,
+                      encodeURIComponent(publicationRepository.path),
+                    )
+                  : arg,
+              ),
+              "--hostname",
+              host!,
+            ]
+          : args;
+      const result = await runner(
+        scopedArgs,
+        options.repositoryUrl
+          ? {
+              ...runOptions,
+              envOverlay: {
+                ...runOptions.envOverlay,
+                GITLAB_REPO: options.repositoryUrl,
+                GITLAB_HOST: host!,
+                GLAB_API_PROTOCOL: publicationRepository?.transport === "http" ? "http" : "https",
+              },
+            }
+          : runOptions,
+      );
       return result.stdout.trim();
     } catch (error) {
       throw glabCliRunner.normalizeError(error, { args, cwd: runOptions.cwd });

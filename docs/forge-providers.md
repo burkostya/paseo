@@ -111,6 +111,29 @@ Thread the checkout head SHA through adapter cache and poll identities as well
 as the lookup itself. Otherwise a commit made on the same branch can inherit the
 previous commit's cached terminal status until the cache expires.
 
+VCS publication resolves an adapter with `ForgeResolver.resolveRepository`, not
+with a working directory. A jj workspace may have no Git checkout, and a selected
+push remote may differ from origin. The registry passes `repositoryUrl` into the
+adapter factory; keep it immutable within that adapter instance. Commands must
+route to that repository and its configured host credentials, including checks
+and merge actions. Never rediscover origin inside a scoped adapter.
+
+Publication status reads are on demand and bypass the adapter cache. The client
+owns their freshness window; an explicit refresh or reconnect must reach the forge.
+Finding an existing PR/MR resolves the
+selected remote and reference without publishing or creating a request. Keep
+that selection separate from the last mutation: changing it must hide the old
+status and URL, including a URL recovered from a creation result. Persist the
+form against the provider, repository and working-copy identity; ignore a late
+lookup after the selection changes or the form closes.
+
+Do not turn each repository-scoped
+GitHub adapter into an independent background poller; retained polling must keep
+the account-wide budget and batching described below. SDK operation results
+retain the published target when forge creation fails, so retry only creation
+after verifying the remote SHA. The author-facing API is in the
+[plugin reference](../public-docs/plugins/reference.md#vcs-providers).
+
 Cloud hosts in the manifest are a bounded public-host list, not a self-host
 allowlist. Self-hosted detection is a trust gate: Paseo only talks to a forge
 host that is either a known cloud host or one the CLI is already authenticated

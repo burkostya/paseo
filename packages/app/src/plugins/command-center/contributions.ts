@@ -15,6 +15,38 @@ export interface PluginCommandCenterSource {
   reportError(error: unknown): void;
 }
 
+export function buildVcsCommandCenterContributions(input: {
+  items: ReturnType<typeof import("@/vcs/workspace-actions").useWorkspaceVcsActions>["items"];
+  views: ReturnType<typeof import("@/vcs/workspace-actions").useWorkspaceVcsActions>["views"];
+  openView(providerId: string, view: string): void;
+  open(providerId: string, actionId: string): void;
+  reportUnavailable(reason?: string): void;
+}): CommandCenterContribution[] {
+  return [
+    ...input.items.map((item) => ({ ...item, view: false })),
+    ...input.views.map((item) => ({ ...item, view: true })),
+  ].map((item, rank) => ({
+    id: `${item.view ? "vcs-view" : "vcs"}:${item.providerId}:${item.id}`,
+    group: `vcs:${item.providerId}`,
+    groupRank: 0,
+    rank,
+    keywords: ["vcs", item.providerId, item.id],
+    visibility: "query",
+    presentation: {
+      kind: "action",
+      title: item.title,
+      sectionTitle: item.section,
+      subtitle: item.reason,
+      icon: item.icon ? getCommandCenterIcon(pluginIconComponent(item.icon)) : undefined,
+    },
+    run() {
+      if (!item.enabled) return input.reportUnavailable(item.reason);
+      if (item.view) return input.openView(item.providerId, item.id);
+      input.open(item.providerId, item.id);
+    },
+  }));
+}
+
 export function buildPluginCommandCenterContributions(
   source: PluginCommandCenterSource,
 ): CommandCenterContribution[] {

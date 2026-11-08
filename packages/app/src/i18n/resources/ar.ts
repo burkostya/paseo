@@ -2,6 +2,7 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ar: TranslationResources = {
+  vcs: { ...en.vcs, diffUnavailable: "لا يدعم هذا المزوّد عرض الفروقات." },
   worktreeImport: {
     title: "إضافة أشجار عمل موجودة…",
     chooseHost: "اختر مضيفًا",
@@ -1396,6 +1397,7 @@ export const ar: TranslationResources = {
     title: "مساحة عمل جديدة",
     create: "يخلق",
     isolation: {
+      workingCopy: "نسخة عمل جديدة",
       local: "محلي",
       worktree: "شجرة عمل جديدة",
       label: "العزل",
@@ -3111,6 +3113,16 @@ export const ar: TranslationResources = {
       },
     },
     project: {
+      vcs: {
+        title: "التحكم بالإصدارات",
+        provider: "المزوّد",
+        none: "لا يوجد",
+        unavailable: "{{provider}} (غير متاح)",
+        loading: "جارٍ التحميل…",
+        saving: "جارٍ التبديل…",
+        retry: "إعادة المحاولة",
+        offline: "المضيف غير متصل",
+      },
       noEditableTarget: "هذا المشروع غير متاح للتحرير على هذا المضيف.",
       backToProjects: "العودة إلى المشاريع",
       edit: {

@@ -16,6 +16,22 @@ names, and workspace foreign keys. Attached workspaces are independently refresh
 from their own cwd, so an explicit project root never implies a workspace checkout. Empty projects
 are observed too.
 
+VCS selection belongs to the project. Workspace bindings are derived caches and carry
+the project's selection revision. Changing the project revision invalidates every
+binding without a cross-file transaction; a failed cache write cannot restore an
+old provider choice. An isolated copy also keeps `vcsWorkingCopy`: its ownership,
+exact directory, and versioned provider data survive provider selection and registry
+reload. Do not infer ownership from `vcsBinding`, a directory name, or the legacy
+Git projection. Validate the project root and every active workspace before
+switching. Provisioning and VCS dispatch share the project lock so a workspace
+cannot enter halfway through that validation. Working-copy membership changes also
+share a registry-scoped lock: imports across projects must not enter between the
+last-reference check and physical removal.
+
+Loading pre-selection Git records pins them to Git. New projects discover a provider
+by plugin priority and retain that choice when the executable or plugin is
+unavailable. Reconciliation must preserve the choice while refreshing Git metadata.
+
 The workspace registry model defines placement once: initial directory/worktree construction,
 mutable reconciliation fields, and the persisted-to-wire checkout projection. Its update policy
 preserves `displayName` and `baseBranch`. `WorkspaceProvisioningService` owns the corresponding
@@ -26,9 +42,20 @@ checkout root. They intentionally differ for an exact subproject inside a worktr
 restore, branch auto-name, and descriptor flows consume those persisted facts rather than
 rediscovering ownership from a directory that may already be gone. Reconciliation may refresh
 mutable placement facts, but never changes `projectId`, `cwd`, `displayName`, or `baseBranch`.
-Workspace archive runs lifecycle teardown from the exact `cwd` but removes only the backing
-`worktreeRoot` after its last active reference disappears. Worktree recovery recreates that backing
-checkout from `mainRepoRoot`, then restores the relative path from `worktreeRoot` to `cwd`.
+Workspace archive runs lifecycle teardown from the exact `cwd` and removes only a
+Paseo-owned backing directory after its last active reference disappears, including
+references from other projects. Legacy Git recovery recreates `worktreeRoot` from
+`mainRepoRoot`, then restores the relative path to `cwd`.
+
+Provider-managed copies persist a durable recovery envelope before removal. All
+workspace records referring to that backing root share the envelope while retaining
+their own exact `cwd`. Registry reconciliation must merge mutable fields into the
+current record; writing an earlier record can erase a newly saved recovery anchor.
+Restore persists `state: "restoring"` before touching disk and keeps the anchor until
+unarchive succeeds. An interrupted restore can leave a partial directory: retain
+its diagnostics and require it to be moved aside before retrying. Never infer a
+successful restore from the directory merely existing. Recovery does not rerun
+creation hooks or setup.
 
 Paseo uses **file-based JSON persistence** instead of a traditional database. All data is validated at runtime with Zod schemas. Most stores write atomically (write to temp file, then rename); a few still use plain `writeFile` — see each section. There is no schema-versioning/migration framework — schemas rely on optional fields with defaults for forward compatibility, with a small amount of inline normalization in `persisted-config.ts` for legacy provider/speech entries.
 
@@ -578,6 +605,10 @@ These small files are not validated as full Zod schemas but are persisted under 
 ## Client-side stores (App)
 
 These live in React Native `AsyncStorage` or browser `IndexedDB`, not on the daemon filesystem.
+
+Omit cleared optional fields from persisted pane state; do not assign `undefined`.
+The layout store validates pane state as JSON before serialization, so an explicit
+`undefined` rejects the entire saved layout instead of being dropped by `JSON.stringify`.
 
 ### Keying convention: directory-backed vs workspace-owned
 

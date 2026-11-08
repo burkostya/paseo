@@ -65,7 +65,6 @@ import { toErrorMessage } from "@/utils/error-messages";
 import { buildSettingsAddHostRoute } from "@/utils/host-routes";
 import {
   getHostProjectId,
-  getWorktreeSupportForHostProject,
   hostProjectFromRoute,
   hostProjectFromWorkspace,
   resolveHostProjectCandidate,
@@ -108,6 +107,12 @@ import {
 } from "./new-workspace-initial-context";
 import { buildNewWorkspaceProjectIconTargets } from "./new-workspace/project-icon-targets";
 import { useNewWorkspaceProjectPicker } from "./new-workspace/project-picker";
+import { useProjectVcs } from "./new-workspace/use-project-vcs";
+import {
+  useVcsRevisionField,
+  ProjectVcsError,
+  ProjectWorkingCopyFields,
+} from "./new-workspace/form/vcs-revision-field";
 import { useNewWorkspaceForm } from "./new-workspace/form";
 import { ImportSessionButton } from "./new-workspace/import-session-button";
 import { useImportSession } from "@/hooks/use-import-session";
@@ -183,6 +188,7 @@ function noopClearDraft() {}
 const PROJECT_PICK_ACTIONS: readonly KeyboardActionId[] = ["workspace.project.pick"];
 
 interface WorkspaceIsolationState {
+  // Keep the persisted preference value; "worktree" also selects provider-managed isolation.
   isolation: "local" | "worktree";
   setIsolation: (value: "local" | "worktree") => void;
   effectiveIsolation: "local" | "worktree";
@@ -281,6 +287,26 @@ interface WorkspaceCreationResult {
   agent?: AgentSnapshotPayload;
 }
 
+function sourceChangeRequest(item: PickerItem | null) {
+  return item?.kind === "github-pr" ? item.item : undefined;
+}
+
+function mergeSourceAttachments(
+  attachments: readonly AgentAttachment[],
+  source: readonly AgentAttachment[],
+): AgentAttachment[] {
+  return [
+    ...new Map(
+      [...attachments, ...source].map((attachment) => [
+        attachment.type === "forge_change_request"
+          ? JSON.stringify([attachment.type, attachment.forge, attachment.url, attachment.number])
+          : JSON.stringify(attachment),
+        attachment,
+      ]),
+    ).values(),
+  ];
+}
+
 async function createMultiplicityWorkspace(input: {
   idempotencyKey: string;
   worktreeSlug: string;
@@ -289,6 +315,7 @@ async function createMultiplicityWorkspace(input: {
   project: HostProjectListItem;
   sourceDirectory: string;
   checkoutRequest: PickerCheckoutRequest | undefined;
+  workingCopySource?: Exclude<CreateWorkspaceRequestOptions["source"], { kind: "directory" }>;
   withInitialAgent: boolean;
   agent?: CreateWorkspaceRequestOptions["agent"];
   onEvent?: (snapshot: CreationSnapshot) => void;
@@ -312,19 +339,23 @@ async function createMultiplicityWorkspace(input: {
     idempotencyKey: input.idempotencyKey,
     agent: input.agent,
     onEvent: input.onEvent,
-    source: isWorktree
-      ? {
-          kind: "worktree",
-          cwd: input.sourceDirectory,
-          projectId,
-          worktreeSlug: input.worktreeSlug,
-          ...input.checkoutRequest,
-        }
-      : {
-          kind: "directory",
-          path: input.sourceDirectory,
-          projectId,
-        },
+    source:
+      (input.workingCopySource?.kind === "worktree"
+        ? { ...input.workingCopySource, worktreeSlug: input.worktreeSlug }
+        : input.workingCopySource) ??
+      (isWorktree
+        ? {
+            kind: "worktree",
+            cwd: input.sourceDirectory,
+            projectId,
+            worktreeSlug: input.worktreeSlug,
+            ...input.checkoutRequest,
+          }
+        : {
+            kind: "directory",
+            path: input.sourceDirectory,
+            projectId,
+          }),
     ...(firstAgentContext ? { firstAgentContext } : {}),
   });
   if (payload.error || !payload.workspace) {
@@ -1033,21 +1064,50 @@ export function NewWorkspaceScreen({
 
   const clientReady = isConnected && Boolean(client);
   const hasSelectedSourceDirectory = selectedSourceDirectory !== null;
-  const pickerQueryEnabled = pickerOpen && clientReady && hasSelectedSourceDirectory;
-
+  const onSourceAttachments = useCallback(
+    (attachments: readonly AgentAttachment[]) => {
+      const request = attachments.find((item) => item.type === "forge_change_request");
+      chatDraft.setAttachments(
+        syncPickerPrAttachment({
+          attachments: chatDraft.attachments,
+          item:
+            request?.type === "forge_change_request"
+              ? {
+                  kind: "github-pr",
+                  item: {
+                    ...request,
+                    kind: "change_request",
+                    state: "open",
+                    labels: [],
+                    body: request.body ?? null,
+                  },
+                }
+              : null,
+        }),
+      );
+    },
+    [chatDraft],
+  );
+  const projectVcs = useProjectVcs(
+    selectedServerId,
+    selectedProject,
+    selectedSourceDirectory,
+    pickerOpen,
+    sourceChangeRequest(selectedItem),
+    onSourceAttachments,
+  );
+  const pickerQueryEnabled =
+    projectVcs.legacyPickerOpen && clientReady && hasSelectedSourceDirectory;
   const { status: checkoutStatus } = useCheckoutStatusQuery({
     serverId: selectedServerId,
-    cwd: selectedSourceDirectory ?? "",
+    cwd: projectVcs.checkoutCwd,
   });
 
-  const worktreeSupport = selectedProject
-    ? getWorktreeSupportForHostProject({ project: selectedProject, serverId: selectedServerId })
-    : "unsupported";
   const isPending = isNewWorkspacePending({ pendingAction, isDraftHandoffActive });
   const { effectiveIsolation, setIsolation, canCreateWorktree, showRefPicker } =
     useWorkspaceIsolation({
       supportsMultiplicity: supportsWorkspaceMultiplicity,
-      worktreeSupport,
+      worktreeSupport: projectVcs.support,
     });
 
   const branchSuggestionsQuery = useQuery({
@@ -1243,14 +1303,17 @@ export function NewWorkspaceScreen({
       }
       const connectedClient = withConnectedClient();
       const createsWorktree = !supportsWorkspaceMultiplicity || effectiveIsolation === "worktree";
-      const checkoutStatusForCreate = createsWorktree
-        ? await ensureCheckoutStatus({
-            queryClient,
-            client: connectedClient,
-            serverId: selectedServerId,
-            cwd: selectedSourceDirectory,
-          })
-        : null;
+      const workingCopySource =
+        createsWorktree && !projectVcs.legacy ? projectVcs.source() : undefined;
+      const checkoutStatusForCreate =
+        createsWorktree && projectVcs.legacy
+          ? await ensureCheckoutStatus({
+              queryClient,
+              client: connectedClient,
+              serverId: selectedServerId,
+              cwd: selectedSourceDirectory,
+            })
+          : null;
       const checkoutRequest = checkoutStatusForCreate
         ? pickerItemToCheckoutRequest(
             selectedItem ?? defaultBasePickerItem(checkoutStatusForCreate),
@@ -1264,10 +1327,22 @@ export function NewWorkspaceScreen({
         project: selectedProject,
         sourceDirectory: selectedSourceDirectory,
         checkoutRequest,
+        workingCopySource,
         withInitialAgent: input.withInitialAgent,
         prompt: input.prompt,
-        attachments: input.attachments,
-        agent: input.agent,
+        attachments: mergeSourceAttachments(
+          input.attachments,
+          createsWorktree ? projectVcs.sourceAttachments : [],
+        ),
+        agent: input.agent
+          ? {
+              ...input.agent,
+              attachments: mergeSourceAttachments(
+                input.agent.attachments ?? [],
+                createsWorktree ? projectVcs.sourceAttachments : [],
+              ),
+            }
+          : undefined,
         onEvent: input.onEvent,
         mergeWorkspaces,
         serverId: selectedServerId,
@@ -1279,6 +1354,7 @@ export function NewWorkspaceScreen({
     [
       creationIdentity,
       creationResult,
+      projectVcs,
       effectiveIsolation,
       mergeWorkspaces,
       queryClient,
@@ -1466,6 +1542,14 @@ export function NewWorkspaceScreen({
   const formStack = useNewWorkspaceForm({
     isCompact,
     isPending,
+    vcsBase: useVcsRevisionField({
+      vcs: projectVcs,
+      visible: showRefPicker,
+      compact: isCompact,
+      disabled: isPending,
+      open: pickerOpen,
+      onOpenChange: handlePickerOpenChange,
+    }),
     project: {
       anchorRef: projectPickerAnchorRef,
       open: openProjectPicker,
@@ -1498,13 +1582,14 @@ export function NewWorkspaceScreen({
       openState: isolationPickerOpen,
       onOpenChange: handleIsolationPickerOpenChange,
       effectiveIsolation,
+      copyLabel: projectVcs.copyLabel,
       canCreateWorktree,
       onSelect: setIsolation,
     },
     base: {
       anchorRef: pickerAnchorRef,
       open: openPicker,
-      openState: pickerOpen,
+      openState: projectVcs.legacyPickerOpen,
       onOpenChange: handlePickerOpenChange,
       selectedSourceDirectory,
       selectedItem,
@@ -1515,7 +1600,7 @@ export function NewWorkspaceScreen({
       onSelect: handleSelectOption,
       setSearchQuery: setPickerSearchQuery,
       emptyText: pickerEmptyText,
-      showRefPicker,
+      showRefPicker: projectVcs.legacy && showRefPicker,
     },
     launch: {
       serverId: selectedServerId,
@@ -1532,6 +1617,7 @@ export function NewWorkspaceScreen({
   const composer = isTerminalLaunch ? (
     <Composer
       key="terminal"
+      repositoryRemoteUrl={projectVcs.composerRemoteUrl}
       inputMode="terminal"
       editingSession={composerEditing.terminal}
       readOnly={!terminalTakesPrompt}
@@ -1560,6 +1646,7 @@ export function NewWorkspaceScreen({
   ) : (
     <Composer
       key="chat"
+      repositoryRemoteUrl={projectVcs.composerRemoteUrl}
       editingSession={composerEditing.chat}
       agentId={draftKey}
       serverId={selectedServerId}
@@ -1598,8 +1685,15 @@ export function NewWorkspaceScreen({
         formStack={formStack}
         onImportSession={importSession.open}
       >
+        <ProjectWorkingCopyFields
+          vcs={projectVcs}
+          serverId={selectedServerId}
+          visible={effectiveIsolation === "worktree"}
+          disabled={isPending}
+        />
         {composer}
         {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+        <ProjectVcsError vcs={projectVcs} visible={effectiveIsolation === "worktree"} />
       </NewWorkspaceLayout>
       {importSession.sheet}
     </FileDropZone>

@@ -135,6 +135,7 @@ export type TeaCommandRunner = (
 ) => Promise<TeaCommandResult>;
 
 export interface CreateGiteaServiceOptions {
+  repositoryUrl?: string;
   runner?: TeaCommandRunner;
   resolveTeaPath?: () => Promise<string | null>;
   resolveRemoteUrl?: (cwd: string) => Promise<string | null>;
@@ -1390,7 +1391,9 @@ function throwFirstNonTeaAuthSearchRejection(results: PromiseSettledResult<unkno
 export function createGiteaService(options: CreateGiteaServiceOptions = {}): ForgeService {
   const runner = options.runner ?? runTeaCommand;
   const resolveTea = createCachedCliPathResolver(options.resolveTeaPath ?? resolveTeaPath);
-  const resolveRemoteUrl = options.resolveRemoteUrl ?? defaultResolveRemoteUrl;
+  const resolveRemoteUrl = options.repositoryUrl
+    ? async () => options.repositoryUrl!
+    : (options.resolveRemoteUrl ?? defaultResolveRemoteUrl);
   const resolveCurrentBranch = options.resolveCurrentBranch ?? defaultResolveCurrentBranch;
   const now = options.now ?? Date.now;
   const currentPrHeadShaCache = new Map<string, { sha: string; expiresAt: number }>();
@@ -1401,7 +1404,26 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
       throw new TeaCliMissingError();
     }
     try {
-      const result = await runner(args, runOptions);
+      let scopedArgs = args;
+      if (options.repositoryUrl && args[0] !== "login") {
+        const host = parseGiteaHostFromRemoteUrl(options.repositoryUrl);
+        const logins = await runner(["login", "list", "-o", "json"], runOptions);
+        const login = host ? findTeaLoginNameForHost(logins.stdout, host) : null;
+        if (!login)
+          throw new TeaAuthenticationError({
+            stderr: "No login configured for the publication host",
+          });
+        const flagsAt = ["list", "create", "merge"].includes(args[1] ?? "") ? 2 : 1;
+        scopedArgs = [
+          ...args.slice(0, flagsAt),
+          "--repo",
+          options.repositoryUrl,
+          "--login",
+          login,
+          ...args.slice(flagsAt),
+        ];
+      }
+      const result = await runner(scopedArgs, runOptions);
       return result.stdout.trim();
     } catch (error) {
       throw teaCliRunner.normalizeError(error, { args: redactTeaArgs(args), cwd: runOptions.cwd });

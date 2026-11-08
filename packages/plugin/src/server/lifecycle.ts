@@ -1,3 +1,4 @@
+import type { VcsBinding, VcsWorkingCopyCreate, VcsWorkingCopyRecord } from "../vcs.js";
 import type { AgentToolDefinition } from "./agent-tools.js";
 import type {
   AgentPermissionRequest,
@@ -115,6 +116,7 @@ export interface PluginHookEvents {
 }
 
 export interface PluginHookRequests {
+  "working-copy.create.before": { binding: VcsBinding; input: VcsWorkingCopyCreate };
   "worktree.create.before": PluginWorktreeCreateRequest;
   "agent.create.before": { config: AgentSessionConfig; env?: Record<string, string> };
   "agent.open.before": PluginSessionOpenRequest;
@@ -128,6 +130,9 @@ export type PluginHooks = {
   };
 } & { [Name in keyof PluginHookEvents]: { payload: PluginHookEvents[Name] } } & {
   "worktree.create.after": { payload: { worktree: PluginHookWorktree } };
+  "working-copy.create.after": {
+    payload: { source: VcsBinding; workingCopy: VcsWorkingCopyRecord };
+  };
 };
 
 export type PluginHookPayload<Name extends keyof PluginHooks> = {
@@ -175,6 +180,8 @@ export const pluginHookRegistry = {
   "workspace.create.before": { waits: true },
   "workspace.create.after": { waits: false },
   "workspace.archive.after": { waits: false },
+  "working-copy.create.before": { waits: true },
+  "working-copy.create.after": { waits: true },
   "worktree.create.before": { waits: true },
   "worktree.create.after": { waits: true },
   "agent.create.before": { waits: true },

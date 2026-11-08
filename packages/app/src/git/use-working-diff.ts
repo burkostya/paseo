@@ -1,9 +1,5 @@
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
-import { useCallback, useEffect, useMemo } from "react";
-import {
-  buildWorkspaceAttachmentScopeKey,
-  useWorkspaceAttachmentsStore,
-} from "@/attachments/workspace-attachments-store";
+import { useCallback, useMemo } from "react";
 import {
   buildReviewDraftKey,
   useInlineReviewController,
@@ -247,43 +243,4 @@ export function useWorkingDiff({
     reviewAttachment,
     reviewFeedback,
   };
-}
-
-export function usePublishWorkingDiffAttachment({
-  serverId,
-  workspaceId,
-  cwd,
-  attachment,
-  enabled,
-}: {
-  serverId: string;
-  workspaceId?: string;
-  cwd: string;
-  attachment: ReturnType<typeof useWorkingDiff>["reviewAttachment"];
-  enabled: boolean;
-}) {
-  const scopeKey = useMemo(
-    () => buildWorkspaceAttachmentScopeKey({ serverId, workspaceId, cwd }),
-    [cwd, serverId, workspaceId],
-  );
-  const setWorkspaceAttachments = useWorkspaceAttachmentsStore(
-    (state) => state.setWorkspaceAttachments,
-  );
-  const clearWorkspaceAttachments = useWorkspaceAttachmentsStore(
-    (state) => state.clearWorkspaceAttachments,
-  );
-
-  useEffect(() => {
-    if (!enabled) {
-      return;
-    }
-    const attachments = attachment ? [attachment] : [];
-    setWorkspaceAttachments({ scopeKey, attachments });
-    return () => {
-      const current = useWorkspaceAttachmentsStore.getState().attachmentsByScope[scopeKey];
-      if (current === attachments) {
-        clearWorkspaceAttachments({ scopeKey });
-      }
-    };
-  }, [attachment, clearWorkspaceAttachments, enabled, scopeKey, setWorkspaceAttachments]);
 }

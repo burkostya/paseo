@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { vcsComparisonRequestSchema, vcsViewRequestSchema } from "@/vcs/state";
 import type { SplitNode, WorkspaceLayout } from "./workspace-layout-actions";
 
 const WorkspaceDraftTabSetupStorageSchema = z.strictObject({
@@ -36,8 +37,13 @@ const WorkspaceTabTargetStorageSchema = z.discriminatedUnion("kind", [
   }),
   z.strictObject({
     kind: z.literal("working_diff"),
+    vcsComparison: vcsComparisonRequestSchema.optional(),
+    vcsView: vcsViewRequestSchema.optional(),
     focusPath: z.string().optional(),
     focusRequestId: z.number().optional(),
+    vcsAction: z
+      .strictObject({ providerId: z.string(), actionId: z.string(), requestId: z.string() })
+      .optional(),
     // COMPAT(workingDiffTarget): accepted from pre-canonical tab ids; normalization removes them.
     mode: z.enum(["uncommitted", "base"]).optional(),
     baseRef: z.string().nullable().optional(),

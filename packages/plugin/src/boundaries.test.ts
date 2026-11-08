@@ -12,6 +12,7 @@ const entries = {
   "./server": "server",
   "./server/provider": "server",
   "./server/usage": "server",
+  "./server/vcs": "server",
   "./server/acp": "server",
   "./internal/lifecycle": "server",
   "./client": "client",
@@ -58,7 +59,11 @@ function boundaryViolations(entry: string, runtime: "shared" | "server" | "clien
         if (runtime !== "server" && serverModule.test(module)) violations.push(label);
         pending.push(local);
       } else if (runtime === "shared") {
-        if (specifier !== "zod" && specifier !== "@getpaseo/protocol/agent-types")
+        if (
+          specifier !== "zod" &&
+          specifier !== "@getpaseo/protocol/agent-types" &&
+          specifier !== "@getpaseo/protocol/vcs"
+        )
           violations.push(label);
       } else if (runtime === "server") {
         if (uiDependency.test(specifier) || /^@getpaseo\/plugin\/client(\/|$)/.test(specifier))
@@ -271,6 +276,10 @@ describe("lifecycle hook SDK types", () => {
             const number: number = request.changeRequestNumber;
           }
           return { ...request, branch: "feature", baseRef: "main", slug: "feature", path: "/work/feature" };
+        });
+        server.addHook("working-copy.create.after", async ({ source, workingCopy }) => {
+          const ignored: string[] = await server.vcs.listLocalFiles(source, { kind: "ignored", patterns: [".env"] });
+          const tracked: string[] = await server.vcs.listLocalFiles(workingCopy.binding, { kind: "tracked" });
         });
         server.addHook("worktree.create.before", async () => {});
         server.addHook("worktree.create.after", async ({ worktree }) => {

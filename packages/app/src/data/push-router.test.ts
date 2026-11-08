@@ -1,3 +1,4 @@
+import type { VcsSnapshot } from "@getpaseo/protocol/vcs";
 import type { OwnedSubscription, SubscriptionObserver } from "@getpaseo/client";
 import { QueryClient, QueryObserver, skipToken } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
@@ -26,6 +27,7 @@ type SubscribeCheckoutDiffResponseMessage = Extract<
 type StatusMessage = Extract<SessionOutboundMessage, { type: "status" }>;
 type TerminalsChangedMessage = Extract<SessionOutboundMessage, { type: "terminals_changed" }>;
 type RouterMessage =
+  | Extract<SessionOutboundMessage, { type: "vcs.snapshot.changed" }>
   | ProvidersSnapshotUpdateMessage
   | CheckoutDiffUpdateMessage
   | SubscribeCheckoutDiffResponseMessage
@@ -57,8 +59,12 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
   unsubscribeCheckoutDiffCalls: string[];
   subscribeTerminalCalls: Array<{ cwd: string; workspaceId?: string }>;
   unsubscribeTerminalCalls: Array<{ cwd: string; workspaceId?: string }>;
+  vcsSubscriptions: string[];
+  vcsReleases: string[];
+  vcsReads: string[];
 } {
   const handlers: Record<RouterMessageType, RouterHandler[]> = {
+    "vcs.snapshot.changed": [],
     providers_snapshot_update: [],
     checkout_diff_update: [],
     subscribe_checkout_diff_response: [],
@@ -73,6 +79,9 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
   const unsubscribeCheckoutDiffCalls: string[] = [];
   const subscribeTerminalCalls: Array<{ cwd: string; workspaceId?: string }> = [];
   const unsubscribeTerminalCalls: Array<{ cwd: string; workspaceId?: string }> = [];
+  const vcsSubscriptions: string[] = [],
+    vcsReleases: string[] = [],
+    vcsReads: string[] = [];
 
   function on<K extends RouterMessageType>(
     type: K,
@@ -135,6 +144,23 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
 
   return {
     client: {
+      observeVcsSnapshot: (workspaceId) => {
+        vcsSubscriptions.push(workspaceId);
+        return observe(
+          {
+            requestId: "vcs",
+            subscriptionId: "vcs-subscription",
+            result: vcsSnapshot(),
+            error: null,
+          },
+          ["vcs.snapshot.changed"],
+          () => vcsReleases.push(workspaceId),
+        );
+      },
+      requestVcs: async (request) => {
+        vcsReads.push(request.workspaceId);
+        return { ...vcsSnapshot(), version: "refreshed" };
+      },
       async getProvidersSnapshot() {
         throw new Error("Unexpected snapshot pull");
       },
@@ -185,6 +211,9 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
     unsubscribeCheckoutDiffCalls,
     subscribeTerminalCalls,
     unsubscribeTerminalCalls,
+    vcsSubscriptions,
+    vcsReleases,
+    vcsReads,
   };
 }
 
@@ -715,6 +744,15 @@ describe("server data push router", () => {
     const diffKey = checkoutDiffQueryKey(serverId, "/repo", "uncommitted", undefined, false);
     const terminalKey = buildTerminalsQueryKey(serverId, "/repo", "workspace-a");
     const otherProviderKey = providersSnapshotQueryKey(otherServerId);
+    const vcsStatusKey = ["workspace-vcs", serverId, "workspace-a", "publication-status"];
+    const otherVcsStatusKey = ["workspace-vcs", otherServerId, "workspace-a", "publication-status"];
+    const vcsSnapshotKey = ["workspace-vcs", serverId, "workspace-a", "snapshot", "observed"];
+    queryClient.setQueryDefaults(vcsSnapshotKey, {
+      meta: { vcsSnapshot: { serverId, workspaceId: "workspace-a", enabled: true } },
+    });
+    queryClient.setQueryData(vcsStatusKey, { status: null });
+    queryClient.setQueryData(otherVcsStatusKey, { status: null });
+    queryClient.setQueryData(vcsSnapshotKey, vcsSnapshot());
 
     queryClient.setQueryData(providerKey, { entries: [], generatedAt: "now", requestId: "p" });
     queryClient.setQueryData(daemonConfigKey, daemonConfig);
@@ -735,5 +773,97 @@ describe("server data push router", () => {
     expect(queryClient.getQueryState(diffKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(terminalKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(otherProviderKey)?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(vcsStatusKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(otherVcsStatusKey)?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(vcsSnapshotKey)?.isInvalidated).toBe(false);
   });
+});
+
+function vcsSnapshot(): VcsSnapshot {
+  return {
+    binding: {
+      providerId: "example",
+      repositoryId: "/repo/metadata",
+      workingCopyId: "/repo",
+      root: "/repo",
+      cwd: "/repo",
+    },
+    version: "initial",
+    current: null,
+    refs: [],
+    files: [],
+    actions: [],
+    capabilities: [],
+    state: "ready",
+  };
+}
+
+it("shares a visible VCS snapshot source, refreshes explicitly and drops hidden demand", async () => {
+  const queryClient = new QueryClient();
+  const fake = createFakeClient();
+  const queryKey = ["workspace-vcs", "server", "workspace", "snapshot", "observed"];
+  const options = (enabled: boolean) => ({
+    queryKey,
+    queryFn: skipToken as typeof skipToken,
+    meta: {
+      vcsSnapshot: { serverId: "server", workspaceId: "workspace", providerId: "example", enabled },
+    },
+  });
+  const visible = new QueryObserver(queryClient, options(true));
+  const hidden = new QueryObserver(queryClient, options(false));
+  const menu = new QueryObserver(queryClient, options(false));
+  const stopVisible = visible.subscribe(() => {});
+  const stopHidden = hidden.subscribe(() => {});
+  const stopMenu = menu.subscribe(() => {});
+  const unmount = mountServerDataPushRouter({
+    client: fake.client,
+    queryClient,
+    serverId: "server",
+  });
+  try {
+    expect(fake.vcsSubscriptions).toEqual(["workspace"]);
+    expect(queryClient.getQueryData(queryKey)).toMatchObject({ result: { version: "initial" } });
+    menu.setOptions(options(true));
+    expect(menu.getCurrentResult().data).toMatchObject({ result: { version: "initial" } });
+    expect(fake.vcsSubscriptions).toEqual(["workspace"]);
+    expect(fake.vcsReads).toEqual([]);
+    fake.emit({
+      type: "vcs.snapshot.changed",
+      payload: {
+        subscriptionId: "vcs-subscription",
+        workspaceId: "workspace",
+        result: { ...vcsSnapshot(), version: "external" },
+        error: null,
+      },
+    });
+    expect(queryClient.getQueryData(queryKey)).toMatchObject({ result: { version: "external" } });
+    expect(menu.getCurrentResult().data).toMatchObject({ result: { version: "external" } });
+    visible.setOptions(options(false));
+    expect(fake.vcsReleases).toEqual([]);
+    await queryClient.invalidateQueries({ queryKey, exact: true });
+    await expect
+      .poll(() => queryClient.getQueryData(queryKey))
+      .toMatchObject({ result: { version: "refreshed" } });
+    expect(fake.vcsReads).toEqual(["workspace"]);
+    stopVisible();
+    expect(fake.vcsReleases).toEqual([]);
+    menu.setOptions(options(false));
+    expect(fake.vcsReleases).toEqual(["workspace"]);
+    fake.emit({
+      type: "vcs.snapshot.changed",
+      payload: {
+        subscriptionId: "vcs-subscription",
+        workspaceId: "workspace",
+        result: { ...vcsSnapshot(), version: "after-release" },
+        error: null,
+      },
+    });
+    expect(queryClient.getQueryData(queryKey)).toMatchObject({ result: { version: "refreshed" } });
+  } finally {
+    stopVisible();
+    stopHidden();
+    stopMenu();
+    unmount();
+    queryClient.clear();
+  }
 });

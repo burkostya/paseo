@@ -28,6 +28,7 @@ export interface PluginSettings<Schema extends ZodType> {
 }
 
 export interface PluginServerContext extends PluginLifecycleRegistration {
+  readonly vcs: import("./vcs.js").VcsHostApi;
   registerSettings<Schema extends ZodType>(
     definition: import("../settings.js").SettingsDefinition<Schema>,
   ): PluginSettings<Schema>;
@@ -38,6 +39,7 @@ export interface PluginServerContext extends PluginLifecycleRegistration {
       context: PluginHandlerContext,
     ) => ZodInput<OutputSchema> | Promise<ZodInput<OutputSchema>>,
   ): void;
+  registerVcsProvider(provider: import("./vcs.js").VcsProviderRegistration): void;
   registerProvider(provider: ProviderRegistration): void;
   registerUsageSource(source: UsageSourceRegistration): void;
 }

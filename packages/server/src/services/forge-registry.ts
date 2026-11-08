@@ -5,7 +5,10 @@ import type { ForgeService } from "./forge-service.js";
 import { createGiteaService, resolveGiteaFamilyForge } from "./gitea-service.js";
 import { createGitLabService, probeGitLabHost } from "./gitlab-service.js";
 
-export type ForgeServiceFactory = () => ForgeService;
+export interface ForgeRepositoryOptions {
+  repositoryUrl?: string;
+}
+export type ForgeServiceFactory = (options?: ForgeRepositoryOptions) => ForgeService;
 
 export interface ForgeAdapterRegistration {
   createService: ForgeServiceFactory;
@@ -52,13 +55,13 @@ export class ForgeRegistry {
     return normalizedForge ? this.#adapters.has(normalizedForge) : false;
   }
 
-  create(forge: string): ForgeService | null {
+  create(forge: string, options?: ForgeRepositoryOptions): ForgeService | null {
     const normalizedForge = parseForgeId(forge);
     if (!normalizedForge) {
       return null;
     }
     const adapter = this.#adapters.get(normalizedForge);
-    return adapter ? adapter.createService() : null;
+    return adapter ? adapter.createService(options) : null;
   }
 
   matchHost(host: string): string | null {
@@ -169,8 +172,11 @@ export const defaultForgeRegistry = new ForgeRegistry([
   ["codeberg", { createService: createGiteaService, matchesHost: matchesCloudHost("codeberg") }],
 ]);
 
-export function createForgeService(forge: string): ForgeService | null {
-  return defaultForgeRegistry.create(forge);
+export function createForgeService(
+  forge: string,
+  options?: ForgeRepositoryOptions,
+): ForgeService | null {
+  return defaultForgeRegistry.create(forge, options);
 }
 
 export function probeRegisteredForgeHost(host: string): Promise<string | null> {

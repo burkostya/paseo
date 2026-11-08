@@ -1,3 +1,4 @@
+import { gitComparisonProjection } from "../vcs-comparison-settings.js";
 import pLimit from "p-limit";
 import type { DiffComparison, DiffComparisonV2 } from "@getpaseo/protocol/messages";
 import { getComparisonShortstatV2, type CheckoutContext } from "../../utils/checkout-git.js";
@@ -95,11 +96,6 @@ function getComparisonSnapshot(input: {
   return entry.result;
 }
 
-function fromLegacy(comparison: DiffComparison | undefined): DiffComparisonV2 | undefined {
-  if (!comparison) return undefined;
-  return comparison.mode === "base" ? { ...comparison, mode: "all" } : comparison;
-}
-
 function toLegacy(
   comparison: DiffComparisonV2,
   resolvedBase: string | null,
@@ -112,8 +108,8 @@ function toLegacy(
 export function projectLegacyComparison(
   project: PersistedProjectRecord,
 ): DiffComparison | undefined {
-  if (project.diffComparisonV2) return toLegacy(project.diffComparisonV2, null);
-  return project.diffComparison;
+  const comparison = gitComparisonProjection(project);
+  return comparison ? toLegacy(comparison, null) : undefined;
 }
 
 export function describeWorkspaceComparison(input: {
@@ -125,9 +121,8 @@ export function describeWorkspaceComparison(input: {
   onReady: (cwd: string) => void;
 }) {
   const projectDiffComparisonV2 =
-    input.project?.diffComparisonV2 ?? fromLegacy(input.project?.diffComparison) ?? DEFAULT;
-  const diffComparisonOverrideV2 =
-    input.workspace.diffComparisonV2 ?? fromLegacy(input.workspace.diffComparison) ?? null;
+    (input.project ? gitComparisonProjection(input.project) : undefined) ?? DEFAULT;
+  const diffComparisonOverrideV2 = gitComparisonProjection(input.workspace) ?? null;
   const diffComparisonV2 = diffComparisonOverrideV2 ?? projectDiffComparisonV2;
   const result = input.snapshot?.git.isGit
     ? getComparisonSnapshot({ ...input, snapshot: input.snapshot, comparison: diffComparisonV2 })

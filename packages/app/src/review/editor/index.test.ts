@@ -62,6 +62,7 @@ describe("review editor", () => {
       side: "new",
       lineNumber: 2,
       body: "First comment",
+      content: target.content,
     });
     editor.edit(target, saved);
     editor.setBody("Discarded edit");

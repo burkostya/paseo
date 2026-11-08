@@ -1,3 +1,5 @@
+import type { WorkspaceVcsService } from "./workspace-vcs-service.js";
+import type { VcsWorkingCopyRecord } from "@getpaseo/protocol/vcs";
 import { resolve } from "node:path";
 
 import type { Logger } from "pino";
@@ -26,9 +28,15 @@ export type ActiveWorkspaceRef = Pick<
   PersistedWorkspaceRecord,
   "workspaceId" | "cwd" | "kind" | "worktreeRoot" | "isPaseoOwnedWorktree" | "mainRepoRoot"
 > &
-  Partial<Pick<PersistedWorkspaceRecord, "projectId" | "parentWorkspaceId">>;
+  Partial<
+    Pick<
+      PersistedWorkspaceRecord,
+      "projectId" | "parentWorkspaceId" | "vcsWorkingCopy" | "vcsBinding"
+    >
+  >;
 
 export interface ArchiveDependencies {
+  vcs?: WorkspaceVcsService;
   paseoHome?: string;
   // Base directory that may hold worktrees across repositories.
   paseoWorktreesBaseRoot?: string;
@@ -99,6 +107,8 @@ export async function requireActiveWorkspaceForArchive(
 }
 
 interface BackingDirectory {
+  vcsWorkingCopy?: VcsWorkingCopyRecord;
+  workspaceId?: string;
   path: string;
   isPaseoOwnedWorktree: boolean;
   // True when the directory backs a worktree workspace (or a worktree-scope
@@ -346,6 +356,17 @@ async function resolveWorkspaceBackingDirectory(
   workspace: ActiveWorkspaceRef,
   dependencies: Pick<ArchiveDependencies, "paseoHome" | "paseoWorktreesBaseRoot">,
 ): Promise<BackingDirectory> {
+  if (workspace.vcsWorkingCopy)
+    return {
+      path: resolve(workspace.vcsWorkingCopy.binding.root),
+      vcsWorkingCopy: workspace.vcsWorkingCopy,
+      workspaceId: workspace.workspaceId,
+      isPaseoOwnedWorktree: false,
+      expectsPaseoOwnership: workspace.vcsWorkingCopy.owned,
+      registryProven: true,
+      mainRepoRoot: null,
+      paseoWorktreesRoot: null,
+    };
   if (workspace.isPaseoOwnedWorktree === false) {
     return {
       path: resolve(workspace.worktreeRoot ?? workspace.cwd),
@@ -438,6 +459,51 @@ async function archiveTargetRecords(
   return { archivedAgents, archivedWorkspaceIds };
 }
 
+interface ProviderRemovalInput {
+  dependencies: ArchiveDependencies;
+  target: ArchiveTarget;
+  archivedWorkspaceIds: string[];
+  workspaceId: string;
+  record: VcsWorkingCopyRecord;
+}
+async function removeProviderDirectory({
+  dependencies,
+  target,
+  archivedWorkspaceIds,
+  workspaceId,
+  record: workingCopy,
+}: ProviderRemovalInput) {
+  if (!workingCopy.owned) return { removedDirectory: false };
+  if (!archivedWorkspaceIds.length) return { removedDirectory: false };
+  if (!dependencies.vcs)
+    return {
+      removedDirectory: false,
+      directoryLeftBehind: {
+        path: workingCopy.binding.root,
+        reason: "VCS recovery service is unavailable; directory retained",
+      },
+    };
+  return dependencies.vcs.archiveWorkingCopy(workspaceId, async (record) => {
+    const targets = target.teardownTargets.filter(
+      (entry) => entry.workspaceId === null || archivedWorkspaceIds.includes(entry.workspaceId),
+    );
+    const allowed = await filterAllowedTeardownTargets(dependencies, targets);
+    for (const entry of uniqueTeardownTargets(allowed))
+      await runWorktreeTeardownCommands({
+        worktreePath: record.binding.root,
+        teardownCwd: entry.cwd,
+        runtimeEnv: {
+          PASEO_VCS_PROVIDER: record.binding.providerId,
+          PASEO_WORKING_COPY_PATH: record.binding.root,
+          PASEO_SOURCE_CHECKOUT_PATH: record.source?.root ?? record.binding.root,
+          PASEO_ROOT_PATH: record.source?.root ?? record.binding.root,
+          PASEO_WORKTREE_PATH: record.binding.root,
+          PASEO_BRANCH_NAME: "",
+        },
+      });
+  });
+}
+
 async function maybeRemoveDirectory(
   dependencies: ArchiveDependencies,
   request: Pick<ArchiveByScopeRequest, "requestId">,
@@ -448,6 +514,14 @@ async function maybeRemoveDirectory(
   directoryLeftBehind?: { path: string; reason: string };
 }> {
   const backing = target.backing;
+  if (backing?.vcsWorkingCopy && backing.workspaceId)
+    return removeProviderDirectory({
+      dependencies,
+      target,
+      archivedWorkspaceIds,
+      workspaceId: backing.workspaceId,
+      record: backing.vcsWorkingCopy,
+    });
   if (!backing?.isPaseoOwnedWorktree) {
     // Missing ownership proof for a worktree-backed directory: the record
     // still archives, but the directory is left in place and surfaced.

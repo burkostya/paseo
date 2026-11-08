@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { ParsedDiffFile } from "@getpaseo/protocol/messages";
 import type { InlineReviewActions } from "@/review";
 import type { ReviewableDiffTarget } from "@/utils/diff-layout";
@@ -16,6 +17,7 @@ interface DiffDocumentBaseProps {
 
 export interface WorkingDiffMode {
   kind: "working";
+  renderFileActions?: (path: string, kind: "file" | "directory") => ReactNode;
   reviewActions?: InlineReviewActions;
   onFilePress?: (path: string) => void;
   focusPath?: string;

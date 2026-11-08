@@ -1,4 +1,5 @@
-import React, { useCallback, useMemo } from "react";
+import { WorkspaceVcsMenu } from "@/vcs/workspace-menu";
+import React, { useCallback, useMemo, useState } from "react";
 import { View } from "react-native";
 import { useRouter, type Href } from "expo-router";
 import { useTranslation } from "react-i18next";
@@ -76,6 +77,8 @@ const COMPACT_HEADER_BUTTON_HIT_SLOP = { top: 8, bottom: 8 } as const;
  * from the same callbacks, so the two surfaces can't drift.
  */
 export interface WorkspaceHeaderWorkspaceActions {
+  normalizedServerId: string;
+  normalizedWorkspaceId: string;
   currentBranchName: string | null;
   showWorkspaceSetup: boolean;
   importAgentDisabled: boolean;
@@ -157,8 +160,9 @@ function workspaceHeaderMenuButtonStyle({
  */
 export function WorkspaceHeaderMenuDesktop(props: WorkspaceHeaderWorkspaceActions) {
   const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger
         testID="workspace-header-menu-trigger"
         style={workspaceHeaderMenuButtonStyle}
@@ -169,6 +173,11 @@ export function WorkspaceHeaderMenuDesktop(props: WorkspaceHeaderWorkspaceAction
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" width={220} testID="workspace-header-menu">
         <WorkspaceHeaderWorkspaceActionItems {...props} />
+        <WorkspaceVcsMenu
+          serverId={props.normalizedServerId}
+          workspaceId={props.normalizedWorkspaceId}
+          open={open}
+        />
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -235,6 +244,7 @@ export function WorkspaceHeaderMenuMobile({
 }: WorkspaceHeaderMenuMobileProps) {
   const { t } = useTranslation();
   const router = useRouter();
+  const [open, setOpen] = useState(false);
   const triggerStyle = useIconButtonChromeStyle({ size: "large" });
   const { config } = useDaemonConfig(normalizedServerId);
   const profiles = useMemo(
@@ -253,7 +263,7 @@ export function WorkspaceHeaderMenuMobile({
   );
 
   return (
-    <DropdownMenu compactMode="sheet">
+    <DropdownMenu compactMode="sheet" open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger
         testID="workspace-header-menu-trigger"
         style={triggerStyle}
@@ -290,7 +300,16 @@ export function WorkspaceHeaderMenuMobile({
             {t("workspace.header.actions.newBrowser")}
           </DropdownMenuItem>
         ) : null}
-        <WorkspaceHeaderWorkspaceActionItems {...workspaceActions} />
+        <WorkspaceHeaderWorkspaceActionItems
+          {...workspaceActions}
+          normalizedServerId={normalizedServerId}
+          normalizedWorkspaceId={normalizedWorkspaceId}
+        />
+        <WorkspaceVcsMenu
+          serverId={normalizedServerId}
+          workspaceId={normalizedWorkspaceId}
+          open={open}
+        />
         <DropdownMenuSeparator />
         <DropdownMenuLabel>{t("workspace.tabs.actions.terminalProfilesMenu")}</DropdownMenuLabel>
         {profiles.map((profile) => (

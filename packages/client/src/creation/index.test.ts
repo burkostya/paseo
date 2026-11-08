@@ -50,7 +50,10 @@ const agent: AgentSnapshotPayload = {
   labels: {},
 };
 
-function fixture(modern: boolean) {
+function fixture(
+  modern: boolean,
+  options: { workingCopies?: boolean; workingCopySelection?: boolean } = {},
+) {
   const requests: Array<{ kind: string; input: Record<string, unknown> }> = [];
   const legacy: Array<{ kind: string; input: unknown }> = [];
   let resolve!: (result: CreationResult) => void;
@@ -58,7 +61,11 @@ function fixture(modern: boolean) {
     resolve = done;
   });
   const client = new CreationClient({
-    supports: (feature) => (feature === "creationLifecycle" ? modern : true),
+    supports: (feature) => {
+      if (feature === "vcsWorkingCopies") return options.workingCopies ?? true;
+      if (feature === "vcsWorkingCopySelection") return options.workingCopySelection ?? true;
+      return feature === "creationLifecycle" ? modern : true;
+    },
     requestId: () => "generated-key",
     request: async (kind, input) => {
       requests.push({ kind, input });
@@ -222,3 +229,26 @@ test.each([
   });
   f.client.close();
 });
+
+test("rejects a selected working-copy provider before dispatch on older hosts", async () => {
+  const f = fixture(true, { workingCopySelection: false });
+  await expect(
+    f.client.createWorkspace({
+      source: { kind: "working-copy", projectId: "project", providerId: "external" },
+    }),
+  ).rejects.toThrow("Update the host");
+  expect(f.requests).toEqual([]);
+  expect(f.legacy).toEqual([]);
+});
+
+test.each([true, false])(
+  "working-copy creation is rejected before dispatch on an unsupported host (modern=%s)",
+  async (modern) => {
+    const f = fixture(modern, { workingCopies: false });
+    await expect(
+      f.client.createWorkspace({ source: { kind: "working-copy", projectId: "project" } }),
+    ).rejects.toThrow("Update the host to create VCS working copies");
+    expect(f.requests).toEqual([]);
+    expect(f.legacy).toEqual([]);
+  },
+);

@@ -185,3 +185,56 @@ export interface MarkdownProps {
 
 /** Renders Markdown using Paseo’s theme, selection, and link behavior. */
 export declare const Markdown: ComponentType<MarkdownProps>;
+
+/** The same form controls used by Paseo screens. Text inputs publish committed edits. */
+export declare const Field: ComponentType<{
+  label: string;
+  children: ReactNode;
+  error?: string | null;
+  testID?: string;
+}>;
+export declare const FormTextInput: ComponentType<
+  Omit<TextInputProps, "value" | "defaultValue"> & {
+    initialValue?: string;
+    resetKey?: string | number;
+    size?: "sm" | "md";
+  }
+>;
+export interface SelectFieldOption<Value> {
+  id: string;
+  value: Value;
+  label: string;
+  description?: string;
+  testID?: string;
+}
+export declare function SelectField<Value>(props: {
+  label: string;
+  value: Value | null;
+  selectedDisplay: { label: string; description?: string } | null;
+  options: SelectFieldOption<Value>[];
+  onChange(value: Value, display: { label: string; description?: string }): void;
+  placeholder: string;
+  emptyText: string;
+  disabled?: boolean;
+  size?: "sm" | "md";
+  searchable?: boolean;
+  searchPlaceholder?: string;
+  loading?: boolean;
+  error?: string | null;
+  onSearchQueryChange?(query: string): void;
+  onOpenChange?(open: boolean): void;
+  triggerTestID?: string;
+  testID?: string;
+}): ReactNode;
+export declare const Button: ComponentType<{
+  children: ReactNode;
+  onPress(): void;
+  disabled?: boolean;
+  loading?: boolean;
+  variant?: "default" | "secondary" | "outline" | "ghost" | "destructive";
+  size?: "sm" | "md";
+  testID?: string;
+  accessibilityLabel?: string;
+}>;
+export declare const Form: ComponentType<{ children: ReactNode }>;
+export declare const FormActions: ComponentType<{ children: ReactNode }>;

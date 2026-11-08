@@ -267,6 +267,7 @@ test("createPaseoApi borrows daemon capabilities without exposing connection own
     "agents",
     "config",
     "dispose",
+    "forge",
     "hosts",
     "observeEvents",
     "projects",
@@ -1829,6 +1830,457 @@ test("agent reload reopens through the daemon RPC then returns the observed snap
       }),
     );
     expect(await read).toEqual({ agent: snapshot, project: null });
+  } finally {
+    await client.close();
+  }
+});
+
+test("workspace VCS requires a capable host before sending any request", async () => {
+  const { client, ws } = await connectClient({});
+  try {
+    const before = ws.sent.length;
+    const vcs = client.workspaces.ref("workspace-vcs").vcs;
+    await expect(vcs.snapshot("jj")).rejects.toThrow("Update the host");
+    await expect(
+      vcs.execute("jj", { operationId: "op", version: "v1", action: "describe", input: {} }),
+    ).rejects.toThrow("Update the host");
+    await expect(vcs.preview("jj", { version: "1", action: "abandon", input: {} })).rejects.toThrow(
+      "Update the host",
+    );
+    expect(ws.sent).toHaveLength(before);
+  } finally {
+    await client.close();
+  }
+});
+
+test("workspace VCS preview gates new RPCs and preserves affected revisions", async () => {
+  const { client, ws } = await connectClient({ vcsProviders: true, vcsActionPreview: true });
+  try {
+    const pending = client.workspaces
+      .ref("workspace")
+      .vcs.preview("jj", { version: "1", action: "abandon", input: { revision: "commit" } });
+    const request = parseSentSessionMessage(ws.sent.at(-1));
+    expect(request).toMatchObject({
+      type: "vcs.actions.preview.request",
+      workspaceId: "workspace",
+      providerId: "jj",
+      version: "1",
+      action: "abandon",
+      input: { revision: "commit" },
+    });
+    ws.message(
+      sessionMessage({
+        type: "vcs.actions.preview.response",
+        payload: {
+          requestId: request.requestId,
+          result: { revisions: [], files: ["a.txt"], refs: [] },
+          error: null,
+        },
+      }),
+    );
+    expect(await pending).toEqual({ revisions: [], files: ["a.txt"], refs: [] });
+  } finally {
+    await client.close();
+  }
+});
+
+test("workspace VCS addresses the registry workspace and preserves structured provider errors", async () => {
+  const { client, ws } = await connectClient({ vcsProviders: true });
+  try {
+    const vcs = client.workspaces.ref("workspace-vcs").vcs;
+    const pending = vcs.snapshot("jj");
+    const request = parseSentSessionMessage(ws.sent.at(-1));
+    expect(request).toMatchObject({
+      type: "vcs.snapshot.get.request",
+      workspaceId: "workspace-vcs",
+      providerId: "jj",
+    });
+    expect(request).not.toHaveProperty("binding");
+    expect(request).not.toHaveProperty("cwd");
+    ws.message(
+      sessionMessage({
+        type: "vcs.snapshot.get.response",
+        payload: {
+          requestId: request.requestId,
+          result: null,
+          error: { code: "unsupported-version", message: "Install a newer jj" },
+        },
+      }),
+    );
+    await expect(pending).rejects.toMatchObject({
+      name: "VcsRequestError",
+      problem: { code: "unsupported-version", message: "Install a newer jj" },
+    });
+  } finally {
+    await client.close();
+  }
+});
+
+test("VCS SDK selects a project provider and supports requests using saved selection", async () => {
+  const { client, ws } = await connectClient({ vcsProviders: true });
+  try {
+    const select = client.projects.vcs.select("project", "jj");
+    const request = parseSentSessionMessage(ws.sent.at(-1));
+    expect(request).toMatchObject({
+      type: "vcs.project.select.request",
+      projectId: "project",
+      providerId: "jj",
+    });
+    ws.message(
+      sessionMessage({
+        type: "vcs.project.select.response",
+        payload: {
+          requestId: request.requestId,
+          result: { projectId: "project", providerId: "jj" },
+          error: null,
+        },
+      }),
+    );
+    await expect(select).resolves.toEqual({ projectId: "project", providerId: "jj" });
+    const snapshot = client.workspaces.ref("workspace").vcs.snapshot();
+    const snapshotRequest = parseSentSessionMessage(ws.sent.at(-1));
+    expect(snapshotRequest).toMatchObject({
+      type: "vcs.snapshot.get.request",
+      workspaceId: "workspace",
+    });
+    expect(snapshotRequest).not.toHaveProperty("providerId");
+    ws.message(
+      sessionMessage({
+        type: "vcs.snapshot.get.response",
+        payload: {
+          requestId: snapshotRequest.requestId,
+          result: null,
+          error: { code: "unavailable", message: "Install the selected provider" },
+        },
+      }),
+    );
+    await expect(snapshot).rejects.toMatchObject({ problem: { code: "unavailable" } });
+  } finally {
+    await client.close();
+  }
+});
+
+test("project VCS reads require their capability without changing existing project selection", async () => {
+  const { client, ws } = await connectClient({ vcsProviders: true });
+  try {
+    const before = ws.sent.length;
+    await expect(client.projects.vcs.snapshot("project")).rejects.toThrow("Update the host");
+    await expect(
+      client.projects.vcs.history("project", { providerId: "external", version: "v1" }),
+    ).rejects.toThrow("Update the host");
+    expect(ws.sent).toHaveLength(before);
+  } finally {
+    await client.close();
+  }
+});
+
+test("working-copy source preparation is gated separately from project reads", async () => {
+  const old = await connectClient({ vcsProviders: true, vcsProjectReads: true });
+  const input = { version: 3, data: { label: "release", custom: [1, "two"] } };
+  try {
+    const sent = old.ws.sent.length;
+    await expect(
+      old.client.projects.vcs.resolveWorkingCopySource("project", {
+        providerId: "external",
+        input,
+      }),
+    ).rejects.toThrow("Update the host");
+    expect(old.ws.sent).toHaveLength(sent);
+  } finally {
+    await old.client.close();
+  }
+});
+
+test("working-copy source preparation preserves opaque provider options", async () => {
+  const input = { version: 3, data: { label: "release", custom: [1, "two"] } };
+  const { client, ws } = await connectClient({ vcsProviders: true, vcsWorkingCopySources: true });
+  try {
+    const pending = client.projects.vcs.resolveWorkingCopySource("project", {
+      providerId: "external",
+      input,
+    });
+    const request = parseSentSessionMessage(ws.sent.at(-1));
+    expect(request).toEqual({
+      type: "vcs.project.working-copy.resolve-source.request",
+      requestId: expect.any(String),
+      projectId: "project",
+      providerId: "external",
+      input,
+    });
+    const result = {
+      revision: "opaque-revision",
+      data: { version: 4, data: { label: "release", parents: ["a", "b"] } },
+    };
+    ws.message(
+      sessionMessage({
+        type: "vcs.project.working-copy.resolve-source.response",
+        payload: { requestId: request.requestId, result, error: null },
+      }),
+    );
+    await expect(pending).resolves.toEqual(result);
+  } finally {
+    await client.close();
+  }
+});
+
+test("project VCS history carries the selected provider and snapshot version without a workspace", async () => {
+  const { client, ws } = await connectClient({ vcsProviders: true, vcsProjectReads: true });
+  try {
+    const pending = client.projects.vcs.history("project", {
+      providerId: "external",
+      version: "v1",
+      cursor: "page-2",
+    });
+    const request = parseSentSessionMessage(ws.sent.at(-1));
+    expect(request).toMatchObject({
+      type: "vcs.project.history.list.request",
+      projectId: "project",
+      providerId: "external",
+      version: "v1",
+      cursor: "page-2",
+      limit: 50,
+    });
+    expect(request).not.toHaveProperty("workspaceId");
+    expect(request).not.toHaveProperty("cwd");
+    ws.message(
+      sessionMessage({
+        type: "vcs.project.history.list.response",
+        payload: { requestId: request.requestId, result: { revisions: [] }, error: null },
+      }),
+    );
+    await expect(pending).resolves.toEqual({ revisions: [] });
+  } finally {
+    await client.close();
+  }
+});
+
+test("VCS publication gates new RPCs independently of existing VCS support", async () => {
+  const { client, ws } = await connectClient({ vcsProviders: true });
+  try {
+    const sent = ws.sent.length;
+    await expect(client.workspaces.ref("workspace").vcs.publication.remotes()).rejects.toThrow(
+      "Update the host to use VCS publication",
+    );
+    expect(ws.sent).toHaveLength(sent);
+  } finally {
+    await client.close();
+  }
+});
+
+test("VCS publication SDK preserves an exact target and partial operation results", async () => {
+  const { client, ws } = await connectClient({ vcsProviders: true, vcsPublication: true });
+  try {
+    const publication = client.workspaces.ref("workspace").vcs.publication;
+    const selection = { remote: "selected", headRef: "feature", baseRef: "main" };
+    const target = {
+      ...selection,
+      repositoryUrl: "https://forge.test/acme/repo",
+      headRevision: "exact-revision",
+    };
+    const resolving = publication.resolve(selection);
+    const resolveRequest = parseSentSessionMessage(ws.sent.at(-1));
+    expect(resolveRequest).toMatchObject({
+      type: "vcs.publication.resolve.request",
+      workspaceId: "workspace",
+      selection,
+    });
+    ws.message(
+      sessionMessage({
+        type: "vcs.publication.resolve.response",
+        payload: { requestId: resolveRequest.requestId, result: target, error: null },
+      }),
+    );
+    await expect(resolving).resolves.toEqual(target);
+    const creating = publication.execute({
+      operationId: "create",
+      target,
+      input: { action: "create", title: "Task", body: "", publish: true },
+    });
+    const createRequest = parseSentSessionMessage(ws.sent.at(-1));
+    expect(createRequest).toMatchObject({
+      type: "vcs.change-request.execute.request",
+      workspaceId: "workspace",
+      operationId: "create",
+      target,
+      input: { publish: true },
+    });
+    const failed = {
+      id: "create",
+      status: "failed",
+      result: { stage: "published", publication: target },
+      error: { code: "remote", message: "Forge is unavailable" },
+    };
+    ws.message(
+      sessionMessage({
+        type: "vcs.change-request.execute.response",
+        payload: { requestId: createRequest.requestId, result: failed, error: null },
+      }),
+    );
+    await expect(creating).resolves.toEqual(failed);
+    const retrying = publication.execute({
+      operationId: "retry-create",
+      target,
+      input: { action: "create", title: "Task", body: "", publish: false },
+    });
+    const retryRequest = parseSentSessionMessage(ws.sent.at(-1));
+    expect(retryRequest).toMatchObject({
+      type: "vcs.change-request.execute.request",
+      operationId: "retry-create",
+      input: { publish: false },
+    });
+    ws.message(
+      sessionMessage({
+        type: "vcs.change-request.execute.response",
+        payload: {
+          requestId: retryRequest.requestId,
+          result: { id: "retry-create", status: "pending" },
+          error: null,
+        },
+      }),
+    );
+    await expect(retrying).resolves.toEqual({ id: "retry-create", status: "pending" });
+  } finally {
+    await client.close();
+  }
+});
+
+test("VCS observation negotiates support while preserving older snapshot reads", async () => {
+  const { client, ws } = await connectClient({ vcsProviders: true, ownedSubscriptions: true });
+  try {
+    const vcs = client.workspaces.ref("workspace").vcs;
+    const sent = ws.sent.length;
+    expect(() => vcs.observeSnapshot()).toThrow("Update the host to observe VCS changes");
+    expect(ws.sent).toHaveLength(sent);
+    const reading = vcs.snapshot();
+    const request = parseSentSessionMessage(ws.sent.at(-1));
+    expect(request).toMatchObject({ type: "vcs.snapshot.get.request", workspaceId: "workspace" });
+    expect(request).not.toHaveProperty("subscribe");
+    ws.message(
+      sessionMessage({
+        type: "vcs.snapshot.get.response",
+        payload: {
+          requestId: request.requestId,
+          result: null,
+          error: { code: "unavailable", message: "Install the selected provider" },
+        },
+      }),
+    );
+    await expect(reading).rejects.toMatchObject({ problem: { code: "unavailable" } });
+  } finally {
+    await client.close();
+  }
+});
+
+test("forge search is available to contributed project source forms", async () => {
+  const { client, ws } = await connectClient({ forgeSearch: true });
+  const item = {
+    kind: "change_request",
+    forge: "gitlab",
+    number: 7,
+    title: "Fix",
+    url: "https://example.test/group/repo/-/merge_requests/7",
+    body: null,
+    state: "open",
+    labels: [],
+    projectPath: "group/repo",
+    headRefName: "fix",
+  };
+  const pending = client.forge.search({
+    cwd: "/repo/sub",
+    query: "fix",
+    kinds: ["change_request"],
+    limit: 50,
+  });
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).toMatchObject({
+    type: "forge.search.request",
+    cwd: "/repo/sub",
+    query: "fix",
+    kinds: ["change_request"],
+    limit: 50,
+  });
+  ws.message(
+    sessionMessage({
+      type: "forge.search.response",
+      payload: {
+        requestId: request.requestId,
+        items: [item],
+        authState: "authenticated",
+        error: null,
+      },
+    }),
+  );
+  await expect(pending).resolves.toMatchObject({
+    items: [item],
+    authState: "authenticated",
+    error: null,
+  });
+  await client.close();
+});
+
+test("forge search requires host support before sending a request", async () => {
+  const { client, ws } = await connectClient({});
+  const count = ws.sent.length;
+  await expect(client.forge.search({ cwd: "/repo", query: "" })).rejects.toThrow("Update the host");
+  expect(ws.sent).toHaveLength(count);
+  await client.close();
+});
+
+test("forge search validates items at the SDK boundary", async () => {
+  const { client, ws } = await connectClient({ forgeSearch: true });
+  const pending = client.forge.search({ cwd: "/repo", query: "fix" });
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  ws.message(
+    sessionMessage({
+      type: "forge.search.response",
+      payload: {
+        requestId: request.requestId,
+        items: [{ kind: "change_request", number: "invalid" }],
+        authState: "authenticated",
+        error: null,
+      },
+    }),
+  );
+  await expect(pending).rejects.toThrow();
+  await client.close();
+});
+
+test("VCS comparison settings require host support", async () => {
+  const old = await connectClient({ vcsProviders: true });
+  try {
+    await expect(old.client.workspaces.ref("w").vcs.comparison.get("jj")).rejects.toThrow(
+      "Update the host",
+    );
+  } finally {
+    await old.client.close();
+  }
+});
+
+test("VCS comparison settings address project or workspace independently", async () => {
+  const { client, ws } = await connectClient({ vcsProviders: true, vcsComparisonSettings: true });
+  const value = { version: 1, data: { mode: "change" } };
+  try {
+    for (const [scope, target] of [
+      [client.projects.vcs.comparison("p"), { kind: "project", projectId: "p" }],
+      [client.workspaces.ref("w").vcs.comparison, { kind: "workspace", workspaceId: "w" }],
+    ] as const) {
+      const pending = scope.set("jj", value);
+      const request = parseSentSessionMessage(ws.sent.at(-1));
+      expect(request).toMatchObject({
+        type: "vcs.comparison.set.request",
+        target,
+        providerId: "jj",
+        value,
+      });
+      const result = { providerId: "jj", selection: value, inherited: null, effective: value };
+      ws.message(
+        sessionMessage({
+          type: "vcs.comparison.set.response",
+          payload: { requestId: request.requestId, result, error: null },
+        }),
+      );
+      await expect(pending).resolves.toEqual(result);
+    }
   } finally {
     await client.close();
   }

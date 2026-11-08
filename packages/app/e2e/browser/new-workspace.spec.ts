@@ -827,17 +827,14 @@ test.describe("New workspace flow", () => {
         const openedProject = await openWorktreeComposerForRepo(page, tempRepo.path);
 
         await openStartingRefPicker(page);
-        await expectStartingRefRows(page, [
-          "main, origin branch",
-          "main, local branch, 2 commits ahead of origin main",
-        ]);
+        await expectStartingRefRows(page, ["main", "main (local)"]);
         const screenshotPath = testInfo.outputPath("ref-picker-local-ahead.png");
         await captureStartingRefPicker(page, screenshotPath);
         await testInfo.attach("Ref picker: local ahead of upstream", {
           path: screenshotPath,
           contentType: "image/png",
         });
-        await startingRefRow(page, "main, local branch, 2 commits ahead of origin main").click();
+        await startingRefRow(page, "main (local)").click();
         await expectPickerSelected(page, "main (local)");
 
         const created = await createWorktreeAndRead(page, openedProject);
@@ -862,10 +859,7 @@ test.describe("New workspace flow", () => {
         // Branch suggestions only know about origin, so the upstream the fork actually
         // tracks gets its own row rather than silently sharing origin's. Two rows reading
         // "main" is the ambiguity this whole change exists to remove.
-        await expectStartingRefRows(page, [
-          "main (upstream), upstream branch",
-          "main, origin branch",
-        ]);
+        await expectStartingRefRows(page, ["main (upstream)", "main"]);
         await expectPickerSelected(page, "main (upstream)");
         const screenshotPath = testInfo.outputPath("ref-picker-fork.png");
         await captureStartingRefPicker(page, screenshotPath);

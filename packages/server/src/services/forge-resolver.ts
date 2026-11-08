@@ -5,6 +5,7 @@ import { defaultResolveRemoteUrl } from "./forge-cli-command.js";
 import type { ForgeService } from "./forge-service.js";
 import {
   createForgeService,
+  type ForgeRepositoryOptions,
   defaultForgeRegistry,
   probeRegisteredForgeHost,
 } from "./forge-registry.js";
@@ -23,7 +24,7 @@ export type ForgeHostProbe = (host: string) => Promise<string | null>;
 
 export interface CreateForgeResolverOptions {
   resolveRemoteUrl?: (cwd: string) => Promise<string | null>;
-  createService?: (forge: string) => ForgeService | null;
+  createService?: (forge: string, options?: ForgeRepositoryOptions) => ForgeService | null;
   probeForge?: ForgeHostProbe;
   resolveSshHostname?: SshHostnameResolver;
   now?: () => number;
@@ -32,6 +33,8 @@ export interface CreateForgeResolverOptions {
 export interface ForgeResolver {
   /** Resolve the forge for a working directory, or null when none applies. */
   resolve(cwd: string): Promise<ForgeResolution | null>;
+  /** Resolve an explicit repository, without discovering a Git checkout. */
+  resolveRepository(remoteUrl: string): Promise<ForgeResolution | null>;
   /** Resolve from a known origin remote URL using only the name heuristic + probe cache. */
   resolveFromRemoteUrl(remoteUrl: string | null): ForgeResolution | null;
   /** Resolve from a known origin remote URL, running the per-host probe when needed. */
@@ -68,6 +71,10 @@ export function createForgeResolver(options: CreateForgeResolverOptions = {}): F
   const resolveSsh = options.resolveSshHostname ?? resolveSshHostname;
   const now = options.now ?? Date.now;
   const services = new Map<string, ForgeService>();
+  const repositoryServices = new LRUCache<string, ForgeResolution>({
+    max: FORGE_RESOLVER_CACHE_MAX,
+    dispose: (resolution) => resolution.service.dispose?.(),
+  });
   // Cache the per-host probe result so the synchronous resolveFromRemoteUrl can
   // reuse a forge discovered by an earlier async resolve. Positive results are
   // permanent; negative ones expire (NEGATIVE_PROBE_TTL_MS) so a CLI installed
@@ -249,6 +256,20 @@ export function createForgeResolver(options: CreateForgeResolverOptions = {}): F
   return {
     resolveFromRemoteUrl,
     resolveFromRemoteUrlAsync,
+    async resolveRepository(remoteUrl) {
+      const cached = repositoryServices.get(remoteUrl);
+      if (cached) return cached;
+      const location = parseGitRemoteLocation(remoteUrl);
+      const resolved = await resolveFromRemoteUrlAsync(remoteUrl);
+      if (!location || !resolved) return null;
+      // SSH aliases are resolved by the same trust gate as ordinary checkout discovery.
+      const repositoryUrl = `${location.transport === "http" ? "http" : "https"}://${resolved.host}${location.port && location.transport !== "ssh" ? `:${location.port}` : ""}/${location.path}`;
+      const service = create(resolved.forge, { repositoryUrl });
+      if (!service) return null;
+      const scoped = { ...resolved, service };
+      repositoryServices.set(remoteUrl, scoped);
+      return scoped;
+    },
     invalidate,
     async resolve(cwd: string): Promise<ForgeResolution | null> {
       return resolveFromRemoteUrlAsync(await resolveRemoteUrlCached(cwd));

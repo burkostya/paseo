@@ -299,6 +299,14 @@ function createPaseoWorktreeForTest(options: {
     existsOnDisk: async () => true,
     list: async () => Array.from(projects.values()),
     get: async (projectId) => projects.get(projectId) ?? null,
+    update: async (projectId, updater) => {
+      const project = projects.get(projectId);
+      if (!project) return null;
+      const updated = updater(project);
+      options.events?.push(`project:${projectId}`);
+      projects.set(projectId, updated);
+      return updated;
+    },
     getOrCreateActiveByRoot: async (allocation) => {
       const existing = Array.from(projects.values()).find(
         (project) =>

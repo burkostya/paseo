@@ -2,6 +2,7 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ja: TranslationResources = {
+  vcs: { ...en.vcs, diffUnavailable: "このプロバイダーは差分表示に対応していません。" },
   worktreeImport: {
     title: "既存のワークツリーを追加…",
     chooseHost: "ホストを選択",
@@ -1409,6 +1410,7 @@ export const ja: TranslationResources = {
     title: "新しいワークスペース",
     create: "作成",
     isolation: {
+      workingCopy: "新しい作業コピー",
       local: "ローカル",
       worktree: "新しいワークツリー",
       label: "分離方法",
@@ -3107,6 +3109,16 @@ export const ja: TranslationResources = {
       },
     },
     project: {
+      vcs: {
+        title: "バージョン管理",
+        provider: "プロバイダー",
+        none: "なし",
+        unavailable: "{{provider}}（利用不可）",
+        loading: "読み込み中…",
+        saving: "切り替え中…",
+        retry: "再試行",
+        offline: "ホストが切断されました",
+      },
       noEditableTarget: "このホストではこのプロジェクトを編集できません。",
       backToProjects: "プロジェクトに戻る",
       edit: {

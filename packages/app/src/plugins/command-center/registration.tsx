@@ -1,3 +1,10 @@
+import { useTranslation } from "react-i18next";
+import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
+import {
+  useWorkspaceVcsActions,
+  openWorkspaceVcsAction,
+  openWorkspaceVcsView,
+} from "@/vcs/workspace-actions";
 import { usePathname } from "expo-router";
 import { useMemo } from "react";
 import { useCommandCenterActions } from "@/command-center/provider";
@@ -11,7 +18,10 @@ import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
 import { createPluginClientStateSource } from "../client-state/source";
 import { hostIdFromPathname } from "../routes";
 import { useInstalledPlugins } from "../registry";
-import { buildPluginCommandCenterContributions } from "./contributions";
+import {
+  buildPluginCommandCenterContributions,
+  buildVcsCommandCenterContributions,
+} from "./contributions";
 import { getFocusedAgentId } from "./context";
 import { createPluginNavigation } from "../navigation";
 
@@ -48,6 +58,39 @@ export function PluginCommandCenterActions() {
     [serverId],
   );
   const toast = useToast();
+  const { t } = useTranslation();
+  const commandCenterOpen = useKeyboardShortcutsStore((state) => state.commandCenterOpen);
+  const vcs = useWorkspaceVcsActions(
+    serverId ?? "",
+    workspaceId ?? "",
+    commandCenterOpen && workspaceExists,
+    "command-center",
+  );
+  const vcsActions = useMemo(
+    () =>
+      buildVcsCommandCenterContributions({
+        items: vcs.items,
+        views: vcs.views,
+        openView(providerId, view) {
+          if (serverId && workspaceId)
+            openWorkspaceVcsView({ serverId, workspaceId, providerId, view });
+        },
+        open(providerId, actionId) {
+          if (serverId && workspaceId)
+            openWorkspaceVcsAction({ serverId, workspaceId, providerId, actionId });
+        },
+        reportUnavailable(reason) {
+          toast.error(reason ?? t("vcs.actionUnavailable"));
+        },
+      }),
+    [vcs.items, vcs.views, serverId, workspaceId, toast, t],
+  );
+  useCommandCenterActions({
+    sourceId: `vcs:${serverId}:${workspaceId}`,
+    enabled: commandCenterOpen && workspaceExists,
+    actions: vcsActions,
+  });
+
   const actions = useMemo(() => {
     if (!client || !serverId || !stateSource) return [];
     return buildPluginCommandCenterContributions({

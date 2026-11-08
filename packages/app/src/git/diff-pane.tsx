@@ -94,7 +94,8 @@ import type { WorkspaceTabPlacement } from "@/stores/workspace-layout-actions";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { isWeb } from "@/constants/platform";
-import { usePublishWorkingDiffAttachment, useWorkingDiff } from "@/git/use-working-diff";
+import { useWorkingDiff } from "@/git/use-working-diff";
+import { usePublishReviewAttachment } from "@/review/workspace-attachment";
 import type { CheckoutStatusPayload } from "@/git/use-status-query";
 import { DiffTooLargeState } from "@/git/diff-too-large-state";
 import { openDesktopTarget, useDesktopOpenTargets } from "@/workspace/desktop-open-targets";
@@ -1595,7 +1596,7 @@ export function ChangesSurface({
     ignoreWhitespace: preferences.hideWhitespace,
     enabled: enabled !== false,
   });
-  usePublishWorkingDiffAttachment({
+  usePublishReviewAttachment({
     serverId,
     workspaceId: workspaceId ?? undefined,
     cwd,

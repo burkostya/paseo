@@ -1,4 +1,4 @@
-import { memo, type ReactElement, useCallback, useMemo, useState } from "react";
+import { memo, type ReactElement, type ReactNode, useCallback, useMemo, useState } from "react";
 import {
   Text,
   View,
@@ -33,6 +33,7 @@ import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 
 export interface FileHeaderProps {
   file: ParsedDiffFile;
+  renderFileActions?: (path: string, kind: "file" | "directory") => ReactNode;
   workspaceFileDragScope?: { serverId: string; workspaceId: string };
   bodyVisible: boolean;
   showsBodyState?: boolean;
@@ -136,6 +137,7 @@ function fileChange(file: ParsedDiffFile): "added" | "deleted" | "modified" {
 
 function FileHeaderMenu({
   file,
+  renderFileActions,
   onOpenFile,
   onOpenToSide,
   onAddToChat,
@@ -165,6 +167,7 @@ function FileHeaderMenu({
   );
   return (
     <FileActionsContextMenuContent
+      extraActions={renderFileActions?.(file.path, "file")}
       fileKind="file"
       fileExists={!file.isDeleted}
       onOpenFile={onOpenFile ? openFile : undefined}

@@ -4783,3 +4783,38 @@ describe("ForgeService", () => {
     ).rejects.toThrow("Unable to resolve GitHub repository for pull request creation");
   });
 });
+
+it("uses the publication repository without probing a Git checkout", async () => {
+  const runner = createRunner([
+    JSON.stringify({
+      url: "https://api.github.test/repos/acme/selected/pulls/7",
+      html_url: "https://github.test/acme/selected/pull/7",
+      number: 7,
+    }),
+  ]);
+  const service = createGitHubService({
+    repositoryUrl: "https://github.test/acme/selected",
+    runner: runner.runner,
+    resolveGhPath: async () => "/gh",
+    resolveRepoSlug: async () => {
+      throw new Error("Must not discover Git");
+    },
+  });
+  try {
+    await expect(
+      service.createPullRequest({
+        cwd: "/jj/workspace",
+        title: "Task",
+        head: "feature",
+        base: "main",
+      }),
+    ).resolves.toEqual({ url: "https://github.test/acme/selected/pull/7", number: 7 });
+    expect(runner.calls).toHaveLength(1);
+    expect(runner.calls[0]).toMatchObject({
+      args: expect.arrayContaining(["repos/acme/selected/pulls"]),
+      envOverlay: { GH_HOST: "github.test", GH_REPO: "github.test/acme/selected" },
+    });
+  } finally {
+    service.dispose();
+  }
+});

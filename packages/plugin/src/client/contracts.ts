@@ -195,6 +195,9 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
   ): PluginButtonRegistration<PluginText>;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution<PluginText>): PluginCleanup;
   addTheme(contribution: PluginThemeContribution<PluginText>): PluginCleanup;
+  addVcsContribution(
+    contribution: import("./vcs.js").PluginVcsContribution<PluginText>,
+  ): PluginCleanup;
   addFilePanel(contribution: PluginFilePanelContribution<PluginText>): PluginCleanup;
   addTimelineTransformer<ItemType extends AgentTimelineItem["type"]>(
     contribution: PluginTimelineTransformerContribution<ItemType>,

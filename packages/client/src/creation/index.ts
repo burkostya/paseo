@@ -18,7 +18,13 @@ export interface CreationResult {
   requestId?: string;
 }
 interface Dependencies {
-  supports: (feature: "creationLifecycle" | "agentRequestReceipts") => boolean;
+  supports: (
+    feature:
+      | "creationLifecycle"
+      | "agentRequestReceipts"
+      | "vcsWorkingCopies"
+      | "vcsWorkingCopySelection",
+  ) => boolean;
   requestId: () => string;
   request: (kind: Kind, input: Record<string, unknown>) => Promise<CreationResult>;
   observe: (
@@ -58,6 +64,16 @@ export class CreationClient {
     return this.start("agent", request, onEvent, () => this.legacyAgent(request));
   }
   createWorkspace(input: CreateWorkspaceRequestOptions): Promise<CreationResult> {
+    if (input.source.kind === "working-copy" && !this.deps.supports("vcsWorkingCopies"))
+      return Promise.reject(new Error("Update the host to create VCS working copies."));
+    if (
+      input.source.kind === "working-copy" &&
+      input.source.providerId &&
+      !this.deps.supports("vcsWorkingCopySelection")
+    )
+      return Promise.reject(
+        new Error("Update the host to create a working copy with a selected VCS provider."),
+      );
     const { onEvent, ...request } = input;
     return this.start("workspace", request, onEvent, async (operation) => {
       if (request.workspaceId || request.agent?.agentId)

@@ -1,3 +1,5 @@
+import type { WorkspaceVcsService } from "../workspace-vcs-service.js";
+import type { WorkspacePublicationStatus } from "../workspace-publication-service.js";
 import type { Logger } from "pino";
 
 import type { AgentManager } from "../agent/agent-manager.js";
@@ -18,6 +20,7 @@ import { isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
 import type { WorkspaceArchiveContext } from "../workspace-registry.js";
 
 export interface AutoArchiveArchiveOptions {
+  vcs?: WorkspaceVcsService;
   paseoHome: string;
   paseoWorktreesBaseRoot?: string;
   daemonConfigStore: DaemonConfigStore;
@@ -69,6 +72,16 @@ export async function archiveIfSafe(input: {
     return;
   }
 
+  const attached = (await options.listActiveWorkspaces()).find(
+    (workspace) => workspace.workspaceId === workspaceId,
+  );
+  // A provider-managed copy must be judged by its own publication state, including in colocated repositories.
+  if (attached?.vcsWorkingCopy) return;
+  const providerId =
+    attached?.projectId && options.vcs
+      ? (await options.vcs.getProjectSelection(attached.projectId)).providerId
+      : attached?.vcsBinding?.providerId;
+  if (providerId && providerId !== "git") return;
   const ownership = await deps.isPaseoOwnedWorktreeCwd(cwd, {
     paseoHome: options.paseoHome,
     worktreesRoot: options.paseoWorktreesBaseRoot,
@@ -76,6 +89,49 @@ export async function archiveIfSafe(input: {
   if (!ownership.allowed) {
     return;
   }
+
+  await archiveMergedWorkspace({ workspaceId, cwd, pullRequest, options, log, deps });
+}
+
+export async function archivePublicationIfSafe(input: {
+  event: WorkspacePublicationStatus;
+  options: AutoArchiveArchiveOptions;
+  log: Logger;
+  deps?: ArchiveIfSafeDependencies;
+}): Promise<void> {
+  const { event, options, log } = input;
+  if (!event.status?.isMerged || !options.vcs) return;
+  const canArchive = () =>
+    options.vcs!.publication.canArchive(event.workspaceId, event.binding.providerId, event.target);
+  if (!(await canArchive())) return;
+  const fresh = await options.vcs.publication.status(
+    event.workspaceId,
+    event.binding,
+    event.target,
+    { force: true },
+  );
+  if (!fresh.status?.isMerged || fresh.status.url !== event.status.url) return;
+  await archiveMergedWorkspace({
+    workspaceId: event.workspaceId,
+    cwd: event.binding.cwd,
+    pullRequest: fresh.status,
+    options,
+    log,
+    deps: input.deps ?? defaultDependencies,
+    canArchive,
+  });
+}
+
+async function archiveMergedWorkspace(input: {
+  workspaceId: string;
+  cwd: string;
+  pullRequest: { url: string; headRefName: string };
+  options: AutoArchiveArchiveOptions;
+  log: Logger;
+  deps: ArchiveIfSafeDependencies;
+  canArchive?: () => Promise<boolean>;
+}): Promise<void> {
+  const { workspaceId, cwd, pullRequest, options, log, deps } = input;
 
   try {
     const autoArchivedChangeRequestUrl = await options.getAutoArchivedChangeRequestUrl(workspaceId);
@@ -85,6 +141,7 @@ export async function archiveIfSafe(input: {
 
     await deps.archiveByScope(
       {
+        vcs: options.vcs,
         paseoHome: options.paseoHome,
         paseoWorktreesBaseRoot: options.paseoWorktreesBaseRoot,
         github: options.github,
@@ -93,10 +150,15 @@ export async function archiveIfSafe(input: {
         agentStorage: options.agentStorage,
         findWorkspaceIdForCwd: options.findWorkspaceIdForCwd,
         listActiveWorkspaces: options.listActiveWorkspaces,
-        archiveWorkspaceRecord: (workspaceIdToArchive) =>
-          options.archiveWorkspaceRecord(workspaceIdToArchive, {
+        archiveWorkspaceRecord: async (workspaceIdToArchive) => {
+          if (input.canArchive && !(await input.canArchive()))
+            throw new Error(
+              "Working copy changed before auto-archive; keeping the workspace active",
+            );
+          await options.archiveWorkspaceRecord(workspaceIdToArchive, {
             autoArchivedChangeRequestUrl: pullRequest.url,
-          }),
+          });
+        },
         emitWorkspaceUpdatesForWorkspaceIds: options.emitWorkspaceUpdatesForWorkspaceIds,
         markWorkspaceArchiving: options.markWorkspaceArchiving,
         clearWorkspaceArchiving: options.clearWorkspaceArchiving,

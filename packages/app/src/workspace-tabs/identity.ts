@@ -1,5 +1,6 @@
 import { normalizeWorkspaceFileLocation, workspaceFileLocationsEqual } from "@/workspace/file-open";
 import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/workspace-tabs/model";
+import { vcsComparisonRequestSchema, vcsViewRequestSchema } from "@/vcs/state";
 
 export function normalizeWorkspaceTabTarget(
   value: WorkspaceTabTarget | null | undefined,
@@ -141,7 +142,7 @@ function secondaryWorkspaceTabTargetsEqual(
     return workspaceFileLocationsEqual(left, right);
   }
   if (left.kind === "working_diff" && right.kind === "working_diff") {
-    return left.focusPath === right.focusPath && left.focusRequestId === right.focusRequestId;
+    return workingDiffTargetsEqual(left, right);
   }
   if (left.kind === "files" && right.kind === "files") {
     return true;
@@ -263,15 +264,40 @@ function normalizeFileTabTarget(
   return location ? { kind: "file", ...location } : null;
 }
 
+function workingDiffTargetsEqual(
+  left: Extract<WorkspaceTabTarget, { kind: "working_diff" }>,
+  right: Extract<WorkspaceTabTarget, { kind: "working_diff" }>,
+): boolean {
+  return (
+    left.focusPath === right.focusPath &&
+    left.focusRequestId === right.focusRequestId &&
+    left.vcsAction?.providerId === right.vcsAction?.providerId &&
+    left.vcsAction?.actionId === right.vcsAction?.actionId &&
+    left.vcsAction?.requestId === right.vcsAction?.requestId &&
+    JSON.stringify(left.vcsComparison) === JSON.stringify(right.vcsComparison) &&
+    JSON.stringify(left.vcsView) === JSON.stringify(right.vcsView)
+  );
+}
+
 function normalizeWorkingDiffTabTarget(
   value: Extract<WorkspaceTabTarget, { kind: "working_diff" }>,
 ): WorkspaceTabTarget | null {
   const focusPath = trimNonEmpty(value.focusPath)?.replace(/\\/g, "/") ?? null;
   const focusRequestId = normalizePositiveInteger(value.focusRequestId);
+  const providerId = trimNonEmpty(value.vcsAction?.providerId);
+  const actionId = trimNonEmpty(value.vcsAction?.actionId);
+  const requestId = trimNonEmpty(value.vcsAction?.requestId);
+  const comparison = vcsComparisonRequestSchema.safeParse(value.vcsComparison);
+  const view = vcsViewRequestSchema.safeParse(value.vcsView);
   return {
     kind: "working_diff" as const,
     ...(focusPath ? { focusPath } : {}),
     ...(focusRequestId ? { focusRequestId } : {}),
+    ...(comparison.success ? { vcsComparison: comparison.data } : {}),
+    ...(view.success ? { vcsView: view.data } : {}),
+    ...(providerId && actionId && requestId
+      ? { vcsAction: { providerId, actionId, requestId } }
+      : {}),
   };
 }
 
