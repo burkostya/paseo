@@ -3844,6 +3844,7 @@ export const ServerInfoStatusPayloadSchema = z
         vcsObservation: z.boolean().optional(),
         vcsWorkingCopies: z.boolean().optional(),
         vcsWorkingCopySources: z.boolean().optional(),
+        vcsComparisonResolution: z.boolean().optional(),
         vcsComparisonSettings: z.boolean().optional(),
         vcsActionPreview: z.boolean().optional(),
         vcsComparisonContext: z.boolean().optional(),

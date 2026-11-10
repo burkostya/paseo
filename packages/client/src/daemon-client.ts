@@ -7809,16 +7809,34 @@ function assertVcsCapabilities(
   request: VcsClientRequest,
   features: NonNullable<ServerInfoStatusPayload["features"]>,
 ) {
-  if (request.type === "vcs.actions.preview.request" && features.vcsActionPreview !== true)
-    throw new Error("Update the host to preview VCS actions.");
-  if (request.type === "vcs.comparison.context.request" && features.vcsComparisonContext !== true)
-    throw new Error("Update the host to read VCS comparison context.");
-  if (
-    (request.type === "vcs.comparison.get.request" ||
-      request.type === "vcs.comparison.set.request") &&
-    features.vcsComparisonSettings !== true
-  )
-    throw new Error("Update the host to save VCS comparison settings.");
+  const comparisonCapabilities: Record<
+    string,
+    { available: boolean | undefined; purpose: string }
+  > = {
+    "vcs.comparison.resolve.request": {
+      available: features.vcsComparisonResolution,
+      purpose: "resolve VCS comparisons",
+    },
+    "vcs.actions.preview.request": {
+      available: features.vcsActionPreview,
+      purpose: "preview VCS actions",
+    },
+    "vcs.comparison.context.request": {
+      available: features.vcsComparisonContext,
+      purpose: "read VCS comparison context",
+    },
+    "vcs.comparison.get.request": {
+      available: features.vcsComparisonSettings,
+      purpose: "save VCS comparison settings",
+    },
+    "vcs.comparison.set.request": {
+      available: features.vcsComparisonSettings,
+      purpose: "save VCS comparison settings",
+    },
+  };
+  const capability = comparisonCapabilities[request.type];
+  if (capability && capability.available !== true)
+    throw new Error(`Update the host to ${capability.purpose}.`);
   if (features.vcsProviders !== true) {
     throw new Error("Update the host to use VCS providers.");
   }

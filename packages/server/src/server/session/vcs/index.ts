@@ -1,3 +1,4 @@
+import { savedVcsComparison } from "../../vcs-comparison-settings.js";
 import { readComparisonContext } from "./comparison-context.js";
 import { handleComparisonSettings } from "./comparison-settings.js";
 import { resolveWorktreeCreationIntent } from "../../resolve-worktree-creation-intent.js";
@@ -26,6 +27,8 @@ interface VcsRequestDependencies {
 
 function projectResult(response: VcsResponse, request: WorkspaceVcsRequest): unknown {
   switch (response.kind) {
+    case "comparison.resolved":
+      return response.resolved;
     case "actions.preview":
       return response.preview;
     case "publication.remotes":
@@ -123,6 +126,19 @@ async function invokeWorkspaceRequest(
             version: request.version,
           });
           break;
+        case "vcs.comparison.resolve.request": {
+          const project = await deps.projects.get(current.projectId);
+          if (!project) throw new Error("Project is unavailable");
+          const settings =
+            savedVcsComparison(current, providerId) ?? savedVcsComparison(project, providerId);
+          response = await plugins.invokeVcs(providerId, {
+            kind: "comparison.resolve",
+            binding,
+            input: request.input,
+            settings,
+          });
+          break;
+        }
         case "vcs.diff.get.request":
           response = await plugins.invokeVcs(providerId, {
             kind: "diff",

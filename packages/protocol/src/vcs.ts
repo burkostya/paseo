@@ -55,6 +55,21 @@ export const VcsComparisonSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("revision"), revision: z.string() }),
   z.object({ kind: z.literal("range"), from: z.string(), to: z.string() }),
 ]);
+export const VcsComparisonResolveInputSchema = z.object({
+  mode: z.enum(["task", "working-copy", "change-request"]),
+  baseRef: z.string().min(1).max(1024).optional(),
+});
+export const VcsResolvedComparisonSchema = z.object({
+  comparison: VcsComparisonSchema,
+  description: z.string(),
+  baseRef: z.string().nullable(),
+  baseRevision: z.string().nullable(),
+  mergeBaseRevision: z.string().nullable(),
+  headRevision: z.string().nullable(),
+  sourceUrl: z.string().nullable(),
+});
+export type VcsComparisonResolveInput = z.infer<typeof VcsComparisonResolveInputSchema>;
+export type VcsResolvedComparison = z.infer<typeof VcsResolvedComparisonSchema>;
 export const VcsSnapshotSchema = z.object({
   binding: VcsBindingSchema,
   version: z.string(),
@@ -164,6 +179,12 @@ export const VcsObservationPlanSchema = z.object({
 });
 export const VcsRequestSchema = z.discriminatedUnion("kind", [
   z.object({
+    kind: z.literal("comparison.resolve"),
+    binding: VcsBindingSchema,
+    input: VcsComparisonResolveInputSchema,
+    settings: VcsDataSchema.nullable(),
+  }),
+  z.object({
     kind: z.literal("actions.preview"),
     binding: VcsBindingSchema,
     version: z.string(),
@@ -242,6 +263,7 @@ export const VcsRequestSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("cancel"), operationId: z.string() }),
 ]);
 export const VcsResponseSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("comparison.resolved"), resolved: VcsResolvedComparisonSchema }),
   z.object({ kind: z.literal("actions.preview"), preview: VcsActionPreviewSchema }),
   z.object({ kind: z.literal("comparison-settings"), value: VcsDataSchema.nullable() }),
   z.object({ kind: z.literal("working-copy.source"), source: VcsWorkingCopySourceSchema }),

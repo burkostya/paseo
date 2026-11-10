@@ -566,6 +566,9 @@ export class PluginService {
     if (response.kind === "error") throw new VcsError(response.error);
     let kind: VcsResponse["kind"];
     switch (request.kind) {
+      case "comparison.resolve":
+        kind = "comparison.resolved";
+        break;
       case "comparison-settings.validate":
         kind = "comparison-settings";
         break;

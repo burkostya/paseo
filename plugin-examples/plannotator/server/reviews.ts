@@ -1,251 +1,527 @@
-import { spawn, execFile, type ChildProcess } from "node:child_process";
-import { once } from "node:events";
-import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
-import type { PaseoAgentHandle } from "@getpaseo/client";
-import { reviewState, type ReviewState } from "../shared/review";
-import { decision, reviewUrl } from "./contract";
-const exec = promisify(execFile);
-interface ReviewApi {
-  agents: {
-    ref(
-      id: string,
-    ): Pick<PaseoAgentHandle, "refresh" | "workspaceId" | "archivedAt" | "cwd" | "send">;
-  };
-}
-const active = new Set<ReviewState["status"]>([
-  "starting",
-  "reviewing",
-  "sending",
-  "delivery-failed",
-]);
-export function createReviews(environment: NodeJS.ProcessEnv = process.env) {
-  const records = new Map<string, ReviewState>();
-  const children = new Map<string, ChildProcess>();
-  const starting = new Map<string, Promise<ReviewState>>();
-  const writes = new Map<string, Promise<void>>();
-  const directory = join(
-    environment.PASEO_HOME ?? join(homedir(), ".paseo"),
-    "plugin-data",
-    "plannotator",
-  );
-  let stopped = false;
-  function file(agentId: string) {
-    return join(directory, `${encodeURIComponent(agentId)}.json`);
-  }
-  function save(state: ReviewState): Promise<void> {
-    const content = JSON.stringify(state);
-    const previous = writes.get(state.agentId) ?? Promise.resolve();
-    const task = previous
-      .catch(() => {})
-      .then(async () => {
-        await mkdir(directory, { recursive: true });
-        const temporary = `${file(state.agentId)}.${randomUUID()}.tmp`;
-        await writeFile(temporary, content, { mode: 0o600 });
-        await rename(temporary, file(state.agentId));
-        return undefined;
-      });
-    writes.set(state.agentId, task);
-    return task;
-  }
-  async function get(agentId: string, workspaceId: string) {
-    let state = records.get(agentId);
-    if (!state) {
-      try {
-        state = reviewState.parse(JSON.parse(await readFile(file(agentId), "utf8")));
-      } catch (error) {
-        if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
-        throw error;
-      }
-      if (state.status === "sending") {
-        state.status = "delivery-failed";
-        state.error = "Delivery outcome unknown after restart. Check the agent before retrying.";
-      } else if (state.status === "starting" || state.status === "reviewing") {
-        state.status = "failed";
-        state.url = null;
-        state.error = "Review interrupted by plugin restart.";
-      }
-      records.set(agentId, state);
+import { z } from "zod";
+import {
+  guideDocument,
+  type ReviewState,
+  type Revision,
+  type Target,
+  type Operation,
+  type SourceSelection,
+  type GuideDocument,
+  type Guide,
+  type Delivery,
+} from "../shared/review";
+import type { ReviewPorts, EngineSession } from "./ports";
+import { hash } from "./source";
+
+export function coverage(document: GuideDocument, revision: Revision): string[] {
+  const files = new Set(revision.files.map((file) => file.path));
+  const covered = new Set<string>();
+  for (const section of document.sections) {
+    const seen = new Set<string>();
+    for (const diff of section.diffs) {
+      if (!files.has(diff.file))
+        throw new Error(`Guide names a file outside this snapshot: ${diff.file}`);
+      if (seen.has(diff.file)) throw new Error(`Guide repeats a file in one section: ${diff.file}`);
+      seen.add(diff.file);
+      covered.add(diff.file);
     }
-    if (state.workspaceId !== workspaceId) return null;
+  }
+  return [...files].filter((file) => !covered.has(file));
+}
+export function carryViewed(previous: Revision, next: Revision) {
+  const viewed = new Set(previous.draft?.viewedFiles ?? []);
+  const fingerprints = new Map(previous.files.map((file) => [file.path, file.fingerprint]));
+  return next.files
+    .filter((file) => viewed.has(file.path) && fingerprints.get(file.path) === file.fingerprint)
+    .map((file) => file.path);
+}
+const guideResponse = z.object({
+  requestId: z.string(),
+  revisionId: z.string(),
+  patchHash: z.string(),
+  guide: guideDocument,
+  outsideSections: z.array(z.string()),
+});
+interface Running {
+  revisionId: string;
+  session: EngineSession;
+}
+export function createReviews(ports: ReviewPorts) {
+  const { source, engine, store, conversation } = ports;
+  const records = new Map<string, ReviewState>();
+  const sessions = new Map<string, Running>();
+  const tasks = new Map<string, Promise<unknown>>();
+  let stopped = false;
+  function serial<T>(agentId: string, task: () => Promise<T>): Promise<T> {
+    const next = (tasks.get(agentId) ?? Promise.resolve()).then(task);
+    tasks.set(
+      agentId,
+      next.catch(() => {}),
+    );
+    return next;
+  }
+  async function load(target: Target) {
+    let state = records.get(target.agentId) ?? null;
+    if (!state) {
+      state = await store.find(target.agentId);
+      if (state) {
+        for (const item of state.deliveries) {
+          if (item.status === "sending") {
+            item.status = "unknown";
+            item.error =
+              "Delivery outcome unknown after restart. Check the original agent before retrying.";
+          }
+        }
+        state.status = "paused";
+        state.url = null;
+        state.liveRevisionId = null;
+        records.set(target.agentId, state);
+        await store.save(state);
+      }
+    }
+    if (state && state.workspaceId !== target.workspaceId)
+      throw new Error("Review belongs to another workspace");
     return state;
   }
-  async function deliver(state: ReviewState, paseo: ReviewApi) {
-    state.status = "sending";
-    state.error = null;
-    await save(state);
+  async function expected(input: Operation) {
+    const state = await load(input);
+    if (!state || state.id !== input.reviewId || state.revisionId !== input.revisionId)
+      throw new Error("Review revision changed. Refresh the panel.");
+    return state;
+  }
+  function revisionOf(state: ReviewState, id = state.revisionId) {
+    const revision = state.revisions.find((item) => item.id === id);
+    if (!revision) throw new Error("Review revision is unavailable");
+    return revision;
+  }
+  async function capture(state: ReviewState) {
+    const running = sessions.get(state.agentId);
+    if (!running) return;
+    const revision = revisionOf(state, running.revisionId);
+    const engineState = await running.session.read();
+    revision.draft = engineState.draft;
+    for (const saved of engineState.guides) {
+      let item = revision.guides.find((guide) => guide.engineId === saved.id);
+      if (!item) {
+        item = {
+          id: randomUUID(),
+          source: "plannotator",
+          requestId: null,
+          status: "ready",
+          engineId: saved.id,
+          document: saved.document,
+          reviewed: saved.reviewed,
+          uncovered: [],
+          error: null,
+        };
+        revision.guides.push(item);
+      }
+      item.document = saved.document;
+      item.reviewed = saved.reviewed;
+      item.uncovered = coverage(saved.document, revision);
+    }
+  }
+  async function pause(state: ReviewState) {
+    const running = sessions.get(state.agentId);
+    if (!running) return;
     try {
-      if (stopped) throw new Error("Plugin stopped before delivery");
-      const agent = paseo.agents.ref(state.agentId);
-      await agent.refresh();
-      if (agent.workspaceId !== state.workspaceId || agent.archivedAt)
-        throw new Error("Original agent is unavailable in this workspace");
-      if (!state.message) throw new Error("Review has no message to deliver");
-      await agent.send(state.message, { messageId: state.id });
+      await capture(state);
+    } catch (error) {
+      state.error = `Review paused without a fresh state capture: ${String(error)}`;
+    } finally {
+      sessions.delete(state.agentId);
+      await running.session.stop();
+      state.url = null;
+      state.liveRevisionId = null;
+    }
+  }
+  async function deliver(state: ReviewState, item: Delivery) {
+    try {
+      await conversation.inspect(state);
+    } catch (error) {
+      item.status = "failed";
+      item.error = String(error);
+      state.status = "paused";
+      await store.save(state);
+      return;
+    }
+    item.status = "sending";
+    item.error = null;
+    state.status = "sending";
+    await store.save(state);
+    try {
+      await conversation.send(state, item.text, item.id);
+      item.status = "sent";
       state.status = "sent";
     } catch (error) {
-      state.status = "delivery-failed";
-      state.error = `Delivery failed or outcome unknown. Check the agent before retrying. ${String(error)}`;
+      item.status = "unknown";
+      item.error = `Delivery outcome unknown. Check the original agent before retrying. ${String(error)}`;
+      state.status = "paused";
     }
-    await save(state);
-    return state;
+    await store.save(state);
   }
-  async function launch(agentId: string, workspaceId: string, paseo: ReviewApi) {
-    const previous = await get(agentId, workspaceId);
-    if (previous && active.has(previous.status)) return previous;
-    const agent = paseo.agents.ref(agentId);
-    await agent.refresh();
-    if (!agent.cwd || agent.workspaceId !== workspaceId || agent.archivedAt)
-      throw new Error("Agent is unavailable in this workspace");
-    await exec("git", ["rev-parse", "--show-toplevel"], { cwd: agent.cwd, timeout: 5000 });
+  async function launch(state: ReviewState, viewRevisionId = state.revisionId) {
+    const existing = sessions.get(state.agentId);
+    if (existing?.revisionId === viewRevisionId) return state;
+    if (existing) await pause(state);
     if (stopped) throw new Error("Plugin is stopping");
-    const state: ReviewState = {
-      id: randomUUID(),
-      agentId,
-      workspaceId,
-      status: "starting",
-      url: null,
-      message: null,
-      error: null,
-    };
-    records.set(agentId, state);
-    const env: NodeJS.ProcessEnv = {
-      ...environment,
-      PLANNOTATOR_REMOTE: "0",
-      PLANNOTATOR_BROWSER: "none",
-    };
-    delete env.PLANNOTATOR_PORT;
-    const child = spawn(
-      "plannotator",
-      ["review", "--json", "--git", "--diff-type", "uncommitted", "--no-git-remote-check"],
-      { cwd: agent.cwd, env, shell: false, stdio: ["ignore", "pipe", "pipe"] },
-    );
-    children.set(state.id, child);
-    let output = "";
-    let diagnostics = "";
-    child.stdout.on("data", (chunk: Buffer) => {
-      output += chunk.toString();
-      if (output.length > 8 * 1024 * 1024) {
-        state.error = "Review output exceeded 8 MiB";
-        child.kill();
-      }
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-      diagnostics = (diagnostics + chunk.toString()).slice(-16000);
-    });
-    child.on("error", (error) => {
-      state.error = error.message;
-    });
-    child.on("close", (code) => {
-      children.delete(state.id);
-      void finish(code).catch((error) => {
-        state.status = "failed";
-        state.error = String(error);
-        void save(state).catch(() => {
-          state.error = `${state.error}; result could not be saved`;
-        });
+    const revision = revisionOf(state, viewRevisionId);
+    const agent = await conversation.inspect(state);
+    state.cwd = agent.cwd;
+    state.status = "starting";
+    state.error = null;
+    await store.save(state);
+    try {
+      const session = await engine.open({
+        cwd: agent.cwd,
+        revision,
+        directory: store.directory(state.id, revision.id),
       });
-    });
-    async function finish(code: number | null) {
-      state.url = null;
-      if (state.status === "cancelled" || state.status === "failed" || stopped) return;
-      if (code !== 0 || state.error) {
-        state.status = "failed";
-        state.error = state.error ?? (diagnostics || `Plannotator exited ${code}`);
-        await save(state);
-        return;
-      }
-      const result = decision.parse(JSON.parse(output));
-      if (result.decision === "dismissed") {
-        state.status = "cancelled";
-        await save(state);
-        return;
-      }
-      state.message = result.message;
-      await deliver(state, paseo);
-    }
-    for (let attempt = 0; attempt < 60 && state.status === "starting"; attempt++) {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      if (state.status !== "starting" || stopped) break;
-      try {
-        const result = await exec("plannotator", ["sessions", "--json"], {
-          env,
-          timeout: 3000,
-          maxBuffer: 1024 * 1024,
+      const running = { session, revisionId: revision.id };
+      sessions.set(state.agentId, running);
+      state.url = session.url;
+      state.liveRevisionId = revision.id;
+      state.status = "reviewing";
+      await store.save(state);
+      void session.result
+        .then(
+          (result) =>
+            serial(state.agentId, async () => {
+              if (stopped || sessions.get(state.agentId) !== running) return;
+              sessions.delete(state.agentId);
+              state.url = null;
+              state.liveRevisionId = null;
+              if (!result || result.decision === "dismissed") {
+                state.status = "paused";
+                await store.save(state);
+                return;
+              }
+              const resolved = revision.resolved;
+              const text = [
+                `Plannotator review · ${resolved?.description ?? "Legacy uncommitted changes"}`,
+                `Revision: ${revision.id}`,
+                `Patch SHA-256: ${revision.patchHash ?? "unknown"}`,
+                `Base: ${resolved?.baseRevision ?? "unknown"}`,
+                `Merge-base: ${resolved?.mergeBaseRevision ?? "not applicable"}`,
+                `HEAD: ${resolved?.headRevision ?? "unknown"}`,
+                "",
+                result.message,
+              ].join("\n");
+              const item: Delivery = {
+                id: randomUUID(),
+                revisionId: revision.id,
+                agentId: state.agentId,
+                text,
+                status: "pending",
+                error: null,
+              };
+              state.deliveries.push(item);
+              await store.save(state);
+              await deliver(state, item);
+            }),
+          (error) =>
+            serial(state.agentId, async () => {
+              if (stopped || sessions.get(state.agentId) !== running) return;
+              sessions.delete(state.agentId);
+              state.url = null;
+              state.liveRevisionId = null;
+              state.status = "failed";
+              state.error = String(error);
+              await store.save(state);
+            }),
+        )
+        .catch((error) => {
+          state.status = "failed";
+          state.error = `Could not persist review result: ${String(error)}`;
         });
-        const url = reviewUrl(result.stdout, child.pid ?? -1);
-        if (url && state.status === "starting") {
-          state.url = url;
-          state.status = "reviewing";
-        }
-      } catch (error) {
-        state.error = String(error);
-        break;
-      }
-    }
-    if (state.status === "starting") {
+      return state;
+    } catch (error) {
       state.status = "failed";
-      state.error = state.error ?? "Timed out waiting for the review URL";
-      child.kill();
+      state.error = String(error);
+      state.url = null;
+      await store.save(state);
+      throw error;
     }
-    if (state.status === "reviewing" || state.status === "failed") await save(state);
-    return state;
   }
-  function start(agentId: string, workspaceId: string, paseo: ReviewApi) {
-    const pending = starting.get(agentId);
-    if (pending)
-      return pending.then((state) => {
-        if (state.workspaceId !== workspaceId)
-          throw new Error("Review belongs to another workspace");
-        return state;
+  async function snapshot(state: ReviewState, selection: SourceSelection) {
+    const saved = await source.snapshot(state, selection);
+    const patchHash = hash(saved.patch);
+    const previous = state.revisions.find((item) => item.id === state.revisionId);
+    if (previous?.patchHash === patchHash) return false;
+    const id = randomUUID();
+    const revision: Revision = {
+      id,
+      createdAt: new Date().toISOString(),
+      selection,
+      resolved: saved.resolved,
+      patchHash,
+      patchPath: await store.patch(state.id, id, saved.patch),
+      files: saved.files,
+      draft: null,
+      guides: [],
+    };
+    if (previous) {
+      const viewedFiles = carryViewed(previous, revision);
+      if (viewedFiles.length) revision.draft = { codeAnnotations: [], viewedFiles, ts: Date.now() };
+      for (const guide of previous.guides)
+        if (guide.status === "pending") guide.status = "cancelled";
+    }
+    state.revisions.push(revision);
+    state.revisionId = id;
+    state.error = null;
+    state.status = "paused";
+    await store.save(state);
+    return true;
+  }
+  async function pendingGuides(state: ReviewState) {
+    const revision = revisionOf(state);
+    for (const guide of revision.guides.filter((item) => item.status === "pending")) {
+      const path = join(
+        store.directory(state.id, revision.id),
+        "requests",
+        guide.requestId!,
+        "guide.json",
+      );
+      try {
+        const raw = await store.readGuide(path);
+        if (raw === null) continue;
+        const response = guideResponse.parse(raw);
+        if (
+          response.requestId !== guide.requestId ||
+          response.revisionId !== revision.id ||
+          response.patchHash !== revision.patchHash
+        )
+          throw new Error("Guide belongs to another request or revision");
+        const uncovered = coverage(response.guide, revision);
+        if (
+          new Set(response.outsideSections).size !== response.outsideSections.length ||
+          JSON.stringify([...response.outsideSections].sort()) !==
+            JSON.stringify([...uncovered].sort())
+        )
+          throw new Error("Guide must list every uncovered file in outsideSections");
+        await launch(state);
+        const running = sessions.get(state.agentId)!;
+        const engineId = await running.session.importGuide(response.guide);
+        Object.assign(guide, {
+          status: "ready",
+          engineId,
+          document: response.guide,
+          uncovered,
+          reviewed: response.guide.sections.map(() => false),
+        });
+      } catch (error) {
+        guide.status = "failed";
+        guide.error = String(error);
+      }
+    }
+  }
+  let polling = false;
+  const timer = setInterval(() => {
+    if (polling || stopped) return;
+    polling = true;
+    void Promise.all(
+      [...records.values()].map((state) =>
+        serial(state.agentId, async () => {
+          if (stopped) return;
+          const before = JSON.stringify(state);
+          try {
+            await pendingGuides(state);
+            await capture(state);
+          } catch (error) {
+            state.error = `Could not save live review state: ${String(error)}`;
+          }
+          if (before !== JSON.stringify(state)) await store.save(state);
+        }),
+      ),
+    )
+      .catch((error) => {
+        for (const state of records.values())
+          state.error = `Review state could not be persisted: ${String(error)}`;
+      })
+      .finally(() => {
+        polling = false;
       });
-    const task = launch(agentId, workspaceId, paseo).finally(() => starting.delete(agentId));
-    starting.set(agentId, task);
-    return task;
-  }
-  async function operate(
-    agentId: string,
-    workspaceId: string,
-    id: string,
-    retry: boolean,
-    paseo: ReviewApi,
-  ) {
-    const state = await get(agentId, workspaceId);
-    if (!state || state.id !== id) throw new Error("Review is no longer current");
-    if (retry) {
-      if (state.status !== "delivery-failed") throw new Error("This review cannot be retried");
-      return deliver(state, paseo);
-    }
-    if (state.status !== "starting" && state.status !== "reviewing")
-      throw new Error("This review cannot be cancelled");
-    state.status = "cancelled";
-    state.url = null;
-    const child = children.get(id);
-    if (child) {
-      const timer = setTimeout(() => child.kill("SIGKILL"), 2000);
-      child.once("close", () => clearTimeout(timer));
-      child.kill();
-    }
-    await save(state);
-    return state;
-  }
-  async function stop() {
-    stopped = true;
-    await Promise.all(
-      [...children.values()].map(async (child) => {
-        const closed = once(child, "close");
-        const timer = setTimeout(() => child.kill("SIGKILL"), 2000);
-        child.kill();
-        try {
-          await closed;
-        } finally {
-          clearTimeout(timer);
-        }
+  }, 1000);
+  timer.unref();
+  return {
+    prepare: source.prepare,
+    get: (target: Target) => serial(target.agentId, () => load(target)),
+    start: (target: Target, selection: SourceSelection) =>
+      serial(target.agentId, async () => {
+        const old = await load(target);
+        if (old) return launch(old);
+        const ready = await source.prepare(target, selection);
+        if (ready.error) throw new Error(ready.error);
+        const state: ReviewState = {
+          version: 2,
+          id: randomUUID(),
+          ...target,
+          workspaceName: ready.workspaceName,
+          agentName: ready.agentName,
+          cwd: ready.cwd,
+          revisionId: "",
+          status: "paused",
+          liveRevisionId: null,
+          url: null,
+          error: null,
+          revisions: [],
+          deliveries: [],
+        };
+        await snapshot(state, selection);
+        records.set(target.agentId, state);
+        return launch(state);
       }),
-    );
-  }
-  return { get, start, operate, stop };
+    open: (input: Operation, viewRevisionId?: string) =>
+      serial(input.agentId, async () => launch(await expected(input), viewRevisionId)),
+    update: (input: Operation, selection: SourceSelection) =>
+      serial(input.agentId, async () => {
+        const state = await expected(input);
+        await pause(state);
+        state.status = "paused";
+        await store.save(state);
+        try {
+          await snapshot(state, selection);
+        } catch (error) {
+          state.error = String(error);
+          await store.save(state);
+          throw error;
+        }
+        return launch(state);
+      }),
+    cancel: (input: Operation) =>
+      serial(input.agentId, async () => {
+        const state = await expected(input);
+        await pause(state);
+        state.status = "cancelled";
+        for (const guide of revisionOf(state).guides)
+          if (guide.status === "pending") guide.status = "cancelled";
+        await store.save(state);
+        return state;
+      }),
+    retry: (input: Operation, deliveryId: string) =>
+      serial(input.agentId, async () => {
+        const state = await expected(input);
+        const item = state.deliveries.find((candidate) => candidate.id === deliveryId);
+        if (!item || !["failed", "unknown", "pending"].includes(item.status))
+          throw new Error("Delivery cannot be retried");
+        await deliver(state, item);
+        return state;
+      }),
+    requestGuide: (input: Operation) =>
+      serial(input.agentId, async () => {
+        const state = await expected(input);
+        const agent = await conversation.inspect(state);
+        if (agent.busy)
+          throw new Error(
+            "The original agent is busy. Request the Guide after its current turn finishes.",
+          );
+        const revision = revisionOf(state);
+        if (!revision.patchPath || !revision.patchHash)
+          throw new Error("Update the legacy review before requesting a Guide");
+        if (revision.guides.some((item) => item.status === "pending"))
+          throw new Error("A Guide request is already pending");
+        const requestId = randomUUID();
+        const example = {
+          requestId,
+          revisionId: revision.id,
+          patchHash: revision.patchHash,
+          guide: {
+            title: "Review guide",
+            intent: "Explain how to read the changes",
+            sections: [
+              {
+                title: "Behavior",
+                overview: "Why to read these changes first",
+                diffs: [{ file: revision.files[0].path, summary: "What to check" }],
+              },
+            ],
+          },
+          outsideSections: revision.files.slice(1).map((file) => file.path),
+        };
+        const files = await store.request(
+          state.id,
+          revision.id,
+          requestId,
+          JSON.stringify(
+            {
+              requestId,
+              revisionId: revision.id,
+              patchHash: revision.patchHash,
+              patchPath: revision.patchPath,
+              requestPath: join(
+                store.directory(state.id, revision.id),
+                "requests",
+                requestId,
+                "request.json",
+              ),
+              outputPath: join(
+                store.directory(state.id, revision.id),
+                "requests",
+                requestId,
+                "guide.json",
+              ),
+              comparison: revision.resolved,
+              manifest: revision.files,
+              outputExample: example,
+              outputSchema: z.toJSONSchema(guideResponse),
+            },
+            null,
+            2,
+          ),
+        );
+        const guide: Guide = {
+          id: randomUUID(),
+          source: "paseo-agent",
+          requestId,
+          status: "pending",
+          engineId: null,
+          document: null,
+          reviewed: [],
+          uncovered: [],
+          error: null,
+        };
+        revision.guides.push(guide);
+        await store.save(state);
+        const text = `Prepare a Guided Review for the exact saved patch described in ${files.input}. Read that JSON and its patchPath. Do not change task code. Group changes by meaning, explain the reading order and what to check. This Guide is not approval of the changes. Produce JSON in the outputExample shape; preserve requestId, revisionId and patchHash exactly. Use only manifest paths, list each file in a section or outsideSections, and do not repeat a file within a section. title/intent/title/overview/file/summary must be strings; sections and diffs are arrays. Write the complete result to ${files.output}.tmp, then atomically rename it to ${files.output}. Do not put the result only in chat.`;
+        try {
+          await conversation.send(state, text, requestId);
+        } catch (error) {
+          guide.status = "failed";
+          guide.error = `Guide request delivery failed or is unknown; no automatic retry. ${String(error)}`;
+        }
+        await store.save(state);
+        return state;
+      }),
+    cancelGuide: (input: Operation, requestId: string) =>
+      serial(input.agentId, async () => {
+        const state = await expected(input);
+        const guide = revisionOf(state).guides.find((item) => item.requestId === requestId);
+        if (!guide || guide.status !== "pending")
+          throw new Error("Guide request is no longer pending");
+        guide.status = "cancelled";
+        await store.save(state);
+        return state;
+      }),
+    async stop() {
+      stopped = true;
+      clearInterval(timer);
+      await Promise.all(
+        [...records.values()].map((state) =>
+          serial(state.agentId, async () => {
+            try {
+              await pause(state);
+            } catch (error) {
+              state.error = `Review paused without a fresh state capture: ${String(error)}`;
+            }
+            state.status = "paused";
+            state.url = null;
+            state.liveRevisionId = null;
+            await store.save(state);
+          }),
+        ),
+      );
+    },
+  };
 }

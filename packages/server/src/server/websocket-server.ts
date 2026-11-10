@@ -2080,6 +2080,7 @@ export class VoiceAssistantWebSocketServer {
         vcsObservation: true,
         vcsWorkingCopies: true,
         vcsWorkingCopySources: true,
+        vcsComparisonResolution: true,
         vcsComparisonSettings: true,
         vcsActionPreview: true,
         vcsComparisonContext: true,

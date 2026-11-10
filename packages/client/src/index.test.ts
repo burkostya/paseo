@@ -2285,3 +2285,50 @@ test("VCS comparison settings address project or workspace independently", async
     await client.close();
   }
 });
+
+test("VCS comparison resolution requires host support before sending", async () => {
+  const old = await connectClient({ vcsProviders: true });
+  try {
+    const count = old.ws.sent.length;
+    await expect(
+      old.client.workspaces.ref("w").vcs.comparison.resolve("git", { mode: "task" }),
+    ).rejects.toThrow("Update the host");
+    expect(old.ws.sent).toHaveLength(count);
+  } finally {
+    await old.client.close();
+  }
+});
+
+test("VCS comparison resolution returns pinned comparison metadata", async () => {
+  const { client, ws } = await connectClient({ vcsProviders: true, vcsComparisonResolution: true });
+  try {
+    const pending = client.workspaces
+      .ref("w")
+      .vcs.comparison.resolve("git", { mode: "task", baseRef: "refs/heads/base" });
+    const request = parseSentSessionMessage(ws.sent.at(-1));
+    expect(request).toMatchObject({
+      type: "vcs.comparison.resolve.request",
+      workspaceId: "w",
+      providerId: "git",
+      input: { mode: "task", baseRef: "refs/heads/base" },
+    });
+    const resolved = {
+      comparison: { kind: "range", from: "merge-base", to: "head" },
+      description: "base → task",
+      baseRef: "refs/heads/base",
+      baseRevision: "base",
+      mergeBaseRevision: "merge-base",
+      headRevision: "head",
+      sourceUrl: null,
+    };
+    ws.message(
+      sessionMessage({
+        type: "vcs.comparison.resolve.response",
+        payload: { requestId: request.requestId, result: resolved, error: null },
+      }),
+    );
+    await expect(pending).resolves.toEqual(resolved);
+  } finally {
+    await client.close();
+  }
+});

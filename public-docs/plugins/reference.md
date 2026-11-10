@@ -675,8 +675,25 @@ Use `paseo.workspaces.ref(id).vcs.comparison.get(providerId)` or
 Workspace defaults inherit from the project, then the provider. These records
 remain readable while the plugin is unloaded; writing requires an available
 provider. Saving for a different project owner fails instead of switching VCS.
-The effective saved envelope reaches `resolveComparison` as `defaults`. Git obtains
-its automatic base from its provider snapshot; stored explicit choices take precedence.
+
+### Resolved comparison snapshots
+
+On hosts advertising `features.vcsComparisonResolution`, call
+`paseo.workspaces.ref(id).vcs.comparison.resolve(providerId, { mode, baseRef? })`.
+The modes are `task`, `change-request`, and `working-copy`. `baseRef` overrides
+only this read. The provider receives the effective inherited saved settings in
+`resolveComparison(binding, input, settings, context)` and owns their interpretation.
+This optional read runs through the provider executor and must not fetch or checkout.
+
+The result contains `comparison`, `description`, nullable `baseRef`,
+`baseRevision`, `mergeBaseRevision`, `headRevision`, and `sourceUrl`.
+Pass `comparison` unchanged to `.vcs.diff(providerId, comparison)` and save the
+returned patch if it must survive provider snapshot expiry. Revision fields describe
+the resolved source; working-copy content is pinned by the provider comparison.
+Git uses the merge-base to the captured HEAD for tasks, and the attached PR/MR's
+locally recorded remote head for change requests. Missing remote refs require an
+explicit fetch by the user. Stored explicit bases take precedence over automatic
+bases for task mode; missing or ambiguous bases fail rather than guessing.
 
 ### Comparison context
 

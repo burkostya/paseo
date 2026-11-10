@@ -1,1 +1,1 @@
-{ "id": "plannotator", "requirements": { "paseo": ">=0.13.0" } }
+{ "id": "plannotator", "requirements": { "paseo": ">=0.15.2" } }

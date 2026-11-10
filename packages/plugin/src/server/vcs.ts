@@ -1,6 +1,7 @@
 import { listGitIgnoredFiles as gitIgnoredFiles } from "./git-files.js";
 import {
   VcsActionPreviewSchema,
+  VcsResolvedComparisonSchema,
   VcsDataSchema,
   VcsWorkingCopySourceSchema,
   VcsWorkingCopyCreateSchema,
@@ -76,6 +77,12 @@ export interface VcsHostApi {
   listLocalFiles(binding: VcsBinding, query: VcsLocalFilesQuery): Promise<string[]>;
 }
 export interface VcsProviderRegistration {
+  resolveComparison?(
+    binding: VcsBinding,
+    input: import("../vcs.js").VcsComparisonResolveInput,
+    settings: VcsData | null,
+    context: VcsContext,
+  ): Promise<import("../vcs.js").VcsResolvedComparison>;
   validateComparisonSettings?(
     binding: VcsBinding,
     value: VcsData,
@@ -170,6 +177,7 @@ export function createVcsHandler(provider: VcsProviderRegistration) {
     "observation",
     "localFiles",
     "validateComparisonSettings",
+    "resolveComparison",
   ] as const) {
     validateOptionalMethod(
       provider[method],
@@ -508,6 +516,19 @@ export function createVcsHandler(provider: VcsProviderRegistration) {
     }
     return serial(binding.repositoryId, async () => {
       if (request.kind === "actions.preview") return previewAction(request, binding);
+      if (request.kind === "comparison.resolve") {
+        if (!provider.resolveComparison)
+          throw new VcsError({
+            code: "unavailable",
+            message: "Provider cannot resolve comparisons",
+          });
+        return {
+          kind: "comparison.resolved",
+          resolved: VcsResolvedComparisonSchema.parse(
+            await provider.resolveComparison(binding, request.input, request.settings, context),
+          ),
+        };
+      }
       if (request.kind === "comparison-settings.validate") {
         if (!provider.validateComparisonSettings)
           throw new VcsError({

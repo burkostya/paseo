@@ -592,6 +592,11 @@ The Git plugin resolves automatic bases from cached host facts and its own refs,
 then publishes the result in its snapshot. Legacy descriptor projections remain
 for old clients. The review-key adapter uses the provider's resolved scope; keep
 those keys until an explicit migration preserves comments across modes and bases.
+Consumers that need a saved snapshot resolve comparisons through
+`workspaces.ref(id).vcs.comparison.resolve`, gated on
+`features.vcsComparisonResolution`. Keep provider settings opaque in consumers;
+the provider resolves inherited defaults and pins revisions. See the
+[resolved comparison contract](../public-docs/plugins/reference.md#resolved-comparison-snapshots).
 Git reconstructs frozen patches in a private index and object store for net
 base comparisons. Reading a diff must not stage files or reread the working tree.
 The shared surface gates on `features.vcsDiffFiles`

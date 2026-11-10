@@ -5877,6 +5877,103 @@ describe("VCS comparison settings", () => {
 });
 
 describe("Git provider comparison bases", () => {
+  it("resolves immutable task, working-copy and published PR comparisons without changing settings", async () => {
+    const { execCommand } = await import("@getpaseo/plugin/server");
+    const { createVcsHandler } = await import("@getpaseo/plugin/server/vcs");
+    const { createGitProvider } = await import("../../../../../plugins/git-vcs/server/provider.js");
+    const cwd = await mkdtemp(path.join(tmpdir(), "git-resolved-review-"));
+    temporaryDirectories.push(cwd);
+    const git = async (...args: string[]) =>
+      (await execCommand("git", ["-c", "commit.gpgsign=false", ...args], { cwd })).stdout.trim();
+    await git("init", "-b", "task");
+    await git("config", "user.name", "Test");
+    await git("config", "user.email", "test@example.invalid");
+    await writeFile(path.join(cwd, "one.txt"), "before\n");
+    await git("add", ".");
+    await git("commit", "-qm", "base");
+    const base = await git("rev-parse", "HEAD");
+    await git("branch", "base");
+    await writeFile(path.join(cwd, "one.txt"), "after\n");
+    await git("add", ".");
+    await git("commit", "-qm", "task");
+    const head = await git("rev-parse", "HEAD");
+    let facts: import("@getpaseo/plugin").VcsComparisonContext = {
+      workingCopy: null,
+      changeRequest: null,
+      changeRequestError: null,
+      observedHeadRef: "task",
+    };
+    const provider = createGitProvider({
+      comparisonContext: async () => facts,
+      resolveChangeRequest: async () => {
+        throw new Error("Must not fetch or resolve checkout");
+      },
+      listLocalFiles: async () => [],
+    });
+    const detection = await provider.detect(cwd, { signal: new AbortController().signal });
+    if (detection.status !== "available") throw new Error("Git must be available");
+    const binding = detection.binding;
+    const handler = createVcsHandler(provider);
+    const resolve = (
+      input: import("@getpaseo/plugin").VcsComparisonResolveInput,
+      settings: import("@getpaseo/plugin").VcsData | null = null,
+    ) => handler.handle({ kind: "comparison.resolve", binding, input, settings });
+    try {
+      await expect(resolve({ mode: "task" })).rejects.toThrow("Cannot uniquely identify");
+      const settings = { version: 1, data: { mode: "base", baseRef: "base" } };
+      const result = await resolve({ mode: "task" }, settings);
+      expect(result).toMatchObject({
+        kind: "comparison.resolved",
+        resolved: {
+          baseRef: "base",
+          baseRevision: base,
+          mergeBaseRevision: base,
+          headRevision: head,
+          comparison: { kind: "range", from: base, to: head },
+        },
+      });
+      if (result.kind !== "comparison.resolved") throw new Error("Expected a resolved comparison");
+      const diff = await handler.handle({
+        kind: "diff",
+        binding,
+        comparison: result.resolved.comparison,
+      });
+      expect(diff).toMatchObject({ kind: "diff", patch: expect.stringContaining("+after") });
+      expect(await git("status", "--porcelain")).toBe("");
+      await writeFile(path.join(cwd, "new.txt"), "untracked\n");
+      const working = await resolve({ mode: "working-copy" });
+      if (working.kind !== "comparison.resolved")
+        throw new Error("Expected working-copy comparison");
+      expect(
+        await handler.handle({ kind: "diff", binding, comparison: working.resolved.comparison }),
+      ).toMatchObject({ kind: "diff", patch: expect.stringContaining("+untracked") });
+      await git("remote", "add", "origin", "https://forge.test/team/repo.git");
+      await git("update-ref", "refs/remotes/origin/base", base);
+      await git("update-ref", "refs/remotes/origin/task", head);
+      facts = {
+        ...facts,
+        changeRequest: {
+          url: "https://forge.test/team/repo/pull/1",
+          baseRef: "base",
+          headRef: "task",
+        },
+      };
+      const pr = await resolve({ mode: "change-request" });
+      expect(pr).toMatchObject({
+        kind: "comparison.resolved",
+        resolved: { headRevision: head, sourceUrl: facts.changeRequest?.url },
+      });
+      await git("commit", "--allow-empty", "-qm", "unpublished");
+      expect(await resolve({ mode: "change-request" })).toMatchObject({
+        kind: "comparison.resolved",
+        resolved: { headRevision: head },
+      });
+      expect(settings.data.baseRef).toBe("base");
+    } finally {
+      handler.dispose();
+    }
+  });
+
   it("uses forge, recovery metadata and remote HEAD facts without host Git policy", async () => {
     const { execCommand } = await import("@getpaseo/plugin/server");
     const { createGitProvider } = await import("../../../../../plugins/git-vcs/server/provider.js");

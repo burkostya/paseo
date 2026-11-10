@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { decision, reviewUrl } from "./contract";
+import { z } from "zod";
+import { decision, reviewUrl, sessions as sessionList } from "./contract";
 describe("Plannotator 0.28.53 contract", () => {
   it("selects the review belonging to the child PID", () => {
     const raw = JSON.stringify([
@@ -24,127 +25,673 @@ describe("Plannotator 0.28.53 contract", () => {
 });
 
 import { afterEach, beforeEach, vi } from "vitest";
-import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { execFileSync } from "node:child_process";
-import { createReviews } from "./reviews";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { once } from "node:events";
+import { createServer } from "node:net";
+import { promisify } from "node:util";
+import { createReviews, coverage } from "./reviews";
+import { createEngine } from "./engine";
+import { openReviewForm } from "../client/model";
+import { createStore } from "./store";
+import { manifest } from "./source";
+import type { ReviewPorts, EngineState } from "./ports";
+import { revision as revisionSchema, type ReviewState, type Target } from "../shared/review";
+import type { VcsResolvedComparison } from "@getpaseo/plugin";
 
 describe("review lifecycle", () => {
   let root: string;
   let reviews: ReturnType<typeof createReviews>;
-  const send = vi.fn(async (_text: string, _options?: unknown) => {});
-  const api = {
-    agents: {
-      ref: (_id: string) => ({
-        cwd: root,
-        workspaceId: "workspace",
-        archivedAt: null,
-        refresh: async () => null,
-        send,
-      }),
-    },
+  let ports: ReviewPorts;
+  let patch: string;
+  let busy: boolean;
+  let failSend: boolean;
+  const target = { agentId: "a", workspaceId: "workspace" };
+  const sends: { target: Target; text: string; messageId: string }[] = [];
+  const opened: {
+    stopped: boolean;
+    state: EngineState;
+    finish: (result: z.infer<typeof decision> | null) => void;
+    fail: (error: Error) => void;
+    readError: Error | null;
+  }[] = [];
+  const resolved: VcsResolvedComparison = {
+    comparison: { kind: "range", from: "base", to: "head" },
+    description: "base → task",
+    baseRef: "base",
+    baseRevision: "base",
+    mergeBaseRevision: "base",
+    headRevision: "head",
+    sourceUrl: null,
   };
+  function diff(name: string, value: string) {
+    return `diff --git a/${name} b/${name}\n--- a/${name}\n+++ b/${name}\n@@ -1 +1 @@\n-before\n+${value}\n`;
+  }
+  function operation(state: ReviewState) {
+    return { ...target, reviewId: state.id, revisionId: state.revisionId };
+  }
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), "paseo-review-test-"));
-    await mkdir(join(root, "bin"));
-    execFileSync("git", ["init", "--quiet", root]);
-    await writeFile(
-      join(root, "bin", "plannotator"),
-      `#!${process.execPath}
-const fs = require('node:fs');
-const path = require('node:path');
-const root = process.env.PASEO_HOME;
-if (process.argv[2] === 'sessions') {
-  const sessions = fs.readdirSync(root).filter(f => f.endsWith('.session')).map(f => JSON.parse(fs.readFileSync(path.join(root, f))));
-  console.log(JSON.stringify(sessions));
-} else {
-  const file = path.join(root, process.pid + '.session');
-  fs.writeFileSync(file, JSON.stringify({ pid: process.pid, mode: 'review', url: 'http://localhost:' + (20000 + process.pid % 40000) }));
-  process.on('exit', () => { try { fs.unlinkSync(file); } catch {} });
-  process.on('SIGTERM', () => process.exit(143));
-  setInterval(() => {
-    const result = path.join(root, process.pid + '.result');
-    if (fs.existsSync(result)) { process.stdout.write(fs.readFileSync(result)); process.exit(0); }
-  }, 20);
-}
-`,
-      { mode: 0o700 },
-    );
-
-    send.mockClear();
-    reviews = createReviews({
-      ...process.env,
-      PATH: `${join(root, "bin")}:${process.env.PATH}`,
-      PASEO_HOME: root,
-    });
+    patch = diff("one.txt", "after") + diff("two.txt", "new");
+    busy = false;
+    failSend = false;
+    sends.length = 0;
+    opened.length = 0;
+    ports = {
+      store: createStore(root),
+      conversation: {
+        inspect: async () => ({ cwd: root, name: "Task agent", busy }),
+        async send(recipient, text, messageId) {
+          if (failSend) throw new Error("connection lost");
+          sends.push({ target: recipient, text, messageId });
+        },
+      },
+      source: {
+        prepare: async () => ({
+          cwd: root,
+          workspaceName: "Task workspace",
+          agentName: "Task agent",
+          agentBusy: busy,
+          refs: [],
+          resolved,
+          error: null,
+        }),
+        snapshot: async () => ({ resolved, patch, files: manifest(patch) }),
+      },
+      engine: {
+        async open({ revision }) {
+          let finish!: (result: z.infer<typeof decision> | null) => void;
+          let fail!: (error: Error) => void;
+          const result = new Promise<z.infer<typeof decision> | null>((resolve, reject) => {
+            finish = resolve;
+            fail = reject;
+          });
+          const engineState: EngineState = { draft: revision.draft, guides: [] };
+          const entry: (typeof opened)[number] = {
+            stopped: false,
+            state: engineState,
+            finish,
+            fail,
+            readError: null,
+          };
+          opened.push(entry);
+          return {
+            url: `http://localhost:${20000 + opened.length}/`,
+            result,
+            async read() {
+              if (entry.readError) throw entry.readError;
+              return entry.state;
+            },
+            async importGuide(document) {
+              const id = `guide-${entry.state.guides.length}`;
+              entry.state.guides.push({
+                id,
+                document,
+                reviewed: document.sections.map(() => false),
+              });
+              return id;
+            },
+            async stop() {
+              entry.stopped = true;
+              finish(null);
+            },
+          };
+        },
+      },
+    };
+    reviews = createReviews(ports);
   });
   afterEach(async () => {
-    await reviews?.stop();
+    await reviews.stop();
     await rm(root, { recursive: true, force: true });
   });
-  async function complete(url: string | null, result: unknown) {
-    for (const entry of await readdir(root)) {
-      if (!entry.endsWith(".session")) continue;
-      const session = JSON.parse(await readFile(join(root, entry), "utf8"));
-      if (`${session.url}/` === url)
-        await writeFile(join(root, entry.replace(".session", ".result")), JSON.stringify(result));
-    }
-  }
-  it("coalesces launches and delivers only the selected agent's result", async () => {
+  it("coalesces launches and delivers only to the original agent", async () => {
     const [first, duplicate] = await Promise.all([
-      reviews.start("a", "workspace", api),
-      reviews.start("a", "workspace", api),
+      reviews.start(target, { mode: "task" }),
+      reviews.start(target, { mode: "task" }),
     ]);
     expect(first.id).toBe(duplicate.id);
-    const second = await reviews.start("b", "workspace", api);
-    expect(first.url).not.toBe(second.url);
-    await complete(first.url, { decision: "annotated", message: "Check this line" });
+    expect(opened).toHaveLength(1);
+    await reviews.start({ ...target, agentId: "b" }, { mode: "task" });
+    opened[0].finish({ decision: "annotated", message: "Check this line" });
     await vi.waitFor(async () =>
-      expect((await reviews.get("a", "workspace"))?.status).toBe("sent"),
+      expect((await reviews.get(target))?.deliveries[0].status).toBe("sent"),
     );
-    expect(send).toHaveBeenCalledExactlyOnceWith("Check this line", { messageId: first.id });
-    expect((await reviews.get("b", "workspace"))?.status).toBe("reviewing");
+    expect(sends).toHaveLength(1);
+    expect(sends[0].target.agentId).toBe("a");
+    expect(sends[0].text).toContain("HEAD: head");
+    expect(sends[0].text).toContain("Check this line");
+    expect((await reviews.get({ ...target, agentId: "b" }))?.status).toBe("reviewing");
   });
-  it("retains delivery failures across restarts and retries explicitly", async () => {
-    send.mockRejectedValueOnce(new Error("connection lost"));
-    const state = await reviews.start("a", "workspace", api);
-    await complete(state.url, { decision: "annotated", message: "Saved feedback" });
-    await vi.waitFor(async () =>
-      expect((await reviews.get("a", "workspace"))?.status).toBe("delivery-failed"),
-    );
+  it("preserves the snapshot after launch failure and supports reopening", async () => {
+    const open = ports.engine.open;
+    ports.engine.open = async () => {
+      throw new Error("Plannotator CLI is not installed on PATH");
+    };
+    await expect(reviews.start(target, { mode: "task" })).rejects.toThrow("not installed");
+    const state = (await reviews.get(target))!;
+    expect(state.status).toBe("failed");
+    expect(state.error).toContain("not installed");
+    expect(state.revisions[0].files.map((file) => file.path)).toEqual(["one.txt", "two.txt"]);
+    expect(sends).toEqual([]);
+    ports.engine.open = open;
+    await reviews.open(operation(state));
+    expect(state.status).toBe("reviewing");
+    expect(state.error).toBeNull();
+  });
+  it("reports an engine crash without sending feedback or affecting another agent", async () => {
+    await reviews.start(target, { mode: "task" });
+    const other = { ...target, agentId: "b" };
+    await reviews.start(other, { mode: "task" });
+    opened[0].fail(new Error("Plannotator exited 1: invalid review response"));
+    await vi.waitFor(async () => expect((await reviews.get(target))?.status).toBe("failed"));
+    expect((await reviews.get(target))?.error).toContain("invalid review response");
+    expect((await reviews.get(target))?.url).toBeNull();
+    expect((await reviews.get(other))?.status).toBe("reviewing");
+    expect(opened[1].stopped).toBe(false);
+    expect(sends).toEqual([]);
+  });
+  it("stops owned processes even when their state endpoint has failed", async () => {
+    const state = await reviews.start(target, { mode: "task" });
+    opened[0].readError = new Error("draft endpoint unavailable");
     await reviews.stop();
-    reviews = createReviews({
-      ...process.env,
-      PATH: `${join(root, "bin")}:${process.env.PATH}`,
-      PASEO_HOME: root,
+    expect(opened[0].stopped).toBe(true);
+    expect(state.status).toBe("paused");
+    expect(state.error).toContain("draft endpoint unavailable");
+    expect(state.url).toBeNull();
+    expect(sends).toEqual([]);
+  });
+  it("preserves unknown delivery across restart and retries only explicitly", async () => {
+    failSend = true;
+    const state = await reviews.start(target, { mode: "task" });
+    opened[0].finish({ decision: "annotated", message: "Saved feedback" });
+    await vi.waitFor(async () =>
+      expect((await reviews.get(target))?.deliveries[0].status).toBe("unknown"),
+    );
+    const deliveryId = state.deliveries[0].id;
+    await reviews.stop();
+    reviews = createReviews(ports);
+    failSend = false;
+    expect((await reviews.get(target))?.deliveries[0].text).toContain("Saved feedback");
+    expect(sends).toHaveLength(0);
+    await reviews.retry(operation(state), deliveryId);
+    expect(sends).toHaveLength(1);
+    expect(state.deliveries[0].status).toBe("unknown");
+    expect((await reviews.get(target))?.deliveries[0].status).toBe("sent");
+  });
+  it("retains feedback when the original agent is unavailable before delivery", async () => {
+    const state = await reviews.start(target, { mode: "task" });
+    ports.conversation.inspect = async () => {
+      throw new Error("Original agent has been archived");
+    };
+    opened[0].finish({ decision: "annotated", message: "Keep this feedback" });
+    await vi.waitFor(async () =>
+      expect((await reviews.get(target))?.deliveries[0].status).toBe("failed"),
+    );
+    expect(state.status).toBe("paused");
+    expect(state.deliveries[0].text).toContain("Keep this feedback");
+    expect(state.deliveries[0].agentId).toBe(target.agentId);
+    expect(state.deliveries[0].error).toContain("archived");
+    expect(sends).toEqual([]);
+  });
+  it("restores viewed state and transfers marks only for identical file diffs", async () => {
+    const state = await reviews.start(target, { mode: "task" });
+    opened[0].state.draft = {
+      codeAnnotations: [{ id: "old-note" }],
+      viewedFiles: ["one.txt", "two.txt"],
+      ts: 1,
+    };
+    await reviews.cancel(operation(state));
+    await reviews.stop();
+    reviews = createReviews(ports);
+    const restored = (await reviews.get(target))!;
+    await reviews.open(operation(restored));
+    expect(opened[1].state.draft?.viewedFiles).toEqual(["one.txt", "two.txt"]);
+    const oldRevision = restored.revisionId;
+    patch = diff("one.txt", "changed") + diff("two.txt", "new");
+    await reviews.update(operation(restored), { mode: "task" });
+    expect(restored.revisionId).not.toBe(oldRevision);
+    expect(restored.revisions[1].draft?.viewedFiles).toEqual(["two.txt"]);
+    expect(restored.revisions[1].draft?.codeAnnotations).toEqual([]);
+    expect(restored.revisions[0].draft?.codeAnnotations).toEqual([{ id: "old-note" }]);
+    await expect(
+      reviews.cancel({ ...operation(restored), revisionId: oldRevision }),
+    ).rejects.toThrow("revision changed");
+    await reviews.update(operation(restored), { mode: "task" });
+    expect(restored.revisions).toHaveLength(2);
+  });
+  it("cancels only owned processes and never delivers a dismissal", async () => {
+    const state = await reviews.start(target, { mode: "task" });
+    await expect(reviews.cancel({ ...operation(state), reviewId: "old" })).rejects.toThrow(
+      "revision changed",
+    );
+    await reviews.cancel(operation(state));
+    expect(opened[0].stopped).toBe(true);
+    expect(sends).toHaveLength(0);
+    await reviews.open(operation(state));
+    opened[1].finish({ decision: "dismissed", message: "" });
+    await vi.waitFor(async () => expect((await reviews.get(target))?.status).toBe("paused"));
+    expect(sends).toHaveLength(0);
+  });
+  it("validates Guide paths, retains uncovered files and ignores late cancelled output", async () => {
+    const state = await reviews.start(target, { mode: "task" });
+    busy = true;
+    await expect(reviews.requestGuide(operation(state))).rejects.toThrow("busy");
+    busy = false;
+    await reviews.requestGuide(operation(state));
+    const rev = state.revisions[0];
+    const pending = rev.guides[0];
+    const document = {
+      title: "Behavior",
+      intent: "Read behavior first",
+      sections: [
+        {
+          title: "First",
+          overview: "Check one",
+          diffs: [{ file: "one.txt", summary: "Change behavior" }],
+        },
+      ],
+    };
+    expect(coverage(document, rev)).toEqual(["two.txt"]);
+    expect(() =>
+      coverage(
+        {
+          ...document,
+          sections: [{ ...document.sections[0], diffs: [{ file: "missing", summary: "wrong" }] }],
+        },
+        rev,
+      ),
+    ).toThrow("outside");
+    const output = join(
+      ports.store.directory(state.id, rev.id),
+      "requests",
+      pending.requestId!,
+      "guide.json",
+    );
+    await reviews.cancelGuide(operation(state), pending.requestId!);
+    await writeFile(
+      output,
+      JSON.stringify({
+        requestId: pending.requestId,
+        revisionId: rev.id,
+        patchHash: rev.patchHash,
+        guide: document,
+        outsideSections: ["two.txt"],
+      }),
+    );
+    await reviews.requestGuide(operation(state));
+    const next = rev.guides[1];
+    await writeFile(
+      join(ports.store.directory(state.id, rev.id), "requests", next.requestId!, "guide.json"),
+      JSON.stringify({
+        requestId: next.requestId,
+        revisionId: rev.id,
+        patchHash: rev.patchHash,
+        guide: document,
+        outsideSections: ["two.txt"],
+      }),
+    );
+    await vi.waitFor(() => expect(next.status).toBe("ready"), { timeout: 4000 });
+    expect(pending.status).toBe("cancelled");
+    expect(opened[0].state.guides).toHaveLength(1);
+    expect(next.uncovered).toEqual(["two.txt"]);
+    expect(sends.map((item) => item.target.agentId)).toEqual(["a", "a"]);
+  });
+  it("can reopen an older revision without changing the feedback recipient or current revision", async () => {
+    const state = await reviews.start(target, { mode: "task" });
+    const first = state.revisionId;
+    patch = diff("one.txt", "changed") + diff("two.txt", "new");
+    await reviews.update(operation(state), { mode: "task", baseRef: "another-base" });
+    const current = state.revisionId;
+    await reviews.open(operation(state), first);
+    expect(state.liveRevisionId).toBe(first);
+    expect(state.revisionId).toBe(current);
+    expect(opened[1].stopped).toBe(true);
+    opened[2].finish({ decision: "annotated", message: "Historical feedback" });
+    await vi.waitFor(async () =>
+      expect((await reviews.get(target))?.deliveries[0].status).toBe("sent"),
+    );
+    expect(state.deliveries[0].revisionId).toBe(first);
+    expect(sends[0].target.agentId).toBe("a");
+  });
+  it("keeps form selections local when remote review state changes", () => {
+    const model = openReviewForm(null);
+    model.setBase("refs/heads/task-base");
+    model.applyReview(null);
+    expect(model.getState().selection).toEqual({ mode: "task", baseRef: "refs/heads/task-base" });
+    model.setMode("change-request");
+    expect(model.getState().selection).toEqual({ mode: "change-request" });
+    model.close();
+  });
+  it("keeps renamed, deleted, binary and quoted paths in the complete manifest", () => {
+    const entries = manifest(
+      'diff --git a/old name b/new name\nsimilarity index 100%\nrename from old name\nrename to new name\ndiff --git a/gone b/gone\ndeleted file mode 100644\nBinary files a/gone and /dev/null differ\ndiff --git "a/\\320\\260.txt" "b/\\320\\260.txt"\nBinary files differ\n',
+    );
+    expect(entries.map(({ path, kind }) => ({ path, kind }))).toEqual([
+      { path: "new name", kind: "renamed" },
+      { path: "gone", kind: "deleted" },
+      { path: "а.txt", kind: "binary" },
+    ]);
+    expect(manifest("diff --git a/a b/z b/a b/z\nindex abc..def 100644\n")[0]).toMatchObject({
+      path: "a b/z",
+      oldPath: "a b/z",
+      kind: "modified",
     });
-    expect((await reviews.get("a", "workspace"))?.message).toBe("Saved feedback");
-    await reviews.operate("a", "workspace", state.id, true, api);
-    expect(send).toHaveBeenCalledTimes(2);
-    expect((await reviews.get("a", "workspace"))?.status).toBe("sent");
+    expect(entries[0].oldPath).toBe("old name");
+    expect(entries.every((entry) => entry.fingerprint.length === 64)).toBe(true);
   });
-  it("cancels without sending and rejects stale operation IDs", async () => {
-    const state = await reviews.start("a", "workspace", api);
-    await expect(reviews.operate("a", "workspace", "old", false, api)).rejects.toThrow(
-      "no longer current",
+  it("migrates legacy feedback without inventing revision SHAs", async () => {
+    await writeFile(
+      join(root, "legacy-agent.json"),
+      JSON.stringify({
+        id: "legacy-review",
+        agentId: "legacy-agent",
+        workspaceId: "workspace",
+        status: "delivery-failed",
+        message: "Keep this feedback",
+        error: "lost",
+      }),
     );
-    await reviews.operate("a", "workspace", state.id, false, api);
-    await reviews.stop();
-    expect(send).not.toHaveBeenCalled();
-    expect((await readdir(root)).filter((f) => f.endsWith(".session"))).toEqual([]);
-  });
-  it("dismisses without delivery and surfaces unsupported output", async () => {
-    const first = await reviews.start("a", "workspace", api);
-    await complete(first.url, { decision: "dismissed", message: "" });
-    await vi.waitFor(async () =>
-      expect((await reviews.get("a", "workspace"))?.status).toBe("cancelled"),
-    );
-    const second = await reviews.start("a", "workspace", api);
-    await complete(second.url, { feedback: "unsupported" });
-    await vi.waitFor(async () =>
-      expect((await reviews.get("a", "workspace"))?.status).toBe("failed"),
-    );
-    expect(send).not.toHaveBeenCalled();
+    const state = (await reviews.get({ ...target, agentId: "legacy-agent" }))!;
+    expect(state.revisions[0].resolved).toBeNull();
+    expect(state.deliveries[0]).toMatchObject({ text: "Keep this feedback", status: "unknown" });
   });
 });
+
+// Opt in explicitly: this starts the separately installed CLI, with isolated data
+// and no browser, hooks, provider calls or modifications to the user's repository.
+describe.runIf(process.env.PASEO_PLANNOTATOR_CONTRACT === "1")(
+  "installed CLI snapshot contract",
+  () => {
+    const exec = promisify(execFile);
+    const guideList = z.array(z.object({ id: z.string(), title: z.string() }));
+    let root: string;
+    let child: ChildProcess | undefined;
+    let closed: Promise<unknown> | undefined;
+    let diagnostics = "";
+    let output = "";
+    let url: string;
+    let env: NodeJS.ProcessEnv;
+
+    async function stop() {
+      if (!child) return;
+      const process = child;
+      child = undefined;
+      if (process.exitCode === null && process.signalCode === null) process.kill();
+      const timer = setTimeout(() => process.kill("SIGKILL"), 2000);
+      try {
+        await closed;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    async function launch() {
+      diagnostics = "";
+      output = "";
+      const process = spawn(
+        "plannotator",
+        ["review", "--json", "--patch-file", join(root, "review.patch"), "--no-git-remote-check"],
+        { cwd: root, env, shell: false, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      child = process;
+      // Attach before polling so even an early exit is observed and cleaned up.
+      closed = new Promise<void>((resolve) => process.once("close", () => resolve()));
+      let failure: Error | undefined;
+      process.on("error", (error) => {
+        failure = error;
+      });
+      process.stdout.on("data", (chunk: Buffer) => {
+        output += chunk.toString();
+      });
+      process.stderr.on("data", (chunk: Buffer) => {
+        diagnostics = (diagnostics + chunk.toString()).slice(-16000);
+      });
+      await vi.waitFor(
+        async () => {
+          if (failure) throw failure;
+          if (process.exitCode !== null) throw new Error(`Plannotator exited: ${diagnostics}`);
+          const result = await exec("plannotator", ["sessions", "--json"], { env, timeout: 3000 });
+          const found = reviewUrl(result.stdout, process.pid ?? -1);
+          expect(found, diagnostics).not.toBeNull();
+          url = found!;
+        },
+        { timeout: 20000, interval: 200 },
+      );
+    }
+
+    async function request(path: string, method = "GET", data?: unknown) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000);
+      try {
+        const response = await fetch(new URL(path, url), {
+          method,
+          headers: { "Content-Type": "application/json" },
+          ...(data === undefined ? {} : { body: JSON.stringify(data) }),
+          signal: controller.signal,
+        });
+        expect(response.status, `${method} ${path}`).toBe(200);
+        return (await response.json()) as unknown;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    afterEach(async () => {
+      await stop();
+      if (root) await rm(root, { recursive: true, force: true });
+    });
+
+    it("restores patch, draft comments, viewed files and Guide sections on another port", async () => {
+      root = await mkdtemp(join(tmpdir(), "paseo-plannotator-contract-"));
+      env = {
+        ...process.env,
+        PLANNOTATOR_DATA_DIR: join(root, "data"),
+        PLANNOTATOR_REMOTE: "0",
+        PLANNOTATOR_BROWSER: "none",
+      };
+      delete env.PLANNOTATOR_PORT;
+      expect((await exec("plannotator", ["--version"], { env })).stdout.trim()).toBe(
+        "plannotator 0.28.53",
+      );
+      const git = (...args: string[]) => exec("git", args, { cwd: root });
+      await git("init", "--quiet");
+      await git("config", "user.name", "Contract Test");
+      await git("config", "user.email", "test@example.invalid");
+      await writeFile(join(root, "one.txt"), "before\n");
+      await git("add", "one.txt");
+      await git("commit", "--quiet", "-m", "base");
+      const base = (await git("rev-parse", "HEAD")).stdout.trim();
+      await writeFile(join(root, "one.txt"), "after\n");
+      await writeFile(join(root, "two.txt"), "new file\n");
+      await git("add", "one.txt", "two.txt");
+      await git("commit", "--quiet", "-m", "task");
+      expect((await git("status", "--porcelain", "--untracked-files=no")).stdout).toBe("");
+      const patch = (await git("diff", "--binary", base, "HEAD")).stdout;
+      await writeFile(join(root, "review.patch"), patch);
+      await launch();
+      const diff = z
+        .object({ rawPatch: z.string(), snapshotId: z.string() })
+        .parse(await request("/api/diff"));
+      expect(diff.rawPatch).toBe(patch);
+      // Static-patch sessions deliberately use the draft fallback, not this API.
+      expect(
+        await request(`/api/review-progress?snapshot=${encodeURIComponent(diff.snapshotId)}`),
+      ).toEqual({ available: false });
+      const draft = {
+        codeAnnotations: [
+          {
+            id: "comment-1",
+            type: "comment",
+            scope: "line",
+            filePath: "one.txt",
+            lineStart: 1,
+            lineEnd: 1,
+            side: "new",
+            text: "Check this change",
+            createdAt: 1,
+          },
+        ],
+        viewedFiles: ["one.txt"],
+        autoViewSuppressed: ["two.txt"],
+        ts: Date.now(),
+      };
+      expect(await request("/api/draft", "POST", draft)).toEqual({ ok: true });
+      expect(await request("/api/draft")).toMatchObject(draft);
+      const guide = {
+        title: "Task review",
+        intent: "Read behavior before additions",
+        sections: [
+          {
+            title: "Behavior",
+            overview: "Check the changed behavior",
+            diffs: [{ file: "one.txt", summary: "Replace before with after" }],
+          },
+        ],
+      };
+      const guideFile = join(root, "guide.json");
+      await writeFile(guideFile, JSON.stringify(guide));
+      await exec(
+        "plannotator",
+        ["guide", "import", "--guide", guideFile, "--patch", join(root, "review.patch")],
+        { cwd: root, env, timeout: 10000 },
+      );
+      const guides = guideList.parse(await request("/api/guides"));
+      expect(guides).toHaveLength(1);
+      expect(guides[0].title).toBe(guide.title);
+      const guidePath = `/api/guide/${encodeURIComponent(`saved:${guides[0].id}`)}`;
+      expect(await request(`${guidePath}/reviewed`, "PUT", { reviewed: [true] })).toEqual({
+        ok: true,
+      });
+      expect(await request(guidePath)).toMatchObject({ reviewed: [true] });
+      expect(await request("/api/draft")).toMatchObject(draft);
+      const firstUrl = new URL(url);
+      await stop();
+      // Reserve the old port: successful restoration must not rely on its origin.
+      const reserved = createServer();
+      reserved.listen(Number(firstUrl.port), firstUrl.hostname);
+      await once(reserved, "listening");
+      try {
+        await launch();
+      } finally {
+        await new Promise<void>((resolve, reject) =>
+          reserved.close((error) => {
+            if (error) {
+              reject(error);
+              return;
+            }
+            resolve();
+          }),
+        );
+      }
+      expect(new URL(url).port).not.toBe(firstUrl.port);
+      expect(await request("/api/diff")).toMatchObject({ rawPatch: patch });
+      expect(await request("/api/draft")).toMatchObject(draft);
+      expect(await request(guidePath)).toMatchObject({ reviewed: [true] });
+      expect(guideList.parse(await request("/api/guides"))).toEqual(guides);
+      // A second import remains selectable without replacing the draft or Guide.
+      await writeFile(guideFile, JSON.stringify({ ...guide, title: "Alternative guide" }));
+      await exec(
+        "plannotator",
+        ["guide", "import", "--guide", guideFile, "--patch", join(root, "review.patch")],
+        { cwd: root, env, timeout: 10000 },
+      );
+      expect(guideList.parse(await request("/api/guides"))).toHaveLength(2);
+      expect(await request("/api/draft")).toMatchObject(draft);
+      expect(await request(guidePath)).toMatchObject({ reviewed: [true] });
+      await stop();
+      expect(output).toBe(""); // Stopping the process must not submit feedback.
+    }, 60000);
+    it("runs the production engine adapter with isolated revisions and JSON feedback", async () => {
+      root = await mkdtemp(join(tmpdir(), "paseo-plannotator-engine-"));
+      await exec("git", ["init", "--quiet"], { cwd: root });
+      const patch =
+        "diff --git a/one.txt b/one.txt\n--- a/one.txt\n+++ b/one.txt\n@@ -1 +1 @@\n-before\n+after\n";
+      const store = createStore(join(root, "storage"));
+      const patchPath = await store.patch("review", "revision", patch);
+      const saved = revisionSchema.parse({
+        id: "revision",
+        createdAt: new Date().toISOString(),
+        selection: { mode: "task" },
+        resolved: null,
+        patchHash: "hash",
+        patchPath,
+        files: manifest(patch),
+        draft: { codeAnnotations: [], viewedFiles: ["one.txt"], ts: Date.now() },
+        guides: [],
+      });
+      const engine = createEngine(process.env);
+      const first = await engine.open({
+        cwd: root,
+        revision: saved,
+        directory: store.directory("review", "revision"),
+      });
+      try {
+        expect((await first.read()).draft?.viewedFiles).toEqual(["one.txt"]);
+        const document = {
+          title: "Adapter import",
+          intent: "Inspect behavior",
+          sections: [
+            {
+              title: "Behavior",
+              overview: "Review carefully",
+              diffs: [{ file: "one.txt", summary: "Changed value" }],
+            },
+          ],
+        };
+        const id = await first.importGuide(document);
+        expect((await first.read()).guides).toMatchObject([{ id, document }]);
+      } finally {
+        await first.stop();
+      }
+      expect(await first.result).toBeNull();
+      const reopened = await engine.open({
+        cwd: root,
+        revision: saved,
+        directory: store.directory("review", "revision"),
+      });
+      const isolatedPatch = await store.patch("other", "same-patch", patch);
+      const isolated = await engine.open({
+        cwd: root,
+        revision: { ...saved, id: "same-patch", patchPath: isolatedPatch, draft: null },
+        directory: store.directory("other", "same-patch"),
+      });
+      try {
+        expect((await reopened.read()).guides).toHaveLength(1);
+        expect(await isolated.read()).toEqual({ draft: null, guides: [] });
+        const response = await fetch(new URL("/api/feedback", reopened.url), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            approved: false,
+            feedback: "Production adapter feedback",
+            annotations: [],
+          }),
+        });
+        expect(response.status).toBe(200);
+        expect(await reopened.result).toMatchObject({
+          decision: "annotated",
+          message: expect.stringContaining("Production adapter feedback"),
+        });
+        expect(await isolated.read()).toEqual({ draft: null, guides: [] });
+        const ownedSessions = await exec("plannotator", ["sessions", "--json"], {
+          env: {
+            ...process.env,
+            PLANNOTATOR_DATA_DIR: join(store.directory("other", "same-patch"), "plannotator"),
+          },
+        });
+        const owned = sessionList
+          .parse(JSON.parse(ownedSessions.stdout))
+          .find((item) => new URL(item.url).href === isolated.url);
+        if (!owned) throw new Error("Owned test session was not registered");
+        process.kill(owned.pid, "SIGKILL");
+        await expect(isolated.result).rejects.toThrow("Plannotator exited SIGKILL");
+      } finally {
+        await reopened.stop();
+        await isolated.stop();
+      }
+    }, 60000);
+  },
+);

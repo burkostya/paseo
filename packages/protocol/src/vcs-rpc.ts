@@ -4,6 +4,8 @@ import { z } from "zod";
 import type { JsonValue } from "./agent-types.js";
 import {
   VcsDataSchema,
+  VcsComparisonResolveInputSchema,
+  VcsResolvedComparisonSchema,
   VcsComparisonContextSchema,
   VcsWorkingCopySourceSchema,
   VcsPublicationSchema,
@@ -389,6 +391,21 @@ export const VcsComparisonGetRequestSchema = z.object({
   target: VcsComparisonTargetSchema,
   providerId: z.string().min(1),
 });
+export const VcsComparisonResolveRequestSchema = z.object({
+  type: z.literal("vcs.comparison.resolve.request"),
+  requestId: z.string(),
+  workspaceId: z.string().min(1),
+  providerId: z.string().min(1),
+  input: VcsComparisonResolveInputSchema,
+});
+export const VcsComparisonResolveResponseSchema = z.object({
+  type: z.literal("vcs.comparison.resolve.response"),
+  payload: z.object({
+    requestId: z.string(),
+    result: VcsResolvedComparisonSchema.nullable(),
+    error: VcsProblemSchema.nullable(),
+  }),
+});
 export const VcsComparisonSetRequestSchema = z.object({
   type: z.literal("vcs.comparison.set.request"),
   requestId: z.string(),
@@ -415,6 +432,7 @@ export const VcsComparisonSetResponseSchema = z.object({
 export type VcsComparisonTarget = z.infer<typeof VcsComparisonTargetSchema>;
 export type VcsComparisonSettings = z.infer<typeof VcsComparisonSettingsSchema>;
 export const VcsInboundMessageSchema = z.discriminatedUnion("type", [
+  VcsComparisonResolveRequestSchema,
   VcsComparisonContextRequestSchema,
   VcsComparisonGetRequestSchema,
   VcsComparisonSetRequestSchema,
@@ -441,6 +459,7 @@ export const VcsInboundMessageSchema = z.discriminatedUnion("type", [
   VcsOperationsCancelRequestSchema,
 ]);
 export const VcsOutboundMessageSchema = z.discriminatedUnion("type", [
+  VcsComparisonResolveResponseSchema,
   VcsComparisonContextResponseSchema,
   VcsComparisonGetResponseSchema,
   VcsComparisonSetResponseSchema,

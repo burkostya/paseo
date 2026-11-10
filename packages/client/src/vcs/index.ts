@@ -40,7 +40,12 @@ export class VcsRequestError extends Error {
   }
 }
 export interface PaseoWorkspaceVcs {
-  readonly comparison: PaseoVcsComparisonSettings;
+  readonly comparison: PaseoVcsComparisonSettings & {
+    resolve(
+      providerId: string,
+      input: import("@getpaseo/protocol/vcs").VcsComparisonResolveInput,
+    ): Promise<import("@getpaseo/protocol/vcs").VcsResolvedComparison>;
+  };
   readonly publication: {
     remotes(providerId?: string): Promise<VcsRemote[]>;
     resolve(selection: VcsPublicationSelection, providerId?: string): Promise<VcsPublication>;
@@ -89,7 +94,16 @@ export function createWorkspaceVcs(
   own: <T extends { release(): Promise<void> }>(create: () => T) => T,
 ): PaseoWorkspaceVcs {
   return {
-    comparison: createComparisonSettings(client, { kind: "workspace", workspaceId }),
+    comparison: {
+      ...createComparisonSettings(client, { kind: "workspace", workspaceId }),
+      resolve: (providerId, input) =>
+        client.requestVcs({
+          type: "vcs.comparison.resolve.request",
+          workspaceId,
+          providerId,
+          input,
+        }),
+    },
     publication: {
       remotes: (providerId) =>
         client.requestVcs({ type: "vcs.publication.remotes.request", workspaceId, providerId }),

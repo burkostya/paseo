@@ -1,5 +1,9 @@
 import { createComparisonBaseResolver } from "./comparison-base.js";
-import { gitSavedComparisonSettings } from "../shared/comparison.js";
+import {
+  gitSavedComparisonSettings,
+  gitSnapshotComparisonBase,
+  resolveGitBaseName,
+} from "../shared/comparison.js";
 import { createGitPublication } from "@getpaseo/plugin/server/vcs";
 import { withPushMapping } from "./publication.js";
 import { createGitWorkingCopies } from "./working-copies.js";
@@ -420,12 +424,120 @@ export const gitProvider: VcsProviderRegistration = {
   },
 };
 
+function publishedHead(
+  snapshot: import("@getpaseo/plugin").VcsSnapshot,
+  baseRef: string | null,
+  branch: string,
+): string {
+  const remoteBase = baseRef?.replace(/^refs\/remotes\//, "");
+  const remote = remoteBase?.split("/")[0];
+  if (!remote || !remoteBase?.includes("/"))
+    throw new VcsError({ code: "unavailable", message: "PR/MR remote base is unavailable" });
+  const headRef = `refs/remotes/${remote}/${branch}`;
+  const published = snapshot.refs.find((ref) => ref.id === headRef);
+  if (!published || published.targets.length !== 1)
+    throw new VcsError({
+      code: "unavailable",
+      message: `PR/MR head is not available locally: ${headRef}. Fetch it explicitly, then check again.`,
+    });
+  return published.targets[0];
+}
+
+function pinnedBase(snapshot: import("@getpaseo/plugin").VcsSnapshot, name: string): string {
+  const exact = resolveGitBaseName(snapshot.refs, name);
+  const ref = exact
+    ? snapshot.refs.find((item) => item.id === exact || item.name === exact)
+    : undefined;
+  if (!ref || ref.targets.length !== 1)
+    throw new VcsError({
+      code: "unavailable",
+      message: `Comparison base is unavailable in this snapshot: ${name}`,
+    });
+  return ref.targets[0];
+}
+
+function selectedBase(
+  input: import("@getpaseo/plugin").VcsComparisonResolveInput,
+  settings: import("@getpaseo/plugin").VcsData | null,
+  detected: string | null,
+): string | null {
+  return (
+    input.baseRef ??
+    (settings ? gitSavedComparisonSettings.parse(settings).data.baseRef : undefined) ??
+    detected
+  );
+}
+
 export function createGitProvider(
   host: import("@getpaseo/plugin/server/vcs").VcsHostApi,
 ): VcsProviderRegistration {
   const provider = { ...gitProvider };
   provider.workingCopies = createGitWorkingCopies(() => provider, host.resolveChangeRequest);
   const resolveBase = createComparisonBaseResolver();
+  provider.resolveComparison = async (binding, input, settings, context) => {
+    const snapshot = await provider.snapshot(binding, context);
+    let head = snapshot.current?.id ?? null;
+    if (input.mode === "working-copy") {
+      if (!snapshot.workingComparison)
+        throw new VcsError({
+          code: "unavailable",
+          message: "Working-copy comparison is unavailable",
+        });
+      return {
+        comparison: snapshot.workingComparison,
+        description: "Uncommitted changes",
+        baseRef: null,
+        baseRevision: head,
+        mergeBaseRevision: null,
+        headRevision: head,
+        sourceUrl: null,
+      };
+    }
+    if (!head) throw new VcsError({ code: "unavailable", message: "Repository has no commits" });
+    const facts = await readContext(binding);
+    const data = gitSnapshotComparisonBase.shape.data
+      .extend({ branch: z.string().nullable() })
+      .parse(snapshot.data?.data);
+    let sourceUrl: string | null = null;
+    let baseRef = selectedBase(input, settings, data.comparisonBase.baseRef);
+    if (input.mode === "change-request") {
+      if (!facts.changeRequest || facts.changeRequestError || facts.observedHeadRef !== data.branch)
+        throw new VcsError({
+          code: "unavailable",
+          message: facts.changeRequestError ?? "No current PR/MR is available for this workspace",
+        });
+      if (facts.changeRequest.headRef !== data.branch)
+        throw new VcsError({
+          code: "outdated",
+          message: "The PR/MR head does not match this workspace",
+        });
+      const resolved = await resolveBase(snapshot, data.branch, facts, context);
+      if (resolved.error) throw new VcsError({ code: "unavailable", message: resolved.error });
+      baseRef = resolved.baseRef;
+      sourceUrl = facts.changeRequest.url;
+      head = publishedHead(snapshot, baseRef, facts.changeRequest.headRef);
+    }
+    if (!baseRef)
+      throw new VcsError({
+        code: "unavailable",
+        message: data.comparisonBase.error ?? "Select a comparison base",
+      });
+    if (baseRef.startsWith("-") || baseRef.includes("\0"))
+      throw new VcsError({ code: "provider", message: "Invalid base ref" });
+    const baseRevision = pinnedBase(snapshot, baseRef);
+    const mergeBaseRevision = (
+      await git(binding.root, ["merge-base", baseRevision, head], context)
+    ).trim();
+    return {
+      comparison: { kind: "range", from: mergeBaseRevision, to: head },
+      description: sourceUrl ?? `${baseRef} → ${data.branch ?? head}`,
+      baseRef,
+      baseRevision,
+      mergeBaseRevision,
+      headRevision: head,
+      sourceUrl,
+    };
+  };
   const readContext = (binding: import("@getpaseo/plugin").VcsBinding) =>
     host.comparisonContext(binding).catch((error: unknown) => ({
       workingCopy: null,
