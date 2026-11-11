@@ -41,7 +41,16 @@ export const draft = z
 export type Draft = z.infer<typeof draft>;
 export const guide = z.object({
   id: z.string(),
-  source: z.enum(["paseo-agent", "plannotator"]),
+  source: z.enum(["paseo-agent", "paseo-helper", "plannotator"]),
+  helper: z
+    .object({
+      agentId: z.string(),
+      provider: z.string(),
+      model: z.string(),
+      profileId: z.string().optional(),
+      cleanup: z.enum(["pending", "done"]).optional(),
+    })
+    .optional(),
   requestId: z.string().nullable(),
   status: z.enum(["pending", "ready", "cancelled", "failed"]),
   engineId: z.string().nullable(),
@@ -147,11 +156,44 @@ export const retryReview = defineRpc({
 });
 export const requestGuide = defineRpc({
   name: "guide.request",
-  input: operation,
+  input: operation.extend({
+    helper: z
+      .object({
+        provider: z.string().min(1),
+        model: z.string().min(1),
+        profileId: z.string().optional(),
+      })
+      .optional(),
+  }),
   output: reviewState,
+});
+export const guideCatalog = defineRpc({
+  name: "guide.catalog",
+  input: target,
+  output: z.object({
+    profiles: z.array(
+      z.object({
+        id: z.string(),
+        name: z.string(),
+        provider: z.string(),
+        model: z.string().optional(),
+      }),
+    ),
+    providers: z.array(
+      z.object({
+        id: z.string(),
+        models: z.array(z.object({ id: z.string(), label: z.string() })),
+      }),
+    ),
+  }),
 });
 export const cancelGuide = defineRpc({
   name: "guide.cancel",
+  input: operation.extend({ requestId: z.string() }),
+  output: reviewState,
+});
+export const retryGuideImport = defineRpc({
+  name: "guide.retry-import",
   input: operation.extend({ requestId: z.string() }),
   output: reviewState,
 });

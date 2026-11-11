@@ -12,7 +12,7 @@ import {
   type Guide,
   type Delivery,
 } from "../shared/review";
-import type { ReviewPorts, EngineSession } from "./ports";
+import type { ReviewPorts, EngineSession, GuideAgentOwner } from "./ports";
 import { hash } from "./source";
 
 export function coverage(document: GuideDocument, revision: Revision): string[] {
@@ -54,6 +54,22 @@ export function createReviews(ports: ReviewPorts) {
   const sessions = new Map<string, Running>();
   const tasks = new Map<string, Promise<unknown>>();
   let stopped = false;
+  function helperOwner(state: ReviewState, guide: Guide): GuideAgentOwner {
+    if (!guide.helper || !guide.requestId) throw new Error("Guide has no owned generator");
+    return {
+      agentId: guide.helper.agentId,
+      taskAgentId: state.agentId,
+      workspaceId: state.workspaceId,
+      requestId: guide.requestId,
+    };
+  }
+  async function cleanupHelper(state: ReviewState, guide: Guide, cancel: boolean) {
+    if (!guide.helper || guide.helper.cleanup === "done") return;
+    await conversation.stopHelper(helperOwner(state, guide), cancel);
+    guide.helper.cleanup = "done";
+    if (guide.error?.startsWith("Guide generator cleanup failed:")) guide.error = null;
+    await store.save(state);
+  }
   function serial<T>(agentId: string, task: () => Promise<T>): Promise<T> {
     const next = (tasks.get(agentId) ?? Promise.resolve()).then(task);
     tasks.set(
@@ -266,7 +282,10 @@ export function createReviews(ports: ReviewPorts) {
       const viewedFiles = carryViewed(previous, revision);
       if (viewedFiles.length) revision.draft = { codeAnnotations: [], viewedFiles, ts: Date.now() };
       for (const guide of previous.guides)
-        if (guide.status === "pending") guide.status = "cancelled";
+        if (guide.status === "pending") {
+          guide.status = "cancelled";
+          await cleanupHelper(state, guide, true);
+        }
     }
     state.revisions.push(revision);
     state.revisionId = id;
@@ -275,9 +294,11 @@ export function createReviews(ports: ReviewPorts) {
     await store.save(state);
     return true;
   }
-  async function pendingGuides(state: ReviewState) {
+  async function pendingGuides(state: ReviewState, requestId?: string) {
     const revision = revisionOf(state);
-    for (const guide of revision.guides.filter((item) => item.status === "pending")) {
+    for (const guide of revision.guides.filter(
+      (item) => item.status === "pending" && (!requestId || item.requestId === requestId),
+    )) {
       const path = join(
         store.directory(state.id, revision.id),
         "requests",
@@ -286,6 +307,13 @@ export function createReviews(ports: ReviewPorts) {
       );
       try {
         const raw = await store.readGuide(path);
+        if (guide.helper) {
+          const helperState = await conversation.helperState(helperOwner(state, guide));
+          if (helperState === "running") continue;
+          if (helperState === "missing" && !requestId)
+            throw new Error(guide.error ?? "Guide generator is unavailable");
+          if (raw === null) throw new Error("Guide generator finished without writing guide.json");
+        }
         if (raw === null) continue;
         const response = guideResponse.parse(raw);
         if (
@@ -306,14 +334,21 @@ export function createReviews(ports: ReviewPorts) {
         const engineId = await running.session.importGuide(response.guide);
         Object.assign(guide, {
           status: "ready",
+          error: null,
           engineId,
           document: response.guide,
           uncovered,
           reviewed: response.guide.sections.map(() => false),
         });
+        await store.save(state);
       } catch (error) {
         guide.status = "failed";
         guide.error = String(error);
+      }
+      try {
+        await cleanupHelper(state, guide, guide.status !== "ready");
+      } catch (error) {
+        guide.error = `Guide generator cleanup failed: ${String(error)}`;
       }
     }
   }
@@ -327,6 +362,10 @@ export function createReviews(ports: ReviewPorts) {
           if (stopped) return;
           const before = JSON.stringify(state);
           try {
+            for (const revision of state.revisions)
+              for (const guide of revision.guides)
+                if (guide.status !== "pending" && guide.helper?.cleanup !== "done")
+                  await cleanupHelper(state, guide, guide.status !== "ready");
             await pendingGuides(state);
             await capture(state);
           } catch (error) {
@@ -347,6 +386,29 @@ export function createReviews(ports: ReviewPorts) {
   timer.unref();
   return {
     prepare: source.prepare,
+    guideCatalog: (target: Target) => conversation.catalog(target),
+    retryGuideImport: (input: Operation, requestId: string) =>
+      serial(input.agentId, async () => {
+        const state = await expected(input);
+        const revision = revisionOf(state);
+        const guide = revision.guides.find((item) => item.requestId === requestId);
+        if (!guide || guide.status !== "failed")
+          throw new Error("Only a failed Guide import can be retried");
+        const output = join(
+          store.directory(state.id, revision.id),
+          "requests",
+          requestId,
+          "guide.json",
+        );
+        if ((await store.readGuide(output)) === null)
+          throw new Error("No saved guide.json to import; request a new Guide");
+        guide.status = "pending";
+        guide.error = null;
+        await store.save(state);
+        await pendingGuides(state, requestId);
+        await store.save(state);
+        return state;
+      }),
     get: (target: Target) => serial(target.agentId, () => load(target)),
     start: (target: Target, selection: SourceSelection) =>
       serial(target.agentId, async () => {
@@ -396,7 +458,11 @@ export function createReviews(ports: ReviewPorts) {
         await pause(state);
         state.status = "cancelled";
         for (const guide of revisionOf(state).guides)
-          if (guide.status === "pending") guide.status = "cancelled";
+          if (guide.status === "pending") {
+            guide.status = "cancelled";
+            await store.save(state);
+            await cleanupHelper(state, guide, true);
+          }
         await store.save(state);
         return state;
       }),
@@ -409,11 +475,14 @@ export function createReviews(ports: ReviewPorts) {
         await deliver(state, item);
         return state;
       }),
-    requestGuide: (input: Operation) =>
+    requestGuide: (
+      input: Operation,
+      helperSelection?: { provider: string; model: string; profileId?: string },
+    ) =>
       serial(input.agentId, async () => {
         const state = await expected(input);
         const agent = await conversation.inspect(state);
-        if (agent.busy)
+        if (!helperSelection && agent.busy)
           throw new Error(
             "The original agent is busy. Request the Guide after its current turn finishes.",
           );
@@ -473,7 +542,10 @@ export function createReviews(ports: ReviewPorts) {
         );
         const guide: Guide = {
           id: randomUUID(),
-          source: "paseo-agent",
+          source: helperSelection ? "paseo-helper" : "paseo-agent",
+          ...(helperSelection
+            ? { helper: { agentId: randomUUID(), ...helperSelection, cleanup: "pending" as const } }
+            : {}),
           requestId,
           status: "pending",
           engineId: null,
@@ -486,10 +558,13 @@ export function createReviews(ports: ReviewPorts) {
         await store.save(state);
         const text = `Prepare a Guided Review for the exact saved patch described in ${files.input}. Read that JSON and its patchPath. Do not change task code. Group changes by meaning, explain the reading order and what to check. This Guide is not approval of the changes. Produce JSON in the outputExample shape; preserve requestId, revisionId and patchHash exactly. Use only manifest paths, list each file in a section or outsideSections, and do not repeat a file within a section. title/intent/title/overview/file/summary must be strings; sections and diffs are arrays. Write the complete result to ${files.output}.tmp, then atomically rename it to ${files.output}. Do not put the result only in chat.`;
         try {
-          await conversation.send(state, text, requestId);
+          if (guide.helper) await conversation.startHelper(state, guide.helper, text, requestId);
+          else await conversation.send(state, text, requestId);
         } catch (error) {
-          guide.status = "failed";
           guide.error = `Guide request delivery failed or is unknown; no automatic retry. ${String(error)}`;
+          // Creation may have succeeded before the response was lost. Reconcile
+          // the persisted helper id through the normal poller; never create again.
+          if (!guide.helper) guide.status = "failed";
         }
         await store.save(state);
         return state;
@@ -502,6 +577,7 @@ export function createReviews(ports: ReviewPorts) {
           throw new Error("Guide request is no longer pending");
         guide.status = "cancelled";
         await store.save(state);
+        await cleanupHelper(state, guide, true);
         return state;
       }),
     async stop() {
@@ -510,6 +586,19 @@ export function createReviews(ports: ReviewPorts) {
       await Promise.all(
         [...records.values()].map((state) =>
           serial(state.agentId, async () => {
+            for (const revision of state.revisions)
+              for (const guide of revision.guides) {
+                if (guide.helper && guide.helper.cleanup !== "done") {
+                  if (guide.status === "pending") guide.status = "cancelled";
+                  await store.save(state);
+                  try {
+                    await cleanupHelper(state, guide, true);
+                  } catch (error) {
+                    guide.error = `Guide generator cleanup failed: ${String(error)}`;
+                    await store.save(state);
+                  }
+                }
+              }
             try {
               await pause(state);
             } catch (error) {

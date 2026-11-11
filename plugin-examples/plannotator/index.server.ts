@@ -11,6 +11,8 @@ import {
   retryReview,
   requestGuide,
   cancelGuide,
+  retryGuideImport,
+  guideCatalog,
   preferences,
 } from "./shared/review";
 import { createReviews } from "./server/reviews";
@@ -46,9 +48,15 @@ export default function contribute(server: PluginServerContext) {
   server.handle(updateReview, (input, { paseo }) => instance(paseo).update(input, input.selection));
   server.handle(cancelReview, (input, { paseo }) => instance(paseo).cancel(input));
   server.handle(retryReview, (input, { paseo }) => instance(paseo).retry(input, input.deliveryId));
-  server.handle(requestGuide, (input, { paseo }) => instance(paseo).requestGuide(input));
+  server.handle(requestGuide, (input, { paseo }) =>
+    instance(paseo).requestGuide(input, input.helper),
+  );
+  server.handle(guideCatalog, (input, { paseo }) => instance(paseo).guideCatalog(input));
   server.handle(cancelGuide, (input, { paseo }) =>
     instance(paseo).cancelGuide(input, input.requestId),
+  );
+  server.handle(retryGuideImport, (input, { paseo }) =>
+    instance(paseo).retryGuideImport(input, input.requestId),
   );
   return async () => {
     await reviews?.stop();

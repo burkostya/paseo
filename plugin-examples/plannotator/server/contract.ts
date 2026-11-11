@@ -1,4 +1,5 @@
 import { z } from "zod";
+export const cliVersion = z.enum(["plannotator 0.28.53", "plannotator 0.28.53-paseo.1"]);
 export const decision = z.object({
   decision: z.enum(["approved", "annotated", "dismissed"]),
   message: z.string(),

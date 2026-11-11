@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { decision, reviewUrl, sessions as sessionList } from "./contract";
+import { cliVersion, decision, reviewUrl, sessions as sessionList } from "./contract";
 describe("Plannotator 0.28.53 contract", () => {
   it("selects the review belonging to the child PID", () => {
     const raw = JSON.stringify([
@@ -82,6 +82,10 @@ describe("review lifecycle", () => {
     ports = {
       store: createStore(root),
       conversation: {
+        catalog: async () => ({ profiles: [], providers: [] }),
+        startHelper: async () => {},
+        helperState: async () => "running",
+        stopHelper: async () => {},
         inspect: async () => ({ cwd: root, name: "Task agent", busy }),
         async send(recipient, text, messageId) {
           if (failSend) throw new Error("connection lost");
@@ -164,6 +168,118 @@ describe("review lifecycle", () => {
     expect(sends[0].text).toContain("HEAD: head");
     expect(sends[0].text).toContain("Check this line");
     expect((await reviews.get({ ...target, agentId: "b" }))?.status).toBe("reviewing");
+  });
+  it("cancels only the dedicated Guide agent and ignores its late output", async () => {
+    const started: string[] = [];
+    const stopped: string[] = [];
+    ports.conversation.startHelper = async (_target, helper) => {
+      started.push(helper.agentId);
+    };
+    ports.conversation.stopHelper = async (owner) => {
+      expect(owner.requestId).toBeTruthy();
+      expect(owner.workspaceId).toBe(target.workspaceId);
+      expect(owner.taskAgentId).toBe(target.agentId);
+      stopped.push(owner.agentId);
+    };
+    const state = await reviews.start(target, { mode: "task" });
+    await reviews.requestGuide(operation(state), { provider: "pi", model: "small" });
+    const guide = state.revisions[0].guides[0];
+    expect(guide.source).toBe("paseo-helper");
+    expect(started).toEqual([guide.helper?.agentId]);
+    expect(sends).toEqual([]);
+    await reviews.cancelGuide(operation(state), guide.requestId!);
+    expect(stopped).toEqual(started);
+    expect(guide.status).toBe("cancelled");
+  });
+  it("imports a dedicated agent's Guide after its turn finishes and archives it", async () => {
+    const archived: string[] = [];
+    let finished = false;
+    ports.conversation.helperState = async () => (finished ? "finished" : "running");
+    ports.conversation.stopHelper = async (owner, cancel) => {
+      expect(cancel).toBe(false);
+      archived.push(owner.agentId);
+    };
+    const state = await reviews.start(target, { mode: "task" });
+    await reviews.requestGuide(operation(state), { provider: "codex", model: "small" });
+    const revision = state.revisions[0];
+    const guide = revision.guides[0];
+    const output = join(
+      ports.store.directory(state.id, revision.id),
+      "requests",
+      guide.requestId!,
+      "guide.json",
+    );
+    await writeFile(
+      output,
+      JSON.stringify({
+        requestId: guide.requestId,
+        revisionId: revision.id,
+        patchHash: revision.patchHash,
+        guide: {
+          title: "Guide",
+          intent: "Review",
+          sections: [
+            { title: "One", overview: "Read", diffs: [{ file: "one.txt", summary: "Changed" }] },
+          ],
+        },
+        outsideSections: ["two.txt"],
+      }),
+    );
+    finished = true;
+    await vi.waitFor(() => expect(guide.status).toBe("ready"), { timeout: 4000 });
+    expect(archived).toEqual([guide.helper!.agentId]);
+    expect(sends).toEqual([]);
+  });
+  it("coalesces helper requests and recovers its persisted id without creating again", async () => {
+    const started: string[] = [];
+    ports.conversation.startHelper = async (_target, helper) => {
+      started.push(helper.agentId);
+    };
+    const state = await reviews.start(target, { mode: "task" });
+    const selection = { provider: "codex", model: "small", profileId: "reviewer" };
+    const attempts = await Promise.allSettled([
+      reviews.requestGuide(operation(state), selection),
+      reviews.requestGuide(operation(state), selection),
+    ]);
+    expect(attempts.map((item) => item.status).sort()).toEqual(["fulfilled", "rejected"]);
+    expect(started).toHaveLength(1);
+    const persisted = structuredClone(state);
+    await reviews.stop();
+    await ports.store.save(persisted); // State left by a crash before graceful cleanup.
+    reviews = createReviews(ports);
+    await reviews.get(target);
+    await expect(reviews.requestGuide(operation(state), selection)).rejects.toThrow(
+      "already pending",
+    );
+    expect(started).toHaveLength(1);
+    ports.conversation.helperState = async (owner) => {
+      expect(owner.agentId).toBe(started[0]);
+      expect(owner.requestId).toBe(persisted.revisions[0].guides[0].requestId);
+      return "finished";
+    };
+    await vi.waitFor(
+      async () => expect((await reviews.get(target))?.revisions[0].guides[0].status).toBe("failed"),
+      { timeout: 4000 },
+    );
+    expect(started).toHaveLength(1);
+    expect(sends).toEqual([]);
+  });
+  it("reconciles uncertain helper creation without sending another creation request", async () => {
+    let starts = 0;
+    ports.conversation.startHelper = async () => {
+      starts++;
+      throw new Error("response lost");
+    };
+    const state = await reviews.start(target, { mode: "task" });
+    await reviews.requestGuide(operation(state), { provider: "codex", model: "small" });
+    expect(state.revisions[0].guides[0].status).toBe("pending");
+    expect(state.revisions[0].guides[0].error).toContain("response lost");
+    await expect(
+      reviews.requestGuide(operation(state), { provider: "codex", model: "small" }),
+    ).rejects.toThrow("already pending");
+    await reviews.cancelGuide(operation(state), state.revisions[0].guides[0].requestId!);
+    expect(starts).toBe(1);
+    expect(sends).toEqual([]);
   });
   it("preserves the snapshot after launch failure and supports reopening", async () => {
     const open = ports.engine.open;
@@ -339,6 +455,95 @@ describe("review lifecycle", () => {
     expect(next.uncovered).toEqual(["two.txt"]);
     expect(sends.map((item) => item.target.agentId)).toEqual(["a", "a"]);
   });
+  it("reimports a saved failed Guide after reopening without another agent message", async () => {
+    const state = await reviews.start(target, { mode: "task" });
+    await reviews.requestGuide(operation(state));
+    const revision = state.revisions[0];
+    const guide = revision.guides[0];
+    const path = join(
+      ports.store.directory(state.id, revision.id),
+      "requests",
+      guide.requestId!,
+      "guide.json",
+    );
+    guide.status = "failed";
+    guide.error = "Error: Could not identify imported Guide";
+    await ports.store.save(state);
+    const response = {
+      requestId: guide.requestId,
+      revisionId: revision.id,
+      patchHash: revision.patchHash,
+      guide: {
+        title: "Saved task Guide",
+        intent: "Review",
+        sections: [
+          { title: "One", overview: "Read", diffs: [{ file: "one.txt", summary: "Changed" }] },
+        ],
+      },
+      outsideSections: ["two.txt"],
+    };
+    await writeFile(path, JSON.stringify(response));
+    await reviews.stop();
+    reviews = createReviews(ports);
+    await expect(
+      reviews.retryGuideImport({ ...operation(state), revisionId: "old" }, guide.requestId!),
+    ).rejects.toThrow("changed");
+    busy = true; // Import never sends another message or interrupts the agent.
+    const recovered = await reviews.retryGuideImport(operation(state), guide.requestId!);
+    expect(recovered.revisions[0].guides[0]).toMatchObject({
+      status: "ready",
+      error: null,
+      document: response.guide,
+      uncovered: ["two.txt"],
+    });
+    expect(opened[1].state.guides).toHaveLength(1);
+    expect(sends).toHaveLength(1);
+    await expect(reviews.retryGuideImport(operation(state), guide.requestId!)).rejects.toThrow(
+      "Only a failed",
+    );
+  });
+  it("revalidates saved Guide identity on import retry and rejects cancelled requests", async () => {
+    const state = await reviews.start(target, { mode: "task" });
+    await reviews.requestGuide(operation(state));
+    const revision = state.revisions[0];
+    const guide = revision.guides[0];
+    await reviews.cancelGuide(operation(state), guide.requestId!);
+    await expect(reviews.retryGuideImport(operation(state), guide.requestId!)).rejects.toThrow(
+      "Only a failed",
+    );
+    guide.status = "failed";
+    await expect(reviews.retryGuideImport(operation(state), guide.requestId!)).rejects.toThrow(
+      "No saved",
+    );
+    await writeFile(
+      join(
+        ports.store.directory(state.id, revision.id),
+        "requests",
+        guide.requestId!,
+        "guide.json",
+      ),
+      JSON.stringify({
+        requestId: "another-request",
+        revisionId: revision.id,
+        patchHash: revision.patchHash,
+        guide: {
+          title: "Wrong",
+          intent: "Review",
+          sections: [
+            { title: "One", overview: "Read", diffs: [{ file: "one.txt", summary: "Changed" }] },
+          ],
+        },
+        outsideSections: ["two.txt"],
+      }),
+    );
+    const result = await reviews.retryGuideImport(operation(state), guide.requestId!);
+    expect(result.revisions[0].guides[0]).toMatchObject({
+      status: "failed",
+      error: expect.stringContaining("another request"),
+    });
+    expect(opened[0].state.guides).toEqual([]);
+    expect(sends).toHaveLength(1);
+  });
   it("can reopen an older revision without changing the feedback recipient or current revision", async () => {
     const state = await reviews.start(target, { mode: "task" });
     const first = state.revisionId;
@@ -493,9 +698,10 @@ describe.runIf(process.env.PASEO_PLANNOTATOR_CONTRACT === "1")(
         PLANNOTATOR_BROWSER: "none",
       };
       delete env.PLANNOTATOR_PORT;
-      expect((await exec("plannotator", ["--version"], { env })).stdout.trim()).toBe(
-        "plannotator 0.28.53",
-      );
+      expect(
+        cliVersion.safeParse((await exec("plannotator", ["--version"], { env })).stdout.trim())
+          .success,
+      ).toBe(true);
       const git = (...args: string[]) => exec("git", args, { cwd: root });
       await git("init", "--quiet");
       await git("config", "user.name", "Contract Test");
@@ -607,6 +813,9 @@ describe.runIf(process.env.PASEO_PLANNOTATOR_CONTRACT === "1")(
     it("runs the production engine adapter with isolated revisions and JSON feedback", async () => {
       root = await mkdtemp(join(tmpdir(), "paseo-plannotator-engine-"));
       await exec("git", ["init", "--quiet"], { cwd: root });
+      await exec("git", ["remote", "add", "origin", "https://example.com/team/review.git"], {
+        cwd: root,
+      });
       const patch =
         "diff --git a/one.txt b/one.txt\n--- a/one.txt\n+++ b/one.txt\n@@ -1 +1 @@\n-before\n+after\n";
       const store = createStore(join(root, "storage"));

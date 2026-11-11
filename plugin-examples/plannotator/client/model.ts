@@ -5,6 +5,7 @@ export function openReviewForm(initialReview: ReviewState | null) {
   let state = {
     selection: revision?.selection ?? { mode: "task" as const },
     review: initialReview,
+    helper: { profileId: "", provider: "", model: "" },
   };
   function publish() {
     for (const listener of listeners) listener();
@@ -23,6 +24,10 @@ export function openReviewForm(initialReview: ReviewState | null) {
     },
     setBase(baseRef: string) {
       state = { ...state, selection: { ...state.selection, baseRef: baseRef || undefined } };
+      publish();
+    },
+    setHelper(helper: { profileId: string; provider: string; model: string }) {
+      state = { ...state, helper };
       publish();
     },
     applyReview(review: ReviewState | null) {

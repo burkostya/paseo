@@ -4,14 +4,14 @@ import { mkdir, writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { draft, guideDocument } from "../shared/review";
-import { decision, reviewUrl } from "./contract";
+import { cliVersion, decision, reviewUrl } from "./contract";
 import type { ReviewEngine, EngineSession, EngineGuide, EngineState } from "./ports";
 const exec = promisify(execFile);
 const savedGuides = z.array(z.object({ id: z.string() }));
 const savedGuide = guideDocument.extend({ reviewed: z.array(z.boolean()) });
 const ok = z.object({ ok: z.literal(true) });
 
-// These are the UI HTTP contracts of 0.28.53, not an upstream SDK.
+// These are the UI HTTP contracts of 0.28.53 (including the fleet stdin patch), not an upstream SDK.
 export function createEngine(environment: NodeJS.ProcessEnv): ReviewEngine {
   return {
     async open({ cwd, revision, directory }) {
@@ -27,8 +27,10 @@ export function createEngine(environment: NodeJS.ProcessEnv): ReviewEngine {
       const version = (
         await exec("plannotator", ["--version"], { env, timeout: 5000 })
       ).stdout.trim();
-      if (version !== "plannotator 0.28.53")
-        throw new Error(`Unsupported Plannotator version: ${version}. Install 0.28.53.`);
+      if (!cliVersion.safeParse(version).success)
+        throw new Error(
+          `Unsupported Plannotator version: ${version}. Install 0.28.53 or 0.28.53-paseo.1.`,
+        );
       await mkdir(dataDirectory, { recursive: true, mode: 0o700 });
       const child = spawn(
         "plannotator",
@@ -164,18 +166,38 @@ export function createEngine(environment: NodeJS.ProcessEnv): ReviewEngine {
             return { draft: rawDraft === null ? null : draft.parse(rawDraft), guides };
           },
           async importGuide(document) {
-            const before = savedGuides.parse(await api("/api/guides"));
             const path = join(directory, "import-guide.json");
             await writeFile(path, JSON.stringify(guideDocument.parse(document)), { mode: 0o600 });
-            await exec(
+            const receipt = await exec(
               "plannotator",
               ["guide", "import", "--guide", path, "--patch", revision.patchPath!],
-              { cwd, env, timeout: 10000 },
+              {
+                cwd,
+                // Static-patch review has no Git context: its shelf is keyed by cwd,
+                // not origin. Disable Git discovery only for this import by pointing
+                // GIT_DIR at the saved patch (a file, never a Git directory).
+                env: { ...env, GIT_DIR: revision.patchPath! },
+                timeout: 10000,
+              },
             );
+            // 0.28.53 prints the saved id alone on stdout. A list difference can
+            // misidentify a native Guide saved concurrently with this import.
+            const id = z
+              .string()
+              .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
+              .parse(receipt.stdout.trim());
             const after = savedGuides.parse(await api("/api/guides"));
-            const added = after.filter((item) => !before.some((old) => old.id === item.id));
-            if (added.length !== 1) throw new Error("Could not identify imported Guide");
-            return added[0].id;
+            if (!after.some((item) => item.id === id))
+              throw new Error(`Imported Guide ${id} is not visible in this static-patch review`);
+            const imported = savedGuide.parse(
+              await api(`/api/guide/${encodeURIComponent(`saved:${id}`)}`),
+            );
+            if (
+              JSON.stringify(guideDocument.parse(imported)) !==
+              JSON.stringify(guideDocument.parse(document))
+            )
+              throw new Error(`Imported Guide ${id} does not match the requested document`);
+            return id;
           },
         };
         return session;

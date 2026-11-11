@@ -13,6 +13,8 @@ import {
   retryReview,
   requestGuide,
   cancelGuide,
+  retryGuideImport,
+  guideCatalog,
   preferences,
   type ReviewState,
   type SourceSelection,
@@ -32,8 +34,10 @@ type Action =
   | "update"
   | "cancel"
   | "agent-guide"
+  | "helper-guide"
   | "native-guide"
   | "cancel-guide"
+  | "retry-guide-import"
   | "retry";
 interface Intent {
   action: Action;
@@ -86,6 +90,8 @@ function useReviewController({
   const retry = useRpc(retryReview);
   const agentGuide = useRpc(requestGuide);
   const cancelPending = useRpc(cancelGuide);
+  const retryImport = useRpc(retryGuideImport);
+  const catalog = useRpc(guideCatalog);
   const cache = useQueryClient();
   const target = { agentId: props.params.agentId, workspaceId: props.workspaceId };
   const queryKey = ["plannotator-review", props.host.id, props.workspaceId, target.agentId];
@@ -93,6 +99,11 @@ function useReviewController({
     queryKey: ["plannotator-prepare", ...queryKey, form.selection],
     queryFn: () => prepare({ ...target, selection: form.selection }),
     staleTime: 0,
+  });
+  const guideOptions = useQuery({
+    queryKey: ["plannotator-guide-catalog", ...queryKey],
+    queryFn: () => catalog(target),
+    enabled: !!form.review,
   });
   const review = form.review;
   const revision = review?.revisions.find((item) => item.id === review.revisionId);
@@ -119,8 +130,21 @@ function useReviewController({
           case "agent-guide":
             result = await agentGuide(input);
             break;
+          case "helper-guide":
+            result = await agentGuide({
+              ...input,
+              helper: {
+                provider: form.helper.provider,
+                model: form.helper.model,
+                ...(form.helper.profileId ? { profileId: form.helper.profileId } : {}),
+              },
+            });
+            break;
           case "cancel-guide":
             result = await cancelPending({ ...input, requestId: intent.id! });
+            break;
+          case "retry-guide-import":
+            result = await retryImport({ ...input, requestId: intent.id! });
             break;
           case "retry":
             result = await retry({ ...input, deliveryId: intent.id! });
@@ -184,6 +208,8 @@ function useReviewController({
     checkUpdates,
     styles,
     baseOptions,
+    guideOptions,
+    setHelper: model.setHelper,
   };
 }
 type Controller = ReturnType<typeof useReviewController>;
@@ -239,7 +265,7 @@ function ReviewSetup({ controller: c }: { controller: Controller }) {
         />
       </SettingsCard>
       <Text style={c.styles.muted}>
-        Before reading changes, open Plannotator Settings → Review and turn Auto-mark viewed off.
+        Once per browser profile, open Plannotator Settings → Review and turn Auto-mark viewed off.
         This confirmation does not check the browser setting. Repeat after clearing browser data.
         You can open a review to configure Plannotator before confirming.
       </Text>
@@ -319,6 +345,7 @@ function ReviewControls({ controller: c }: { controller: Controller }) {
           The original agent is busy. Request a Guide after its turn finishes.
         </Text>
       )}
+      <GuideHelperControls controller={c} disabled={disabled} />
       <IntentButton
         controller={c}
         action="native-guide"
@@ -334,6 +361,92 @@ function ReviewControls({ controller: c }: { controller: Controller }) {
         action="cancel"
         label="Stop review (keep saved state)"
         disabled={busy}
+      />
+    </>
+  );
+}
+function GuideHelperControls({
+  controller: c,
+  disabled,
+}: {
+  controller: Controller;
+  disabled: boolean;
+}) {
+  const data = c.guideOptions.data;
+  const { setHelper } = c;
+  const helper = c.form.helper;
+  const profileOptions = useMemo(
+    () => [
+      { value: "", label: "Custom" },
+      ...(data?.profiles ?? []).map((item) => ({ value: item.id, label: item.name })),
+    ],
+    [data],
+  );
+  const providerOptions = useMemo(
+    () => (data?.providers ?? []).map((item) => ({ value: item.id, label: item.id })),
+    [data],
+  );
+  const modelOptions = useMemo(
+    () =>
+      (data?.providers.find((item) => item.id === c.form.helper.provider)?.models ?? []).map(
+        (item) => ({ value: item.id, label: item.label }),
+      ),
+    [data, c.form.helper.provider],
+  );
+  const selectProfile = useCallback(
+    (id: string) => {
+      const profile = data?.profiles.find((item) => item.id === id);
+      setHelper(
+        profile
+          ? { profileId: id, provider: profile.provider, model: profile.model ?? "" }
+          : { ...helper, profileId: "" },
+      );
+    },
+    [setHelper, helper, data],
+  );
+  const selectProvider = useCallback(
+    (provider: string) => setHelper({ profileId: "", provider, model: "" }),
+    [setHelper],
+  );
+  const selectModel = useCallback(
+    (model: string) => setHelper({ ...helper, model }),
+    [setHelper, helper],
+  );
+  return (
+    <>
+      {c.guideOptions.isError && <Text style={c.styles.error}>{c.guideOptions.error.message}</Text>}
+      {data && (
+        <SettingsCard>
+          <SettingsSelect
+            label="Guide agent profile"
+            value={c.form.helper.profileId}
+            options={profileOptions}
+            onValueChange={selectProfile}
+          />
+          <SettingsSelect
+            label="Guide provider"
+            value={c.form.helper.provider}
+            options={providerOptions}
+            onValueChange={selectProvider}
+          />
+          <SettingsSelect
+            label="Guide model"
+            value={c.form.helper.model}
+            options={modelOptions}
+            onValueChange={selectModel}
+          />
+        </SettingsCard>
+      )}
+      <IntentButton
+        controller={c}
+        action="helper-guide"
+        label="Guide from separate agent"
+        disabled={
+          disabled ||
+          !c.form.helper.provider ||
+          !c.form.helper.model ||
+          c.revision?.guides.some((guide) => guide.status === "pending")
+        }
       />
     </>
   );
@@ -359,6 +472,10 @@ function ReviewProgress({ controller: c }: { controller: Controller }) {
   );
 }
 function GuideProgress({ guide, controller: c }: { guide: Guide; controller: Controller }) {
+  const openAgent = useCallback(() => {
+    if (guide.helper)
+      c.props.navigation?.openAgent({ agentId: guide.helper.agentId, serverId: c.props.host.id });
+  }, [guide.helper, c.props.navigation, c.props.host.id]);
   return (
     <View style={c.styles.row}>
       <Text style={c.styles.text}>
@@ -374,6 +491,24 @@ function GuideProgress({ guide, controller: c }: { guide: Guide; controller: Con
         </Text>
       )}
       {guide.error && <Text style={c.styles.error}>{guide.error}</Text>}
+      {guide.helper && (
+        <Text style={c.styles.muted}>
+          Generator: {guide.helper.provider}/{guide.helper.model}
+          {guide.helper.profileId ? ` · Profile: ${guide.helper.profileId}` : ""}
+        </Text>
+      )}
+      {guide.status === "failed" && guide.requestId && (
+        <IntentButton
+          controller={c}
+          action="retry-guide-import"
+          id={guide.requestId}
+          label="Retry import saved Guide"
+          disabled={c.action.isPending}
+        />
+      )}
+      {guide.helper && (
+        <PanelButton label="Open Guide agent" color={c.styles.text.color} onPress={openAgent} />
+      )}
       {guide.status === "pending" && (
         <IntentButton
           controller={c}

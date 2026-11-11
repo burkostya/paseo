@@ -17,9 +17,27 @@ export interface AgentInfo {
   name: string;
   busy: boolean;
 }
+export interface GuideAgentOwner {
+  agentId: string;
+  requestId: string;
+  workspaceId: string;
+  taskAgentId: string;
+}
 export interface AgentConversation {
   inspect(target: Target): Promise<AgentInfo>;
   send(target: Target, text: string, messageId: string): Promise<void>;
+  catalog(target: Target): Promise<{
+    profiles: { id: string; name: string; provider: string; model?: string }[];
+    providers: { id: string; models: { id: string; label: string }[] }[];
+  }>;
+  startHelper(
+    target: Target,
+    helper: { agentId: string; provider: string; model: string; profileId?: string },
+    prompt: string,
+    requestId: string,
+  ): Promise<void>;
+  helperState(owner: GuideAgentOwner): Promise<"running" | "finished" | "archived" | "missing">;
+  stopHelper(owner: GuideAgentOwner, cancel: boolean): Promise<void>;
 }
 export interface SourceSnapshot {
   resolved: VcsResolvedComparison;

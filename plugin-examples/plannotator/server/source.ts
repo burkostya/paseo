@@ -130,7 +130,110 @@ export function createSource(paseo: PaseoApi, conversation: AgentConversation): 
   };
 }
 export function createConversation(paseo: PaseoApi): AgentConversation {
+  async function ownedHelper(owner: import("./ports").GuideAgentOwner) {
+    if (owner.agentId === owner.taskAgentId)
+      throw new Error("The task agent cannot be a Guide helper");
+    const agent = paseo.agents.ref(owner.agentId);
+    if (!(await agent.refresh())) return null;
+    if (
+      agent.workspaceId !== owner.workspaceId ||
+      agent.current()?.labels?.["plannotator.guide-request"] !== owner.requestId
+    )
+      throw new Error("Guide agent does not belong to this request and workspace");
+    return agent;
+  }
   return {
+    async catalog(target) {
+      const agent = await this.inspect(target);
+      const [config, available] = await Promise.all([
+        paseo.config.get(),
+        paseo.providers.listAvailable(),
+      ]);
+      if (available.error) throw new Error(available.error);
+      const profiles = (config.config.agentProfiles ?? []).map(({ id, name, provider, model }) => ({
+        id,
+        name,
+        provider,
+        model,
+      }));
+      const providers = await Promise.all(
+        available.providers
+          .filter((item) => item.available)
+          .map(async ({ provider }) => {
+            const result = await paseo.providers.listModels(provider, { cwd: agent.cwd });
+            if (result.error) throw new Error(`${provider}: ${result.error}`);
+            return {
+              id: provider,
+              models: (result.models ?? [])
+                .filter((item) => item.isSelectable !== false)
+                .map(({ id, label }) => ({ id, label })),
+            };
+          }),
+      );
+      return { profiles, providers };
+    },
+    async startHelper(target, helper, prompt, requestId) {
+      if (typeof paseo.agents.ref(target.agentId).cancel !== "function")
+        throw new Error("Update the Paseo host SDK before creating a separate Guide agent");
+      const catalog = await this.catalog(target);
+      if (
+        !catalog.providers.some(
+          (provider) =>
+            provider.id === helper.provider &&
+            provider.models.some((model) => model.id === helper.model),
+        )
+      )
+        throw new Error("Selected provider or model is unavailable");
+      if (
+        helper.profileId &&
+        !catalog.profiles.some(
+          (profile) => profile.id === helper.profileId && profile.provider === helper.provider,
+        )
+      )
+        throw new Error("Selected profile is unavailable for this provider");
+      const profile = helper.profileId
+        ? (await paseo.config.get()).config.agentProfiles?.find(
+            (item) => item.id === helper.profileId,
+          )
+        : undefined;
+      if (helper.profileId && (!profile || profile.provider !== helper.provider))
+        throw new Error("Selected profile is no longer available");
+      await paseo.workspaces.ref(target.workspaceId).agents.create({
+        agentId: helper.agentId,
+        idempotencyKey: requestId,
+        title: "Plannotator Guide",
+        prompt,
+        config: {
+          provider: `${helper.provider}/${helper.model}`,
+          ...(helper.profileId ? { agentProfileId: helper.profileId } : {}),
+          ...(profile?.modeId ? { modeId: profile.modeId } : {}),
+          ...(profile?.model === helper.model && profile.thinkingOptionId
+            ? { thinkingOptionId: profile.thinkingOptionId }
+            : {}),
+          ...(profile?.featureValues ? { featureValues: profile.featureValues } : {}),
+        },
+        labels: { "plannotator.guide-request": requestId },
+      });
+    },
+    async helperState(owner) {
+      const agent = await ownedHelper(owner);
+      if (!agent) return "missing";
+      if (agent.archivedAt) return "archived";
+      return agent.status === "running" || agent.status === "initializing" || agent.activeTurn
+        ? "running"
+        : "finished";
+    },
+    async stopHelper(owner, cancel) {
+      const agent = await ownedHelper(owner);
+      if (!agent || agent.archivedAt) return;
+      const running =
+        agent.status === "running" || agent.status === "initializing" || agent.activeTurn;
+      if (running) {
+        if (!cancel) throw new Error("Guide agent is still running; waiting before archive");
+        await agent.cancel();
+      }
+      await agent.archive();
+    },
     async inspect(target) {
       const agent = paseo.agents.ref(target.agentId);
       await agent.refresh();
