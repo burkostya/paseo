@@ -97,6 +97,10 @@ buildNpmPackage {
   buildPhase = ''
     runHook preBuild
 
+    # --ignore-scripts also skips our root postinstall patches. Apply them before
+    # Metro bundles dependencies, including the Markdown code-block override.
+    npm run postinstall
+
     # Native deps (terminal emulation; libuv-linked on Linux)
     npm rebuild node-pty
 

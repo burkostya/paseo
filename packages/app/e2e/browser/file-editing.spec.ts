@@ -757,6 +757,64 @@ test.describe("CodeMirror workspace file editing", () => {
     await expect.poll(() => image.getAttribute("src")).not.toBe(initialSource);
   });
 
+  test("renders Mermaid diagrams in Markdown preview after switching from Source", async ({
+    page,
+    withWorkspace,
+  }) => {
+    test.setTimeout(90_000);
+    const workspace = await withWorkspace({ prefix: "file-md-mermaid-" });
+    const diagrams = [
+      {
+        source:
+          "eventmodeling\n timeframe 01 processor Supplier.Book\n timeframe 02 readmodel Booking.OrderAfterSuccess ->> 01",
+        label: "OrderAfterSuccess",
+      },
+      {
+        source: 'flowchart LR\n A["Supplier result"] --> B["Aggregate fact"]',
+        label: "Aggregate fact",
+      },
+      {
+        source:
+          'stateDiagram-v2\n state "Booking order aggregate" as Order {\n [*] --> booked: supplier success\n booked --> closed: close\n }',
+        label: "Booking order aggregate",
+      },
+      {
+        source:
+          'C4Component\n Component(app,"Booking application","Go","Supplier before order")\n ComponentDb(db,"Order store","PostgreSQL","orders and tickets")\n Rel(app,db,"Create after success")',
+        label: "Booking application",
+      },
+    ];
+    const markdown = diagrams.map(({ source }) => `\`\`\`mermaid\n${source}\n\`\`\``).join("\n\n");
+    await writeFile(path.join(workspace.repoPath, "diagrams.md"), markdown, "utf8");
+    await workspace.navigateTo();
+    await openWorkspaceFile(page, "diagrams.md");
+
+    const preview = page.getByTestId("markdown-preview-frame");
+    for (const [index, { label }] of diagrams.entries()) {
+      const viewport = preview.getByTestId("mermaid-viewport").nth(index);
+      await expect(viewport).toBeVisible();
+      const svg = viewport.locator("iframe").contentFrame().locator("#diagram svg");
+      await expect(svg).toBeVisible();
+      await expect(svg).toContainText(label);
+    }
+
+    await selectFileView(page, "Source");
+    await expect(editor(page)).toContainText("eventmodeling");
+    await expect(editor(page)).toContainText("C4Component");
+    await selectFileView(page, "Preview");
+    await expect(preview.getByTestId("mermaid-viewport")).toHaveCount(diagrams.length);
+    for (const [index, { label }] of diagrams.entries()) {
+      const svg = preview
+        .getByTestId("mermaid-viewport")
+        .nth(index)
+        .locator("iframe")
+        .contentFrame()
+        .locator("#diagram svg");
+      await expect(svg).toBeVisible();
+      await expect(svg).toContainText(label);
+    }
+  });
+
   test("renders local relative images inside Markdown preview", async ({ page, withWorkspace }) => {
     test.setTimeout(90_000);
     const workspace = await withWorkspace({ prefix: "file-md-relative-image-" });

@@ -16,7 +16,7 @@ Resolve workspace image paths over the existing session RPC, then give the libra
 
 ## Engine constraints
 
-The pinned nightly has the same React Native package and core source trees as upstream commit `73ac5085eb1fdc743973b3473d4dba65abad5261`. Compatibility was checked with React Native 0.81.5. Native dependencies must be rebuilt when changing the highlighting configuration; JavaScript refresh cannot enable compiled grammars.
+The pinned nightly has the same React Native package and core source trees as upstream commit `73ac5085eb1fdc743973b3473d4dba65abad5261`. Compatibility was checked with React Native 0.81.5. Patch both `src` and `lib/module` when changing the library's JavaScript behavior; consumers can resolve either entry point. Native dependencies must be rebuilt when changing the highlighting configuration; JavaScript refresh cannot enable compiled grammars.
 
 Math and video are disabled. Task lists and admonitions are enabled; task checkboxes are read-only. Source adaptation spaces adjacent empty GFM table delimiters before escaping prose spoiler delimiters and decodes entity text before the engine can discard it. Code spans and fences keep their literal source. Comment HTML is normalized to Markdown before parsing; details show their summary and body expanded.
 

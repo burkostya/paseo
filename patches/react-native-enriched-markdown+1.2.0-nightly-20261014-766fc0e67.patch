@@ -2493,6 +2493,31 @@ diff --git a/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.t
 +  await initializeParser();
 +  return parseMarkdownSync(markdown, flags)!;
 +}
+diff --git a/node_modules/react-native-enriched-markdown/src/web/renderers/BlockRenderers.tsx b/node_modules/react-native-enriched-markdown/src/web/renderers/BlockRenderers.tsx
+--- a/node_modules/react-native-enriched-markdown/src/web/renderers/BlockRenderers.tsx
++++ b/node_modules/react-native-enriched-markdown/src/web/renderers/BlockRenderers.tsx
+@@ -92,2 +92,3 @@
+ function CodeBlockRenderer({
++  capabilities,
+   node,
+@@ -98,2 +99,17 @@
+   const language = node.attributes?.language;
++  const CustomCodeBlock = capabilities.renderers?.codeBlock;
++  if (CustomCodeBlock) {
++    // The custom renderer owns the block's look; the library keeps its spacing,
++    // including the zeroed trailing margin of the last block.
++    return (
++      <div
++        style={{
++          marginTop: styles.codeBlock.marginTop,
++          marginBottom: styles.codeBlock.marginBottom,
++        }}
++      >
++        <CustomCodeBlock code={extractNodeText(node)} language={language ?? ''} />
++      </div>
++    );
++  }
+   const label = language ? `Code block: ${language}` : 'Code block';
 diff --git a/node_modules/react-native-enriched-markdown/src/web/renderers/ListRenderers.tsx b/node_modules/react-native-enriched-markdown/src/web/renderers/ListRenderers.tsx
 index 251009e..da2e1b4 100644
 --- a/node_modules/react-native-enriched-markdown/src/web/renderers/ListRenderers.tsx
